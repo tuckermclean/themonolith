@@ -6,10 +6,10 @@
 
 **Owns:** `docs/cutover.md` (parity definition, runbook, evidence table), `docs/releases.yaml` (the one list of releases and where to verify each), `docs/verify.md`, `docs/legacy-rc1.md`, `docs/urls.md` (public URL inventory and the list of dead old URLs), `docs/releases/0.2.0.md` (hand-written release-notes section), `docs/decisions/0002-od-outcomes.md`, `docs/archive/OLD-REPO-BANNER.md` (text for the old repository), `factory/bin/verify-published`, `factory/bin/cutover-check`, `factory/bin/check-urls`, `.github/workflows/verify-published.yml`, `tests/fast/readme-*.test.*`, `tests/fast/urls-*.test.sh`, `tests/fast/cutover-*.test.*`; the final text of the "Try it", "Verify a release" and "Dashboard" sections of `README.md` (F01 creates the file).
 **Carries from linux-live-iso-factory@b9f533b:** the README sections "Try it in your browser" (`README.md:16-22`), "Verify a release" (`:26-60`) and "Dashboard" (`:189-203`) as text to rewrite; `docs/releasing.md` is P02's.
-**Study refs:** supplychain contradictions (two S3 hostnames; README says the nightly monitor is orphaned while a workflow runs it; README ISO "131 MB" vs UI "135 MB"); workflows `job.release.publish` notes (`--owner tuckermclean` hard-coded in the release notes, `release.yml:216`); T-attest-entry-workflow (attestation bound to the entry workflow and repo); T-recovery-pattern; workflows `wf.nightly-cve-scan` (failing daily since 2026-10-07); `monolith-advisory-check:17,29` (the rc1 disc fetches `https://themonolith.s3.amazonaws.com/status/<tag>.json`); `scripts/build-rootfs.sh:235-236,266` (`/etc/monolith-release`, `HOME_URL`); SPEC §0, §10 OD-1, OD-2, OD-6, OD-8; graph milestones MS3, MS4, MS5.
+**Study refs:** supplychain contradictions (two S3 hostnames; README says the nightly monitor is orphaned while a workflow runs it; README ISO "131 MB" vs UI "135 MB"); workflows `job.release.publish` notes (`--owner tuckermclean` hard-coded in the release notes, `release.yml:216`); T-attest-entry-workflow (attestation bound to the entry workflow and repo); T-recovery-pattern; workflows `wf.nightly-cve-scan` (failing daily since 2026-10-07); `monolith-advisory-check:17,29` (the rc1 disc fetches `https://themonolith.s3.amazonaws.com/status/<tag>.json`); `scripts/build-rootfs.sh:235-236,266` (`/etc/monolith-release`, `HOME_URL`); SPEC §0, §10 OD-1, OD-2, OD-8; graph milestones MS2, MS4, MS5.
 
 ## Purpose
-After this node, the new repository is the product's home: it has shipped its first release, `v0.2.0` (OD-8), through the full pipeline; its README tells a reader how to verify releases from either repository; and `linux-live-iso-factory` is archived with a pointer, unrenamed, so that `v0.1.0-rc1` stays verifiable. "Parity" stops being a feeling and becomes a table of CI runs.
+After this node, the new repository is the product's home: it has shipped its first non-prerelease, `v0.2.0` (OD-8), through the full pipeline (the first attested build, the prerelease `v0.2.0-rc1`, is MS2 and P02's); its README tells a reader how to verify releases from either repository; and `linux-live-iso-factory` is archived with a pointer, unrenamed, so that `v0.1.0-rc1` stays verifiable. "Parity" stops being a feeling and becomes a table of CI runs.
 
 ## Scope
 In:
@@ -33,15 +33,15 @@ Out:
 All of the following hold at one commit, the release commit `R`, and each is recorded as a CI run URL in `docs/cutover.md`.
 | # | Criterion | Source |
 |---|---|---|
-| 1 | MS3: every boot mode (17, SPEC §7) and the artifact doctrine checks pass on the ISO built from `R`. | O02–O06 |
-| 2 | MS3: the SBOM diff against `v0.1.0-rc1/bom.cdx.json` passes: every difference is listed with a reason in the expected-differences file. The package set is the 99-atom world of rc1 plus the listed differences. | O07 |
-| 3 | MS4: a tag produced a signed GitHub release that `gh attestation verify --repo` accepts (`v0.2.0-rc1`), and `v0.2.0` did the same from `R`. | P02-AC-15 and this node |
+| 1 | MS2: every boot mode (17, SPEC §7) and the artifact doctrine checks pass on the ISO built from `R`. | O02–O06 |
+| 2 | MS4: the SBOM diff against `v0.1.0-rc1/bom.cdx.json` passes: every difference is listed with a reason in the expected-differences file. The package set is the 99-atom world of rc1 plus the listed differences. | O07 |
+| 3 | MS2: a tag produced a signed GitHub release that `gh attestation verify --repo` accepts (`v0.2.0-rc1`), and `v0.2.0` did the same from `R`. | P02-AC-15 and this node |
 | 4 | The supply-chain gates (SBOM schema, licence, CVE, unowned) pass for the `R` build with the CVE policy file in `supplychain/policy/`. | S02–S04 |
 | 5 | Reproducibility: B07 ran; the release notes state either "two builds from the same inputs gave the same hash" or the list of known differences. No other claim is made. | B07 |
 | 6 | Public surfaces work: dashboard row, `latest-release.json`, ISO range-readable, advisory feed live, boot demo reaches the prompt in a browser. | P03-AC-17, P04-AC-11/13, P05-AC-15/17 |
 | 7 | Maintenance is alive: one pin-bump PR was opened by M01's automation and validated by build and core oracle (merged by a human); one GC run of M03 in dry-run on every class shows no release input or `public` release object marked for deletion. | M01, M03 |
 | 8 | Every owner decision OD-1 to OD-8 has an outcome in `docs/decisions/0002-od-outcomes.md` (the default if unanswered, stated as such). | SPEC §10 |
-Not required for parity: removing the dynamic-binary allowlist (OD-2 default keeps it, with issues to remove each entry), shipping new boot modes beyond rc1's 17, Hyper-V and serial-protocol claims (G03, G04).
+Not required for parity: removing the dynamic-binary allowlist (OD-2 default keeps it, with issues to remove each entry), and any claim the README does not make. G01–G05 are dependencies (MS4), so every README promise they cover is tested or removed before this node starts; the Hyper-V wording follows G03's evidence rules ("not verified" is an allowed outcome).
 
 ### The v0.2.0 release (OD-8)
 `docs/cutover.md` has the single line `release_version: 0.2.0`; README and the notes are checked against it, so a different OD-8 answer is one edit.
@@ -76,7 +76,7 @@ releases:
     prerelease: false
     public_copy: "releases/0.2.0/themonolith-0.2.0.iso"
 ```
-The new repository slug is not fixed by the study or SPEC; `tuckermclean/themonolith` is the likely name (Risks).
+The new repository slug is `tuckermclean/themonolith` (SPEC §8).
 
 README "Verify a release" shows, for the new repository:
 ```bash
@@ -94,7 +94,7 @@ Fact: the rc1 disc runs `monolith-advisory-check` after the network is up. It fe
 Decisions (recorded in `docs/legacy-rc1.md`):
 1. The automatic advisory check on rc1 is dead. README and `docs/legacy-rc1.md` say so plainly; no claim is made that rc1 warns users.
 2. P05 serves `status/0.1.0-rc1.json` on the new host from rc1's published SBOM (legacy entry), so a user can opt in: `ADVISORY_BASE_URL=<PUBLIC_BASE_URL> monolith-advisory-check`, which the rc1 script already honours.
-3. Residual risk, stated: S3 bucket names are global. If the old bucket name is released and re-registered by someone else, that party can serve `status/0.1.0-rc1.json` to every rc1 disc that is online. The effect is limited to a "revoked" banner and an unfiltered `details_url` printed on the console (rc1's `40-advisory.sh` does not strip control characters; P05's does). Mitigation for readers: upgrade to `v0.2.0`; for the paranoid, run the disc offline or `chmod -x /usr/sbin/monolith-advisory-check` in the live session. If OD-6 recovers the AWS account, the owner can park a frozen `status/0.1.0-rc1.json` there; that is optional and cheap.
+3. Residual risk, stated: S3 bucket names are global. If the old bucket name is released and re-registered by someone else, that party can serve `status/0.1.0-rc1.json` to every rc1 disc that is online. The effect is limited to a "revoked" banner and an unfiltered `details_url` printed on the console (rc1's `40-advisory.sh` does not strip control characters; P05's does). Mitigation for readers: upgrade to `v0.2.0`; for the paranoid, run the disc offline or `chmod -x /usr/sbin/monolith-advisory-check` in the live session. If the owner ever recovers the AWS account, they can park a frozen `status/0.1.0-rc1.json` there; that is optional and cheap.
 Rejected: DNS or proxy tricks (the host `s3.amazonaws.com` is not ours); re-releasing rc1 (new digest, new attestation, a different thing); deleting the rc1 release (users lose the only way to verify what they hold).
 
 ### Archive runbook for `linux-live-iso-factory` (owner executes; evidence recorded in `docs/cutover.md`)
@@ -162,7 +162,7 @@ Still valid after archiving: the GitHub release `v0.1.0-rc1` and its assets, `gh
 Tester writes first, in `tests/fast/`: AC-1 (fixture with a missing rc1 entry), AC-2 and AC-3 (they run against a copy of the old README and old release notes kept in `tests/fixtures/cutover/old/`, which contain `--owner tuckermclean`, `amazonaws.com` and the S3 dashboard URL, so they must fail on it), AC-4 (stubbed `gh`; fails because `verify-published` does not exist), AC-5 (fails while `docs/cutover.md` is absent or incomplete; it is the node's progress meter), AC-14 and AC-15. AC-10, AC-12 fail until the notes and legacy doc exist. Slow ACs have no RED; they are the GREEN evidence, recorded in `docs/cutover.md`.
 
 ## Risks and open questions
-- **New repository slug.** The SPEC and graph never name it. Directory name suggests `tuckermclean/themonolith`. Confirm before the first tag; every `--repo` in docs derives from `docs/releases.yaml`, so a change is one edit plus the pinned signer path.
+- **New repository slug.** SPEC §8 names it, `tuckermclean/themonolith`. Every `--repo` in docs derives from `docs/releases.yaml`, so a change would be one edit plus the pinned signer path.
 - **OD-1 gates the public parts** (criteria 6 and URLs). Without the domain, the node can finish only a GitHub-only release, which is not parity.
 - **Does archiving keep `gh attestation verify` working?** Expected yes; not confirmed by the study. Runbook step 8 is the test and has a rollback (`gh repo unarchive`).
 - **Is the rc1 ISO still downloadable?** The release assets are on GitHub, not S3 (`release.yml:265-271`), so yes unless removed. Not checked here (no network).
@@ -173,12 +173,10 @@ Tester writes first, in `tests/fast/`: AC-1 (fixture with a missing rc1 entry), 
 
 ## Cost
 - Slices: 3 (docs and `releases.yaml` with `verify-published` and tests; cutover tooling and URL checks; release and archive runbook execution with evidence). 15 ACs.
-- CI build cycles: 1 for the `v0.2.0` from-source build (30–60 min) plus the oracle, 1 contingency. The rc (`v0.2.0-rc1`) is P02's cycle, not counted here.
+- CI build cycles: 1 for the `v0.2.0` from-source build (about 95 minutes wall: 78 for the build job on the predecessor's measurement, about 10 for the 17 modes in parallel, about 5 for attestation; `docs/first-attested-build.md`) plus the oracle, 1 contingency. The rc (`v0.2.0-rc1`) is P02's cycle, not counted here.
 - Money: none beyond the domain and hosting already costed in P01. Owner time: a few hours for the runbook.
 
 ## Spec defects found
 1. **SPEC §0 calls the predecessor "frozen at `b9f533b`"** but cutover requires a README banner commit, release-note edit and archive flag on it. The exception is stated in the runbook; SPEC should say "frozen except for the archival pointer".
-2. **No node produces `docs/releases.yaml`-style release metadata for old releases**, and the graph has no node for "legacy compatibility". X01 and P05 carry it; consider a short SPEC §8 note that old-repository attestations are verified by repo name.
-3. **Graph: X01 lists O07 and B07 but not O02–O06, S01–S05, P01.** They are transitive through P02/P03, so no edge is missing; criteria 1 and 4 re-check them by run URL.
-4. **SPEC §10 has no OD for the new repository's name**, though the verification story depends on it (Risks). Add one or record it in SPEC §0.
-5. **README is owned by F01 (skeleton) and X01 (final sections)** with no rule on conflicts. P02 and P03 also edit `docs/releasing.md` and README links. Suggest: F01 creates, X01 is the only later writer.
+2. **Graph: X01 lists O07, B07, P05 and G01–G05 but not O02–O06, S01–S05 or P01.** They are transitive through P02/P03, so no edge is missing; criteria 1 and 4 re-check them by run URL.
+3. **README is owned by F01 (skeleton) and X01 (final sections)** with no rule on conflicts. P02 and P03 also edit `docs/releasing.md` and README links. Suggest: F01 creates, X01 is the only later writer.

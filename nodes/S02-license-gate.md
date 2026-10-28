@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| S | S01 | S05 | — (on the path to MS4 via S05 and P02) | M |
+| S | S01 | S05 | — (feeds MS2) | M |
 
 **Owns:**
 - `supplychain/license_gate.py` (CLI and importable module).
@@ -11,7 +11,7 @@
 - `tests/fast/test_license_*.py`, `tests/fixtures/supplychain/license/`.
 
 **Carries from linux-live-iso-factory@b9f533b:**
-- `scripts/check-licenses.py`, rewritten.
+- `scripts/check-licenses.py` (366 lines), **ported** as `supplychain/license_gate.py`. Its CLI shape, component extraction (`:172-197`, `:307-317`), report fields and policy loader carry over. Only the expression parser (`:63-170`) and the unknown/empty handling (`:216-270`) are replaced, because AC-1 to AC-4 cannot hold on them.
 - `configs/attestation/license-policy.yaml` (134 lines: 54 allowed entries incl. non-SPDX names, about 55 `gentoo_to_spdx` entries, empty `denied_spdx`).
 - Pillar 2 from `scripts/attestation.sh:361-377`.
 
@@ -29,7 +29,7 @@
 
 ## Purpose
 
-After this node, every component of the SBOM, plus the product component, has a license that is provably acceptable under a versioned, hashed policy. A license that is missing, malformed, empty or not in the policy fails the gate; the old gate let all three through as "pass" or "unknown". The policy file itself is validated, so it cannot allow a license id that is not real SPDX without a written reason.
+After this node, every component of the SBOM, plus the product component, has a license that is provably acceptable under a versioned, hashed policy. It is developed and passing on rc1's SBOM (the rc1 lane, SPEC §7) before this repo builds anything, so the same code gates our first ISO unchanged. A license that is missing, malformed, empty or not in the policy fails the gate; the old gate let all three through as "pass" or "unknown". The policy file itself is validated, so it cannot allow a license id that is not real SPDX without a written reason.
 
 ## Scope
 
@@ -55,7 +55,19 @@ After this node, every component of the SBOM, plus the product component, has a 
 license_gate.py --sbom bom.cdx.json --policy supplychain/policy/license-policy.yaml --output license-report.json
 ```
 
-Exit codes follow the S01 table: 0 pass; 1 at least one component fails; 2 input or policy error. Arguments are all required; no default paths. A missing or invalid file is exit 2 and no report claims a verdict.
+**Port first (Principle 11).** The slice order is: copy `check-licenses.py` and its policy, run it over the rc1 SBOM and record the result; then replace only what the ACs force.
+
+| Change from the predecessor | Forced by |
+|---|---|
+| Recursive-descent parser, DNF, no regex repair, parse errors fail | S02-AC-1, AC-2 (empty `""` and `|| ( )` passed) |
+| `X WITH Y` is one atom | S02-AC-3 (split into three licenses) |
+| Unknown fails unless listed with a reason | S02-AC-4 (INV-LIC-2) |
+| Zero-component SBOM is exit 2 | S02-AC-4 |
+| Policy schema, SPDX enum check, `allowed_other` split | S02-AC-5 (fail-open `data.get(…, [])`) |
+| `GPL-2` and friends map to `-only` | S02-AC-6 |
+| `inputs.sbom_sha256` in the report | S02-AC-7 |
+
+Exit codes follow the S01 table (`supplychain/common.py`): 0 pass; 1 at least one component fails; 2 input or policy error. Arguments are all required; no default paths. A missing or invalid file is exit 2 and no report claims a verdict.
 
 ### Input set
 
@@ -108,7 +120,7 @@ Policy validation (exit 2 if violated; schema `license-policy.schema.json`, unkn
 3. Every `gentoo_to_spdx` target is in `allowed_spdx ∪ allowed_other` or denied; a mapping to nothing known is an error.
 4. `denied_spdx` takes precedence over allowed.
 
-**Decision:** correct the mapping to Gentoo's real semantics. Gentoo `GPL-2`, `GPL-3`, `LGPL-2`, `LGPL-2.1`, `LGPL-3` mean "only" and the `+` forms mean "or later". The old table mapped the bare forms to `-or-later`. The gate result is the same, since both forms are allowed, but the SBOM and any future denial of "or later" would be wrong. This changes `license.id` values in `bom.cdx.json` and must appear in O07's expected-differences file. This rests on my reading of Gentoo's license-naming convention; verify against `licenses/` in the pinned snapshot in slice 1 before merging the table.
+**Decision:** correct the mapping to Gentoo's real semantics. Gentoo `GPL-2`, `GPL-3`, `LGPL-2`, `LGPL-2.1`, `LGPL-3` mean "only" and the `+` forms mean "or later". The old table mapped the bare forms to `-or-later`. The gate result is the same, since both forms are allowed, but the SBOM and any future denial of "or later" would be wrong. This changes `license.id` values in `bom.cdx.json`. It must appear in S01's `deliberate` list (`rc1-sbom-diff.yaml`, S01-AC-14) and so in O07's expected-differences file. This rests on my reading of Gentoo's license-naming convention; verify against `licenses/` in the pinned snapshot in slice 1 before merging the table.
 
 ### Report (`license-report.json`)
 
@@ -164,14 +176,15 @@ Schema `license-report.schema.json`. Fields: `schema`, `gate: "license"`, `verdi
 - **S02-AC-6** — The map sends `GPL-2`, `GPL-3`, `LGPL-2`, `LGPL-2.1`, `LGPL-3` to their `-only` ids and `GPL-2+`, `GPL-3+`, `LGPL-2+`, `LGPL-2.1+`, `LGPL-3+` to `-or-later`. *Verify:* `tests/fast/test_license_policy.py::test_gentoo_map_semantics`. *Tier:* fast.
 - **S02-AC-7** — The report validates against `license-report.schema.json`. It records `policy.sha256` equal to the sha256 of the policy file, `inputs.sbom_sha256` equal to the sha256 of the SBOM, and has no `unknown` status. Exit codes are 0, 1, 2 per the table above. *Verify:* `tests/fast/test_license_gate.py::test_report_identity`. *Tier:* fast.
 - **S02-AC-8** — A denied license appearing in every alternative fails, and denial beats allow if an id is in both lists. A `||` group passes if one alternative is fully allowed even when another is denied. *Verify:* `tests/fast/test_license_gate.py::test_denied`. *Tier:* fast.
-- **S02-AC-9** — The gate over the rc1 SBOM (`tests/fixtures/rc1/bom.cdx.json`, see S01 Risks) reports zero fails. Every package with no license is listed in `unlicensed_allow` with a reason. The test fails, and does not skip, if the fixture is absent. *Verify:* `tests/fast/test_license_rc1.py`. *Tier:* fast.
-- **S02-AC-10** — On the real CI SBOM the gate exits 0 and the report is stored with the other attestation outputs. *Verify:* the `attest` job step "License gate" in `build.yml`; verdict read by S05. *Tier:* slow.
+- **S02-AC-9** — The gate over the rc1 SBOM (sha256 `3cfc322a…75887`, fetched by digest by O01) reports zero fails. Every package with no license is listed in `unlicensed_allow` with a reason. The test fails, and does not skip, if the fixture is absent. *Verify:* `tests/slow/test_license_rc1.py`, run by the rc1-lane CI job; no build. *Tier:* slow.
+- **S02-AC-10** — On the SBOM of our first ISO the gate exits 0 and the report is stored with the other attestation outputs. *Verify:* the `attest` job step "License gate" in `build.yml`; verdict read by S05. *Tier:* slow.
 
 ## RED plan
 
-- Tester writes `tests/fast/test_license_{parser,gate,policy,rc1}.py` first. They import `supplychain.license_gate`, absent, so all fail at import.
+- The port lands first with `scripts/tests`-style baseline cases run against it: the empty-expression and empty-group cases are recorded as passing today, which is the defect.
+- Tester then writes `tests/fast/test_license_{parser,gate,policy}.py`. They fail against the port (empty passes, `WITH` is split, unknown exits 0).
 - Truth-table cases for AC-2 are written from the verified-defect list above, so each corresponds to an observed old pass.
-- AC-9's fixture comes from the rc1 release asset. If network is unavailable at RED time, AC-9 is committed in a follow-up commit after the fixture lands; AC-1 to AC-8 are not blocked.
+- AC-9's fixture is rc1's SBOM from O01's fixture set. If O01 has not landed, AC-9 follows in a later commit; AC-1 to AC-8 are not blocked.
 
 ## Risks and open questions
 
@@ -186,9 +199,11 @@ Schema `license-report.schema.json`. Fields: `schema`, `gate: "license"`, `verdi
 - Slices: 2.
   1. Parser, component status, policy validation, report (AC-1 to AC-8).
   2. rc1 fixture run and policy reconciliation, CI wiring (AC-9, AC-10).
-- CI build cycles: 1, shared with the S01 and S03 attest-job run once the MS2 ISO exists.
+- CI build cycles: 0 for the rc1 lane (AC-9). AC-10 rides the attest job of B06's first ISO (MS1), shared with S01 to S04.
 - Money: none.
 
 ## Spec defects found
 
-None specific to S02. The graph dependency S02 -> S01 is correct. S02's ownership of `license-policy.yaml` in a protected path is intended: loosening the license policy should need elevated review.
+1. **S01 reads S02's policy file, but S02 depends on S01.** S01's `gentoo_to_spdx` and enum handling need `license-policy.yaml` to exist. Proposed order: S01's port slice carries the b9f533b policy file unchanged to `supplychain/policy/license-policy.yaml`, so S01-AC-14 reproduces rc1. S02 then corrects the map (AC-6) and adds the resulting `license.id` changes to S01's `deliberate` list in the same PR. Owner to confirm, since S01 would touch a protected path in its port slice.
+
+S02's ownership of `license-policy.yaml` in a protected path is intended: loosening the license policy should need elevated review.

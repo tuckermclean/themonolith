@@ -2,14 +2,14 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| R | R01, I03 | B01, S01 | — | M |
+| R | R01, I02, I03 | B01, S01 | — (feeds MS1) | M |
 
 **Owns:** `pins/versions.lock`, `factory/bin/versions-lock`, `recipes/portage/forbidden-atoms.txt`, `tests/fast/versions-lock*.test.sh`, `tests/fast/fixtures/versions-lock/`, the `lock-check` make target (added to `test-fast`), the CI job `lock-verify`.
 **Carries from linux-live-iso-factory@b9f533b:** `scripts/update-versions.sh` (logic, not the file), `configs/portage/versions.lock` (as placed by R01), `scripts/extract-packages.sh:56-75` (pin lookup, replaced by `versions-lock atoms`).
 **Study refs:** recipes.yaml `cfg.portage/versions.lock` (`coverage_gap`, `stale_comments`), contradictions #8 and #9, open_questions #10; T-live-ebuild-and-host-keyword-skew, T-keep-going-hides-drops, T-tmpfiles-systemd-utils-python, T-freetype-chain; D-no-readding-removed-things, D-revbump-on-overlay-change (lock half), D-two-epoch-pin-model.
 
 ## Purpose
-After R02, `pins/versions.lock` names exactly one version for every world atom and every overlay package, is produced by one command with no timestamp, and CI fails when the file, `world` or the overlay disagree. At b9f533b it pins 77 of 99 world atoms and 7 of 11 overlay packages, so 23 atoms and 4 overlay packages (`monolith-sqlite`, `monolith-st`, `monolith-dwm`, `xcb-proto`) float, and the header timestamp changes every run. B01 can only claim "each world atom built at its locked version" if the lock is complete.
+After R02, `pins/versions.lock` names exactly one version for every world atom and every overlay package, is produced by one command with no timestamp, and CI fails when the file, `world` or the overlay disagree. At b9f533b it has 77 lines, covering 76 of 99 world atoms and 7 of 11 overlay packages, so 23 world atoms and 4 overlay packages float (three overlay packages, `monolith-sqlite`, `monolith-st` and `monolith-dwm`, are among the 23; `xcb-proto` is overlay-only), and the header timestamp changes every run. B01 can only claim "each world atom built at its locked version" if the lock is complete. The lock describes rc1's tree first (the first tree pin, OD-6, recovered by I02): the 77 lines it already had keep their rc1 versions, and the 23 missing world atoms plus the overlay-only `x11-base/xcb-proto` are the gap to close (the predecessor's lock has 77 lines for 76 of 99 world atoms; the 23 missing include three overlay packages, `monolith-sqlite`, `monolith-st` and `monolith-dwm`). A later tree bump (M01) regenerates the lock as its own change.
 
 ## Scope
 In:
@@ -61,6 +61,8 @@ Exit codes: 0 ok; 1 findings; 2 usage; 3 environment (`portageq` absent, snapsho
 2. Other atom: `PORTAGE_CONFIGROOT=/usr/i486-linux-musl portageq best_visible /usr/i486-linux-musl '<atom>'` with the target's keywords (`ACCEPT_KEYWORDS=*`, as `make.conf`), then `portageq metadata ... SLOT`, sub-slot stripped. Passing the full atom to `best_visible` applies operators and slots. Resolving against the target config, not the amd64 host, is the T-live-ebuild-and-host-keyword-skew fix (`scripts/update-versions.sh:35-60`).
 3. Any resolved version containing `9999` is fatal.
 
+The tool is new code, not a port of `scripts/update-versions.sh`. The ACs force that: the old script drops unresolvable atoms (`scripts/update-versions.sh:152-160`, AC-5), resolves against the amd64 host (`:35-60`, AC-5) and stamps a timestamp (AC-4). Its `portageq` call shapes carry over, and R02-AC-13 checks the new tool against the old lock's versions.
+
 ### `check` rules (codes)
 - `GAP`: a world atom or overlay package has no lock line.
 - `ORPHAN`: a lock line is neither a world atom's package nor an overlay package.
@@ -101,9 +103,11 @@ The lock comments disappear on regeneration. R01 already moved the `monolith-per
 - **R02-AC-7** — `versions-lock atoms` prints `=category/package-version:slot` for every lock line in lock order and exits 1 if `check` would fail; `Makefile`'s `KERNEL_VERSION` lookup `grep '^sys-kernel/monolith-kernel:' pins/versions.lock | cut -d: -f2` still works. *Verify:* `tests/fast/versions-lock.test.sh`. *Tier:* fast.
 - **R02-AC-8** — `make test-fast` runs `lock-check`, and a PR that adds a world atom without a lock line fails the fast lane. *Verify:* `tests/fast/versions-lock-wiring.test.sh` (asserts the make target and its inclusion in `test-fast`). *Tier:* fast.
 - **R02-AC-9** — In the builder, `versions-lock verify` regenerates the lock from the pinned snapshot and finds no difference against `pins/versions.lock`; two consecutive runs produce identical bytes. *Verify:* CI job `lock-verify` (builder image by digest from I03, snapshot from I02), artifacts `versions.lock.generated`, `verify.log`. *Tier:* slow.
-- **R02-AC-10** — The relocated explanatory comments exist: the `monolith-perl` ebuild header has the `-r1` and `-r2` history and the DBI/DBD revert; the `stele` header has the repin rule; the `monolith-xserver` header has the libXfont-v1 note. *Verify:* `tests/fast/versions-lock-comments.test.sh`. *Tier:* fast.
+- **R02-AC-10** — The relocated explanatory comments exist: the `monolith-perl` ebuild header has the `-r1` and `-r2` history and the DBI/DBD revert; the `stele` header has the repin rule; the `monolith-xserver` header has the libXfont-v1 note. *Verify:* `tests/fast/versions-lock-comments.test.sh`. *Tier:* fast. *When:* after MS2
 - **R02-AC-11** — In the builder, every `profile/package.provided` entry equals the pinned tree's best visible version. *Verify:* CI job `lock-verify` (`verify.log` section `package.provided`). *Tier:* slow.
 - **R02-AC-12** — In the builder, `closure.txt` contains no forbidden package, and every `package.use`, `package.env` and `package.accept_keywords` atom matches a package in the closure or world. *Verify:* CI job `lock-verify` (artifact `closure.txt`, `verify.log` section `dead-atoms`). *Tier:* slow.
+
+- **R02-AC-13** — Against rc1's tree (the first pin from I02), `versions-lock generate` reproduces the version and slot of every one of the 77 data lines in `b9f533b`'s `configs/portage/versions.lock`; the only differences from that file are the 24 added lines (the 23 missing world atoms and `x11-base/xcb-proto`), plus the removed comments and timestamp. *Verify:* CI job `lock-verify` compares `versions.lock.generated` with the frozen copy `tests/fast/fixtures/versions-lock/b9f533b.lock`, artifact `legacy-diff.txt`; the fast half (`tests/fast/versions-lock-legacy.test.sh`) checks the comparison on small fixtures. *Tier:* slow.
 
 ## RED plan
 The tester writes `tests/fast/versions-lock.test.sh`, `versions-lock-generate.test.sh`, `versions-lock-wiring.test.sh`, `versions-lock-comments.test.sh` and the fixtures under `tests/fast/fixtures/versions-lock/` (a minimal world, overlay tree, good and bad locks, and the stub `portageq`). At the RED commit `factory/bin/versions-lock` does not exist, so every case fails with "not found". Separately, the committed lock from R01 fails AC-1 (23 gaps), AC-2 (4 overlay gaps) and AC-4 (timestamp, comments) when the real `check` first runs — this is the evidence that the gate is not vacuous. The slow `lock-verify` job is added as a failing job at the RED commit (the script is absent).
@@ -113,11 +117,12 @@ The tester writes `tests/fast/versions-lock.test.sh`, `versions-lock-generate.te
 - `portageq best_visible` with a full atom is assumed to honour operators and slots. The stub test fixes the call shape; the first real proof is AC-9. If it does not, fall back to `portageq match` + highest version in Python.
 - Whether `--emptytree --pretend` for a crossdev root reports only target packages cleanly is unverified offline; the parser keys on the `to /usr/i486-linux-musl/` suffix and AC-12 fails loudly if the format differs.
 - New cross-node edge: B01 must call `versions-lock atoms` instead of `grep "^${pkg}:"`.
-- The slow job needs I02/I03 outputs and so cannot run until those nodes have a published image; R02 can merge on fast ACs while AC-9, 11, 12 are first exercised with the I03 gate. Record that sequencing in the PR.
-- No SPEC §10 decision blocks this node. OD-6 (rescuing `gentoo-20260811`) decides whether the first regenerated lock is at the old epoch or a new one.
+- The slow job needs I02/I03 outputs and so cannot run until those nodes have a published image; R02 can merge on fast ACs while AC-9, 11, 12, 13 are first exercised once I02 has pinned the tree. Record that sequencing in the PR.
+- No SPEC §10 decision blocks this node. OD-6's default settles the first regenerated lock: rc1's tree, so AC-13 is meaningful. If the owner picks a current tree instead, AC-13 becomes a report of version movement rather than an equality check.
 
 ## Cost
-Three slices: (1) `check`, format, denylist, fixtures (AC-1–4, 6, 8); (2) `generate`/`atoms` with the stub (AC-5, 7, 10); (3) `verify` and the CI job (AC-9, 11, 12). Expected CI build cycles: 0 full builds; 1–3 `lock-verify` runs of about 5–10 minutes each (no compilation; pretend-emerge and portageq only). No storage or hosting cost beyond the artifacts (a few hundred KB per run).
+Three slices: (1) `check`, format, denylist, fixtures (AC-1–4, 6, 8); (2) `generate`/`atoms` with the stub (AC-5, 7, 10); (3) `verify` and the CI job (AC-9, 11, 12, 13). AC-10 is documentation and may follow MS2. Expected CI build cycles: 0 full builds; 1–3 `lock-verify` runs of about 5–10 minutes each (no compilation; pretend-emerge and portageq only). No storage or hosting cost beyond the artifacts (a few hundred KB per run).
 
 ## Spec defects found
-- None blocking. Observation for F02: graph edge R02→R03 is absent and not needed (R01 forbids multiple ebuilds per package, so R02 does not need version ordering); if a later change allows two ebuilds, R02 would need R03's version-compare library.
+- The graph gives R02 deps R01 and I03 but not I02, while `lock-verify` (AC-9, 11, 12, 13) needs the pinned tree. B01 (which depends on both) is the first consumer, so the slow ACs pass when I02 lands. Proposal: add I02 to R02's deps, or accept that R02's slow ACs close with B01.
+- Observation for F02: graph edge R02→R03 is absent and not needed (R01 forbids multiple ebuilds per package, so R02 does not need version ordering); if a later change allows two ebuilds, R02 would need R03's version-compare library.

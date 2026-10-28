@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| S | B05, I05, R02 | O06, O07, S02, S03, S04 | — (on the path to MS3 via O07, and to MS4 via S05) | L |
+| S | I05, R02 | O07, S02, S03, S04 | — (feeds MS2) | L |
 
 **Owns:**
 - `supplychain/sbom.py` — subcommands `enrich`, `generate`, `validate`.
@@ -16,10 +16,10 @@
 - `docs/sbom.md`.
 
 **Carries from linux-live-iso-factory@b9f533b:**
-- `scripts/enrich-sbom.py`, rewritten as `supplychain/sbom.py`.
+- `scripts/enrich-sbom.py` (1330 lines), **ported** as `supplychain/sbom.py`: moved first, then changed only where a named AC below forces it (Principle 11). The port is the first slice.
 - `configs/attestation/cpe-overrides.yaml`, `cpe-exclusions.yaml`.
 - `configs/attestation/schemas/*` (bom-1.6, bom-1.7, spdx, jsf-0.82, cryptography-defs, README).
-- Pillar 1 and the builder half of Pillar 5 from `scripts/attestation.sh:253-358, 507-575`.
+- Pillar 1 and the builder half of Pillar 5 from `scripts/attestation.sh:253-358, 507-575`, ported as the `generate` subcommand.
 - The schema step from `.github/workflows/build.yml` (~700-745).
 - `configs/attestation/spdx-license-ids.txt` is dropped; see Design.
 
@@ -33,7 +33,9 @@
 
 ## Purpose
 
-After this node, the sysroot of a built ISO turns into one validated, deterministic, package-level CycloneDX SBOM (`bom.cdx.json`). The SBOM carries the ISO hash, CPE mappings, normalised licenses, a dependency graph and the build-input formulation. It is checked for completeness against the Portage database, so a package Syft skipped is an error. S02, S03, S04 and the golden diff (O07) all read this one document.
+After this node, the sysroot of a built ISO turns into one validated, package-level CycloneDX SBOM (`bom.cdx.json`). The SBOM carries the ISO hash, CPE mappings, normalised licenses, a dependency graph and the build-input formulation. It is checked for completeness against the Portage database, so a package Syft skipped is an error. S02, S03, S04 and the golden diff (O07) all read this one document.
+
+S01 is developed in the rc1 lane (SPEC §7), before this repo builds anything. It runs on rc1's extracted rootfs (the squashfs fixture O01 fetches by digest) and must reproduce rc1's `bom.cdx.json` (sha256 `3cfc322a0e105638452baa6900552769a6ad5bfbf3be190a9808ac98ca575887`) up to a listed set of fields (S01-AC-14). That makes the port provable, and gives S02, S03 and S04 a real SBOM to develop against.
 
 ## Scope
 
@@ -51,14 +53,39 @@ After this node, the sysroot of a built ISO turns into one validated, determinis
 - ISO hashing and the summary: S05. S01 receives the hash as an argument.
 - The golden diff against rc1: O07. S01 lists the differences it expects to cause; see Design.
 - The pins file and `versions.lock`: I05 and R02. S01 reads them.
+- Fetching the rc1 fixtures (ISO, SBOM, squashfs) by digest: O01 (`oracle/fixtures/rc1.yaml`). S01 reads them.
 - Dashboard rendering of gaps: P03.
-- The full removed-packages denylist: R02 (see Spec defects).
+- The full removed-packages denylist: R02 (its v0.3 summary now includes it).
 
 ## Design
 
 ### Layout and CLI
 
-All S-node tools are Python 3, standard library plus PyYAML, run in the builder image (SPEC 4.3). Shared exit codes, defined in `common.py` and used by every S-node tool:
+All S-node tools are Python 3, standard library plus PyYAML, run in the builder image (SPEC 4.3).
+
+**Port first (Principle 11).** `sbom.py` starts as `scripts/enrich-sbom.py` moved verbatim, plus a thin `generate` wrapper carrying the `attestation.sh` Syft calls. Before any change, the first slice ports these predecessor files:
+- `scripts/enrich-sbom.py` (enrichment, CPE, license, propagation, formulation);
+- `scripts/attestation.sh:253-358` (Pillar 1, target Syft run and enrich) and `:507-575` (builder pass);
+- `configs/attestation/{cpe-overrides,cpe-exclusions}.yaml` and `configs/attestation/schemas/*`;
+- the schema step in `.github/workflows/build.yml` (~700-745).
+
+Each change below says which AC forces it. A change with no AC is not made.
+
+| Change from the predecessor | Forced by |
+|---|---|
+| Gap files named by `--out` stem, replacing `cpe-gap-count.txt` and `cpe-exclusions.json` | S01-AC-3 (builder pass overwrote the target's file) |
+| Missing SPDX enum is exit 2, `spdx-license-ids.txt` dropped | S01-AC-2 (silent skip at `enrich-sbom.py:211-225`) |
+| Missing propagated package is exit 1 | S01-AC-5 (silent skip at `:779-827`) |
+| vdb completeness check | S01-AC-4 |
+| Builder scanned by registry digest, no excludes | S01-AC-12 (`builder.image_digest` was empty) |
+| `SYFT_FILE_METADATA_SELECTION` dropped | S01-AC-13 (size ceiling); S04 walks the disk itself |
+| Syft version compared with the pin | S01-AC-11 |
+| Formulation read from pins, `--ci` strictness | S01-AC-10 |
+| `$id` stripped from vendored schemas, timeout is failure | S01-AC-7 |
+| Deterministic serial and timestamp | S01-AC-9 (*When:* after MS2) |
+| Doctrine denylist | S01-AC-6 (*When:* after MS2) |
+
+Shared exit codes, defined in `common.py` and used by every S-node tool:
 
 | Code | Meaning |
 |---|---|
@@ -88,7 +115,7 @@ sbom.py validate --sbom FILE
 
 - Target: `syft dir:<sysroot> --override-default-catalogers portage-cataloger -o cyclonedx-json=… -o json=…`. The flag name is checked against the pinned Syft version in `syft-smoke.sh`.
 - `SYFT_FILE_METADATA_SELECTION=all` is **dropped**. It existed only to populate `files[]` for the old Pillar 4 (`attestation.sh:259`). Dropping it removes the cause of the 16,553-file-component bloat (T-schema-validation-hang). S04 walks the filesystem itself.
-- Builder: scan `registry:<image>@sha256:<digest>`, with the digest taken from `pins/pins.yaml` (I05). This replaces `syft dir:/` plus eleven `--exclude './x/**'` flags (`attestation.sh:517-530`). No excludes are needed, the bind-mount problem disappears, and the scanned digest is the recorded digest by construction.
+- Builder: scan `registry:<image>@sha256:<digest>`, with the digest taken from `pins/pins.yaml` (I05). In the rc1 lane this is the adopted rc1 builder (`sha256:ab04002a…`, I03). This replaces `syft dir:/` plus eleven `--exclude './x/**'` flags (`attestation.sh:517-530`). No excludes are needed, the bind-mount problem disappears, and the scanned digest is the recorded digest by construction.
   - Rejected: `dir:/` inside the running container. The excludes encode Syft's relative-path quirk and the image digest was never passed (`make attestation` omits `--builder-digest`, Makefile:450-458; `attest-builder` passes a local image ID or `unknown`, Makefile:475), so `builder.image_digest` was empty.
 - The Syft version must equal the pin in `pins/pins.yaml`. `enrich` takes `--expect-syft-version`, compares it with `syft --version`, and exits 1 on mismatch. The old repo installed both tools from an unpinned `install.sh` (Dockerfile:124-131).
 
@@ -109,7 +136,7 @@ sbom.py validate --sbom FILE
 4. CPE (INV-CPE-1): `data/cpe-overrides.yaml` is an exception list, keyed by bare package name. `-rN`, `_pN`, `_preN` are stripped before substitution. `acct-group/`, `acct-user/`, `app-alternatives/`, `virtual/` never get a CPE. Every other package without a CPE is a genuine gap; excluded ones are counted separately.
 5. Licenses:
    - `license.id` holds only ids present in the vendored `spdx.schema.json` enum; anything else becomes `license.name`.
-   - The Gentoo-to-SPDX map is read from S02's `supplychain/policy/license-policy.yaml`.
+   - The Gentoo-to-SPDX map is read from S02's `supplychain/policy/license-policy.yaml`. S01's port slice carries the b9f533b file there unchanged (rc1's map, so AC-14 reproduces rc1); S02 corrects it (S02-AC-6). See S02 Spec defects.
    - **Decision:** `configs/attestation/spdx-license-ids.txt` (810 ids) is dropped and the enum is read from the vendored `spdx.schema.json`, one source that cannot drift.
    - If the enum cannot be read the tool exits 2. The old code silently skipped sanitisation when the list was missing (`enrich-sbom.py:211-225`).
 6. Dependency graph from vdb RDEPEND/DEPEND, rooted at the product with the world atoms.
@@ -120,7 +147,17 @@ sbom.py validate --sbom FILE
    - Rejected: warn only; the CVE and license gates would then silently stop covering musl and the bootloaders.
 9. Formulation (INV-PIN-1): stage3 epoch and digest, snapshot sha256, builder image digest, `versions.lock` sha256, kernel and busybox tarball SHA-512. Sources are `pins/pins.yaml`, `pins/versions.lock` and the overlay `Manifest`s. In `--ci` any missing input is exit 2; locally it is omitted, never fabricated.
 10. `metadata.tools` records Syft and grype versions. The grype DB identity is deliberately **not** in the SBOM; it is a scan result, and the DB is fetched after SBOM generation. It lives in the S03 report and the summary.
-11. Determinism: `serialNumber` is `urn:uuid:` UUIDv5 of `<iso-sha256 or syft-cdx-sha256>`. `metadata.timestamp` is derived from `SOURCE_DATE_EPOCH` (required in `--ci`). Dependency and component order is sorted. Same inputs produce byte-identical `bom.cdx.json` (helps B07, and makes the hash in `SHA256SUMS` reproducible). This is a new property; rc1 SBOMs were not deterministic.
+11. Determinism (S01-AC-9, *When:* after MS2): `serialNumber` is `urn:uuid:` UUIDv5 of `<iso-sha256 or syft-cdx-sha256>`. `metadata.timestamp` is derived from `SOURCE_DATE_EPOCH` (required in `--ci`). Dependency and component order is sorted. Same inputs produce byte-identical `bom.cdx.json`. This is a new property; rc1 SBOMs were not deterministic (`enrich-sbom.py:1306-1309` uses the clock). Nothing on the path to MS2 needs it, so until AC-9 lands the port keeps the predecessor's clock and random serial, and both are on the volatile list below. B07 is the consumer.
+
+### Reproducing rc1's SBOM (the rc1 lane)
+
+`tests/fixtures/supplychain/rc1-sbom-diff.yaml` has two lists.
+- **`volatile`** (fixed here): `serialNumber`, `metadata.timestamp`, `metadata.tools` versions, and `metadata.component.hashes` plus the `distribution` hashes when no `--iso-sha256` is passed. In the rc1 lane the rc1 ISO digest (`a9600659…eb27a`, from O01's fixture set) is passed, so the hash is normally present and compared.
+- **`deliberate`**: differences this node causes on purpose. Empty after the port slice. Each later change that alters output adds an entry citing its AC (expected: `s3://` externalReference URLs gone, AC-1; `formulation` additions, AC-10; license ids if S02-AC-6 lands first).
+
+The test runs `sbom.py generate` on rc1's extracted squashfs, with the host vdb of the rc1 builder image for propagation, then diffs against the rc1 `bom.cdx.json`. Any difference outside both lists fails. O07 reads the same `deliberate` list as its seed expected-differences file, so the two nodes cannot disagree.
+
+**ISO digest source.** S01 never opens the ISO. In a pipeline run the digest comes from the build pipeline: B06's attest job passes the value S05 computes once (S05-AC-4). In the rc1 lane it is the rc1 release digest.
 
 ### Integrity checks (all exit 1 with the offending names listed)
 
@@ -153,20 +190,20 @@ Counts are `len()` of the lists. The prose count "~50 overrides" (docs/cve-gate.
 
 ### Expected differences handed to O07
 
-Changes versus rc1's `bom.cdx.json` caused by this node, so O07's expected-differences file can list them with reasons:
-- deterministic `serialNumber` and `timestamp`;
+Changes versus rc1's `bom.cdx.json` caused by this node. They are the `deliberate` list above, so O07's expected-differences file can list them with reasons:
+- deterministic `serialNumber` and `timestamp` (after AC-9; until then they are volatile);
 - `GPL-2`, `GPL-3`, `LGPL-*` mapped to `-only` ids (S02 decision);
 - `externalReferences` no longer carry a vendor `s3://` URL;
 - the `formulation` block gains the builder image digest and snapshot sha256 from pins.
 
 ## Traps and doctrines preserved
 
-- **T-schema-validation-hang.** If vendored schemas regain a network `$ref` or `$id`, or file components return, CI hangs for hours. Prevented by AC-7 (static closure plus `$id` check, timeout-is-failure), AC-2 (no file components) and AC-13 (size ceiling).
+- **T-schema-validation-hang.** If vendored schemas regain a network `$ref` or `$id`, or file components return, CI hangs for hours. Prevented by AC-7 (static closure plus `$id` check, timeout-is-failure), AC-2 (no file components) and AC-13 (size ceiling). AC-14 runs the same code on rc1's real rootfs, so a regression shows before any build exists.
 - **T-syft-quirks.**
   - Builder scan avoids excludes entirely, by registry digest (AC-12).
   - Syft's flag names are verified against the pinned version (AC-12).
   - The buildType quirk belongs to S05.
-- **D-bitmap-fonts-no-freetype / D-no-python-on-target.** Denylist, AC-6; O06 checks bytes.
+- **D-bitmap-fonts-no-freetype / D-no-python-on-target.** Denylist, AC-6 (after MS2); O06 checks bytes and is the gate on the path to MS2.
 - **D-supply-chain-honesty.** The ISO hash enters the SBOM only from the one value S05 computes (AC-1). Nothing is fabricated; absent inputs fail in CI mode (AC-1, AC-10).
 - **Principle 5, success is honest.** No "skip with warning" survives: missing propagated packages, missing SPDX enum, missing formulation inputs and Syft under-reporting are all errors (AC-4, AC-5, AC-10).
 - **Principle 2, pinned inputs.** The Syft version is compared with the pin (AC-11).
@@ -175,7 +212,7 @@ Changes versus rc1's `bom.cdx.json` caused by this node, so O07's expected-diffe
 
 | Item | Disposition |
 |---|---|
-| INV-SBOM-1 | AC-12, AC-13; S05-AC-5 turns enrich failure into a failed pillar |
+| INV-SBOM-1 | AC-12, AC-13, AC-14; S05-AC-5 turns enrich failure into a failed pillar |
 | INV-SBOM-2 | AC-7 |
 | INV-SBOM-3 | AC-2 |
 | INV-SBOM-4 | AC-5; silent skip replaced by exit 1 |
@@ -197,7 +234,7 @@ Changes versus rc1's `bom.cdx.json` caused by this node, so O07's expected-diffe
   - a builder run writes `builder-bom.gaps.json` and leaves the target's gap file byte-identical. *Verify:* `tests/fast/test_sbom_gaps.py`. *Tier:* fast.
 - **S01-AC-4** — Completeness: a fake sysroot whose vdb has a package absent from the Syft fixture makes `enrich` exit 1 naming that package, and the reverse case fails too. A matching pair passes. *Verify:* `tests/fast/test_sbom_completeness.py`. *Tier:* fast.
 - **S01-AC-5** — Propagation: with a host vdb containing musl, grub and syslinux, the three components appear with the `host-vdb-propagate` property and a CPE where an override exists. Removing any of them from the host vdb gives exit 1. *Verify:* `tests/fast/test_sbom_propagate.py`. *Tier:* fast.
-- **S01-AC-6** — Doctrine denylist: a target SBOM containing `media-libs/freetype`, `media-libs/fontconfig`, `x11-libs/libXft` or `dev-lang/python` exits 1 naming the package. A clean fixture exits 0. A builder-kind run is not subject to it. *Verify:* `tests/fast/test_sbom_denylist.py`. *Tier:* fast.
+- **S01-AC-6** — Doctrine denylist: a target SBOM containing `media-libs/freetype`, `media-libs/fontconfig`, `x11-libs/libXft` or `dev-lang/python` exits 1 naming the package. A clean fixture exits 0. A builder-kind run is not subject to it. *Verify:* `tests/fast/test_sbom_denylist.py`. *Tier:* fast. *When:* after MS2.
 - **S01-AC-7** — Offline validation:
   - every file under `supplychain/schema/cyclonedx/` has no `$id`;
   - the `$ref` closure resolves entirely inside that directory;
@@ -208,41 +245,43 @@ Changes versus rc1's `bom.cdx.json` caused by this node, so O07's expected-diffe
 
   *Verify:* `tests/fast/test_sbom_schema.py` (the test fails, not skips, if `check_jsonschema` is absent). *Tier:* fast.
 - **S01-AC-8** — `sbom.py validate` also runs on the builder SBOM in the attest job, and the step fails the job on any non-zero exit including timeout. *Verify:* `tests/fast/test_workflow_sbom_validate.py` (static check of the attest job in `build.yml`). *Tier:* fast.
-- **S01-AC-9** — Determinism: two `enrich` runs on the same inputs with the same `SOURCE_DATE_EPOCH` produce byte-identical `bom.cdx.json`. `serialNumber` is a function of the input hash. *Verify:* `tests/fast/test_sbom_determinism.py`. *Tier:* fast.
+- **S01-AC-9** — Determinism: two `enrich` runs on the same inputs with the same `SOURCE_DATE_EPOCH` produce byte-identical `bom.cdx.json`. `serialNumber` is a function of the input hash. *Verify:* `tests/fast/test_sbom_determinism.py`. *Tier:* fast. *When:* after MS2.
 - **S01-AC-10** — Formulation: with pins and lock fixtures, the stage3 digest, snapshot sha256, builder digest, `versions.lock` sha256 and kernel SHA-512 are recorded. In `--ci`, removing any one input is exit 2. Locally it is omitted, not invented. *Verify:* `tests/fast/test_sbom_formulation.py`. *Tier:* fast.
 - **S01-AC-11** — Tool identity: `enrich --expect-syft-version X` exits 1 when the stub `syft --version` differs. `metadata.tools` records the actual Syft and grype versions. *Verify:* `tests/fast/test_sbom_tools.py` (stub binaries on `PATH`). *Tier:* fast.
-- **S01-AC-12** — The pinned Syft runs on a fixture sysroot (two vdb entries) and on the pinned builder image by digest, with the flags the tool uses, and emits the expected components. *Verify:* `oracle/supplychain/syft-smoke.sh`, run in the builder image by the I03/B06 job. *Tier:* slow.
-- **S01-AC-13** — On the real CI sysroot, `sbom.py generate` exits 0, `bom.cdx.json` validates, completeness holds, and the file is under 4 MiB (a guard against file components returning). *Verify:* the `attest` job step "SBOM" in `build.yml` (size asserted by `sbom.py generate`). *Tier:* slow.
+- **S01-AC-12** — The pinned Syft runs on a fixture sysroot (two vdb entries) and on the pinned builder image by digest (in the rc1 lane, the adopted rc1 builder), with the flags the tool uses, and emits the expected components. *Verify:* `oracle/supplychain/syft-smoke.sh`, run in the builder image by an I03 job; no build needed. *Tier:* slow.
+- **S01-AC-13** — On the real CI sysroot of our first ISO, `sbom.py generate` exits 0, `bom.cdx.json` validates, completeness holds, and the file is under 4 MiB (a guard against file components returning). *Verify:* the `attest` job step "SBOM" in `build.yml` (size asserted by `sbom.py generate`). *Tier:* slow.
+- **S01-AC-14** — Reproduction of rc1: `sbom.py generate --kind target` on rc1's extracted squashfs (O01 fixture, fetched by digest), with `--iso-sha256 a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a`, produces a `bom.cdx.json` that differs from rc1's (sha256 `3cfc322a0e105638452baa6900552769a6ad5bfbf3be190a9808ac98ca575887`) only in fields listed in `rc1-sbom-diff.yaml` (`volatile` plus `deliberate`). The output validates and passes the completeness check. Any package or file-component difference fails the test. The test fails, not skips, if a fixture is absent. *Verify:* `tests/slow/test_sbom_rc1.py`, run by the rc1-lane CI job with the pinned Syft; it needs no build. *Tier:* slow.
 
 ## RED plan
 
-- Tester writes `tests/fast/test_sbom_{enrich,gaps,completeness,propagate,denylist,schema,determinism,formulation,tools}.py` first. They import `supplychain.sbom`, which does not exist, so every one fails at import. The commit carries `TDD-Red-Target: test-fast`.
-- The Syft fixtures `tests/fixtures/supplychain/syft/*.json` are hand-reduced from a real Syft run. Until a real run exists (MS2), a minimal hand-written CycloneDX with the fields S01 reads is used: name, version, licenses, cpe, purl, type, properties, bom-ref. Slice 0 replaces it with a reduced capture from the first CI run.
-- Vendored schemas are moved verbatim from the old repo in the RED commit's parent, so AC-7's closure test is meaningful.
+- Slice 0 is the port, not a RED commit: `scripts/enrich-sbom.py`, the `attestation.sh` Syft calls, the CPE data and the schemas move into `supplychain/` unchanged, with the predecessor's behaviour as the baseline. AC-14 is written first against that port, with `deliberate: []`.
+- The tester then writes `tests/fast/test_sbom_{enrich,gaps,completeness,propagate,denylist,schema,determinism,formulation,tools}.py`. Each tests a change from the table in Design, so each fails against the port (no completeness check, silent propagation skip, and so on). The commit carries `TDD-Red-Target: test-fast`.
+- The Syft fixtures `tests/fixtures/supplychain/syft/*.json` are reduced from a real Syft run on rc1's rootfs, which the rc1 lane makes possible at once. They are not hand-written.
+- Vendored schemas are moved verbatim from the old repo in the port slice, so AC-7's closure test is meaningful.
 
 ## Risks and open questions
 
 - Pinned `check-jsonschema` must be in the builder image; fast tests need it too. Ask I03 to declare it as a host tool.
-- The rc1 SBOM (`bom.cdx.json` attached to the GitHub release v0.1.0-rc1) is the best real fixture for S01 through S03 and for O07. Fetching it needs network. Owner of the fixture path `tests/fixtures/rc1/bom.cdx.json` is O07; whichever node runs first fetches it and verifies it against the release's `SHA256SUMS`. Not verified here.
+- The rc1 SBOM (`bom.cdx.json` on the GitHub release v0.1.0-rc1, sha256 `3cfc322a…75887`) and rc1's extracted squashfs are the real fixtures for S01 through S04 and O07. O01 owns fetching them by digest (`oracle/fixtures/rc1.yaml`); they are never committed. Whether the rc1 SBOM was produced by exactly `b9f533b`'s `enrich-sbom.py` is not verified. If it was not, AC-14's `deliberate` list absorbs the difference with a stated reason.
+- Propagation in the rc1 lane needs a host vdb with musl, grub and syslinux. The adopted rc1 builder image (I03) is that host. A fixture host vdb is the fallback.
+- If rc1's SBOM cannot be reproduced even with a long `deliberate` list, that is a finding about the predecessor, not a reason to loosen AC-14. Record it as a spec defect and stop.
 - `grype`'s and `syft`'s CLI flags can change between versions. The smoke test (AC-12) is what catches this after a pin bump (M04).
 - Whether Syft on a registry image digest produces portage components identically to `dir:/` is unknown. AC-12 decides it; fallback is `docker save` plus `syft docker-archive:`.
 - The completeness check assumes Syft names equal vdb `cat/PN`. rc1's `bare_name` handling (`enrich-sbom.py:66-84`) suggests Syft sometimes emits other forms. Slice 0 measures this on the first real capture.
-- No OD applies. OD-3 (language) is assumed at its default.
+- OD-3 (language) is assumed at its default. OD-6 (rc1's tree) keeps the SBOM diff against rc1 small, which AC-14 relies on.
 
 ## Cost
 
 - Slices: 4.
-  1. Port plus package shape plus CPE and gaps (AC-1, 2, 3).
-  2. Integrity checks (AC-4, 5, 6).
-  3. Schema, determinism, formulation (AC-7, 9, 10).
+  1. Port, with AC-14 reproducing rc1 on its rootfs; then package shape, CPE and gaps (AC-14, 1, 2, 3).
+  2. Integrity checks (AC-4, 5; AC-6 after MS2).
+  3. Schema, formulation (AC-7, 10); AC-9 after MS2.
   4. Tool pin, smoke script, attest-job wiring (AC-8, 11, 12, 13).
-- CI build cycles: 2. One to capture real Syft output and run the smoke script, one to confirm AC-13 on the real sysroot. Both need the MS2 ISO pipeline, so slow ACs wait for B06. Fast ACs do not.
-- Money: none beyond CI minutes. The Syft registry scan reads the builder image from the registry (egress within GitHub, free).
+- CI build cycles: 0 for the rc1 lane (AC-12 and AC-14 run on fetched rc1 artifacts and the adopted builder image). 1 for AC-13, on our first ISO in B06's pipeline (MS1); it adds no build of its own.
+- Money: none beyond CI minutes. The Syft registry scan reads the builder image (1.36 GB) from GHCR within GitHub, free. The size of the rc1 squashfs download per run is not measured here.
 
 ## Spec defects found
 
-1. **Pipeline order.** SPEC 4.1 draws S01 fed only by the squashfs, but the SBOM must carry the ISO hash, so it runs after B05. The graph dependency (B04) is enough for the code, but B06/S05 must order the attest job after the ISO exists. S05 owns the ordering; stated here so it is not missed.
-2. **Missing deps.** S01's formulation reads `pins/pins.yaml` (I05) and `pins/versions.lock` (R02). In `--ci` mode AC-10 cannot go green before those exist. Either add S01 -> I05, R02 or accept that AC-10 runs against fixtures until then. Recommend adding both edges; neither creates a cycle.
-3. **D-no-readding-removed-things.** SPEC section 3 names R02 as the enforcer, but R02's graph summary is version-lock completeness and says nothing of a denylist. S01's denylist covers only the two S01-named doctrines. Someone must own the full removed-packages list.
-4. **"SPDX" in S01's summary** is ambiguous (SPDX-format SBOM versus SPDX license-id schema). Read here as the latter. Owner to confirm.
-5. **Protected paths.** SPEC section 8 protects `supplychain/policy/` from agents. `cpe-overrides.yaml`, `cpe-exclusions.yaml` and `sbom-propagate.yaml` are data that agents must be able to edit, so they live in `supplychain/data/`. The denylist tightens the build and sits in `policy/`. Confirm this split.
+1. **Pipeline order.** SPEC 4.1 draws S01 fed only by the squashfs, but in a pipeline the SBOM must carry the ISO hash, so it runs after B05. S01 no longer depends on B05 (the rc1 lane needs no build). B06/S05 must order the attest job after the ISO exists. S05 owns the ordering; stated here so it is not missed.
+2. **"SPDX" in S01's summary** is ambiguous (SPDX-format SBOM versus SPDX license-id schema). Read here as the latter. Owner to confirm.
+3. **Protected paths.** SPEC section 8 protects `supplychain/policy/` from agents. `cpe-overrides.yaml`, `cpe-exclusions.yaml` and `sbom-propagate.yaml` are data that agents must be able to edit, so they live in `supplychain/data/`. The denylist tightens the build and sits in `policy/`. Confirm this split.

@@ -1,6 +1,7 @@
 # The Monolith — Specification
 
-Version 0.2 (draft, 2026-10-27; revised after the node-spec review). This document is the authority for the repository. Where a node
+Version 0.3 (draft, 2026-10-27; v0.2 revised after the node-spec review; v0.3 adds port-first, the build cache and
+the path to the first attested build in `docs/first-attested-build.md`). This document is the authority for the repository. Where a node
 spec (`nodes/<id>.md`) and this document disagree, this document wins and the node spec is a defect.
 The dependency graph is `docs/graph.yaml`. The study of the predecessor repository is frozen in
 `docs/study/` and is evidence, not authority.
@@ -17,8 +18,10 @@ This repository is a rebuild. Its predecessor, `tuckermclean/linux-live-iso-fact
 `b9f533b`, released `v0.1.0-rc1`), proved the product and accumulated the knowledge to build it. Its
 factory — the workflows, scripts and storage around the recipes — grew piecemeal, hard-wired one
 storage vendor into five jobs, and died when that vendor's account was disabled. The rebuild keeps
-the **recipes** (the hard-won ebuilds, configs and patches), rebuilds the **factory** from the
-principles below, and uses the predecessor's **tests** as the acceptance oracle.
+the **recipes** (the hard-won ebuilds, configs and patches), ports the **factory** onto the
+principles below (Principle 11: port first, then fix), and uses the predecessor's **tests** as the
+acceptance oracle. Three predecessor assets survive and are reused by digest: rc1's builder image, rc1's
+binary-package cache (both on GHCR), and the v0.1.0-rc1 release (ISO, SBOM, checksums).
 
 ### 0.1 The myth (and why it is load-bearing)
 
@@ -75,6 +78,12 @@ These come from what failed in the predecessor. Each is enforced by at least one
    live apart; builds never write into tracked files. (R04, B02)
 10. **One identity per actor.** One human author identity, one agent bot identity, one trailer format;
     CI rejects others. (F04)
+11. **Port first, then fix.** Code and recipes carry forward from the predecessor unchanged unless an
+    acceptance criterion requires a change. A rewrite states which criterion forces it. Fixes for the
+    study's verified bugs are separate, named criteria, so every behaviour change is visible. (all nodes)
+12. **Iterate from cache; release from source.** Development builds restore every artifact whose
+    complete input key matches (I06), so a change rebuilds only what it touches. Release builds read no
+    cache and audit it instead. (I06, B01, P02)
 
 ---
 
@@ -94,7 +103,7 @@ Hard rules about the product. Ids match `docs/study/doctrine.yaml`, which holds 
 | D-486-tier-regime | Kernel drivers: Tier 0 `=y` boot-critical, Tier 1 `=m` in initrd, Tier 2 `=m` on squashfs. | R04, B02 |
 | D-static-musl-cross-all-the-way | i486-linux-musl via crossdev; host build tools are 32-bit-capable. | I03 |
 | D-supply-chain-honesty | Releases come only through the verifiable pipeline; the digest chain holds. | S05, P02 |
-| D-tag-builds-from-source | Release builds compile every package from source; no cached binary enters a signed release. | P02 |
+| D-tag-builds-from-source | Release builds compile every package from source; no cached binary enters a signed release. The cache (I06) serves iteration only. | B01, P02 |
 | D-revbump-on-overlay-change | Changing an ebuild or its files requires `-rN` and a versions.lock bump. | R03 |
 | D-hand-authored-rootfs-files-owned | Every rootfs file is owned by a package or a justified allowlist entry. | R05, S04 |
 | D-state-and-no-hidden-stderr | No `2>/dev/null` on paths that decide success; every test must mean something. | F01 lint |
@@ -115,7 +124,7 @@ pins/pins.yaml ─┐
                 └─▶ [I04] distfiles (store: distfile) ─┤
 recipes/ ───────────────────────────────────────────────┤
                                                         ▼
-            [B01] packages (store: binpkg cache, keyed by tree+profile hash)
+            [I06] cache ─▶ [B01] packages (restore by key in dev; from source on tags)
                  ├─▶ [B02] kernel + modules ─▶ resolved .config (artifact)
                  │        └─▶ [B03] initrd
                  └─▶ [B04] rootfs ─▶ squashfs
@@ -130,13 +139,15 @@ recipes/ ───────────────────────�
 
 Within one CI run, artifacts move between jobs as Actions artifacts only. Never `actions/cache`: cache
 entries are immutable per key, so a re-run silently reuses the first attempt's bytes
-(T-run-rerun-reuses-cache). The store is for things that outlive a run. The SBOM is taken after
-B05 because it records the ISO digest.
+(T-run-rerun-reuses-cache). The store is for things that outlive a run, including the build cache
+(§5.1), whose keys are complete input hashes, so a re-run can only ever get the bytes its inputs
+name. The SBOM is taken after B05 because it records the ISO digest.
 
 ### 4.2 Repository layout
 
 | Path | Contents | Owner node |
 |---|---|---|
+| `Makefile`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`, `.gitignore` | Root files and make entry points (fragments in `factory/mk/`, `oracle/oracle.mk` are included from here) | F01 |
 | `SPEC.md`, `docs/graph.yaml`, `nodes/` | Specification, graph, node specs | F02 |
 | `docs/system.yaml` | System inventory | F03 |
 | `docs/study/` | Frozen study of the predecessor (read-only) | — |
@@ -157,6 +168,8 @@ B05 because it records the ISO digest.
 | `factory/mk/`, `factory/data/`, `factory/lib/` | Make fragments included by the root `Makefile`; build data (e.g. `boot/boot-contract.yaml`); shared libraries incl. `factory/lib/store/` backends | B0x, F06 |
 | `recipes/IMPORT.yaml`, `recipes/kernel/legacy/` | Import provenance (hashes at `b9f533b`); the predecessor's kernel files, frozen, read-only | R01, R04 |
 | `oracle/policy/`, `oracle/golden/`, `oracle/modes.yaml` | Oracle policy (allowlists, expected differences), golden images, mode registry | O0x |
+| `oracle/fixtures/rc1.yaml` | The rc1 fixture set: release asset URLs and sha256, fetched on demand, never committed | O01 |
+| `factory/data/cache-inputs.yaml`, `factory/data/build-env.yaml` | Extra per-package cache inputs; the emerge options and variables that shape outputs | I06 |
 | `web/vendor/` | Vendored, pinned front-end libraries (`VENDOR.lock`) | P03, P04 |
 | `docs/status.yaml` | Node status (`done`, `in-progress`) read by `tools/graph --ready` | F02 |
 | `.github/CODEOWNERS`, `.github/dependabot.yml` | Owner-review routing; action updates | F04, M04 |
@@ -164,9 +177,9 @@ B05 because it records the ISO digest.
 ### 4.3 Languages
 
 Factory steps are POSIX `sh` or `bash`. Host-side tools (oracle harness, supply-chain gates,
-validators) are Python 3, standard library plus PyYAML only, running on the host or builder — never
-on the target (D-no-python-on-target). That rules out `pexpect`: the boot harness carries its own
-small expect engine (O01). The dashboard's tests are the one place another runtime may be needed
+validators) are Python 3, standard library plus PyYAML, running on the host or builder — never on the
+target (D-no-python-on-target). The boot harness keeps the predecessor's `pexpect`, pinned on the CI
+host (Principle 11; v0.2 required a stdlib rewrite, which bought nothing). The dashboard's tests are the one place another runtime may be needed
 (OD-14). OD-3 records the alternative language choice.
 
 ---
@@ -179,10 +192,10 @@ All durable bytes go through `factory/bin/store`. Nothing else may call a storag
 
 | Class | Contents | Key | Retention |
 |---|---|---|---|
-| `snapshot` | Gentoo portage snapshots + signatures | `gentoo-<epoch>.tar.xz[.gpgsig]` | forever |
+| `snapshot` | Gentoo trees: commit archives (I02) and, for later epochs, signed daily snapshots | `gentoo-<commit40>.tar.xz` + `gentoo-<commit40>.json`; `gentoo-<epoch>.tar.xz[.gpgsig]` | forever |
 | `distfile` | Source tarballs, archived git sources, vendored crates | `sha256/<hex>` (+ `index/sha512/<hex>`, since Manifests carry SHA512) | while referenced by a live tree or any release |
-| `binpkg` | Binary package cache | `<tree-hash>/<profile-hash>/<cpv>.gpkg.tar` | not referenced by a live tree and older than 30 d |
-| `build` | Per-build outputs worth keeping (ISO, SBOM, attestation files, logs) | `builds/<version>/<file>` and `builds/<version>/attestation/<file>` | tags forever; others 30 d |
+| `binpkg` | Build cache: binary packages (§5.1) | `<global-key>/blobs/<sha256>.gpkg.tar`, `<global-key>/sets/<utc>-<run>.json`; PR runs write under `pr-<n>/` | global key unused for 30 d; `pr-*` 14 d; rc1 seed kept until MS4 |
+| `build` | Per-build outputs worth keeping (ISO, SBOM, attestation files, logs); whole-build memo (§5.1); rc1 fixtures | `builds/<version>/<file>`, `builds/<version>/attestation/<file>`, `memo/<input-hash>/<file>`, `fixtures/rc1/<file>` | tags and fixtures forever; memo and others 30 d |
 | `public` | Anything served to the world (dashboard, ISO for demo, status) | stable path | per P01 |
 
 **Operations:** `put <class> <key> <file>`, `get <class> <key> <dest>`, `has <class> <key>`,
@@ -199,16 +212,54 @@ keys matching `factory/data/public-mutable.txt`, e.g. `latest.json`, indexes, `s
 - No backend writes to stdout except data requested; diagnostics go to stderr, never suppressed.
 - Declared exceptions: the `oci` backend cannot make two concurrent `put`s of one key atomic, so the
   contract suite's concurrency case is documented as a known deviation for `oci` (I01); and the builder
-  image is pushed to GHCR by `docker push` (I03), the one storage write outside `store`.
+  image is pushed to GHCR by `docker push` (M02), the one storage write outside `store`; and the rc1
+  builder image and binpkg seed are plain OCI artifacts, read by digest through `store-adopted get`
+  (I01), never written. `ls --long` and `rm` need credentials even where reads are anonymous.
 
-**Backends:** `fs` (tests, local dev), `oci` (GHCR via pinned `oras`, I01), `public` (P01, OD-1).
+**Backends:** `fs` (tests, local dev), `oci` (GHCR via pinned `oras`, I01), `public` (P01, OD-1). Local
+builds may read the `oci` backend anonymously (the packages are public) and write to `fs`.
+
+### 5.1 The build cache (I06)
+
+- **Global key** = sha256 over a canonical record of: builder image digest, tree pin (commit), the
+  global portage config (`make.conf`, `bashrc`, `profile/`, `env/`), overlay eclasses, and
+  `factory/data/build-env.yaml` (emerge options and variables that shape outputs). Any change to these
+  can change every package, so it opens a new, empty namespace.
+- **Per-package fingerprint** = sha256 over what portage cannot see: the package's ebuild and
+  `files/` (overlay packages), its savedconfig, the `package.env` lines that match it and the env files
+  they name, user patches, and paths listed for it in `factory/data/cache-inputs.yaml` (for example
+  `recipes/kernel/` for the kernel package). Version and USE are checked by portage itself
+  (`--binpkg-respect-use=y --binpkg-changed-deps=y`).
+- **Consistent sets.** Package blobs are stored by content hash. Each run that built packages writes
+  one immutable *set*: the cpv → (fingerprint, blob sha256) of every package in its final sysroot. A set
+  is internally consistent because each package in it was built against the others. Restore takes the
+  newest set in its namespace and places only the entries whose fingerprint still matches.
+- **Static dependents.** Every library is linked statically, so a dependent's bytes contain its
+  dependencies. Restore therefore runs with `--rebuild-if-unbuilt=y`: any package built from source
+  in a run forces its build-time reverse dependencies to rebuild in that run. (The predecessor ran plain
+  `--usepkg`, `scripts/build-packages.sh:221`, so a cached dependent could embed a stale library.)
+- **Honest restore.** Only matching entries are placed in `PKGDIR`; every world atom is reported as
+  `built` or `cache:<sha256>`. Auth and network errors fail the run.
+- **Whole-build memo.** The ISO input hash covers the global key, every fingerprint in the plan, and
+  `factory/`, `recipes/`, `pins/`, `image/`, `.github/workflows/`. A non-release run whose hash has a memo entry reuses the
+  ISO and SBOM, and re-runs only the oracle and gates whose own inputs changed. Oracle results are keyed
+  by (ISO sha256, mode definition, harness hash).
+- **Writers.** Runs on `main` write the shared namespace; PR runs write `pr-<n>/` and read both.
+  Memo entries follow the same rule, and a PR's memo is read only by that PR.
+- **Release builds** never restore. After building from source they compare each package's payload
+  with the cache entry of the same key and report mismatches (input to B07, non-blocking until then).
+- **Seed.** rc1's binpkg cache becomes the first set under the global key that the verbatim R01
+  import, the adopted builder and the recovered tree produce. A package is kept only if its embedded
+  ebuild matches the pinned tree (or the imported overlay) byte for byte and, where the predecessor
+  recorded a savedconfig hash, that hash matches.
 
 ---
 
 ## 6. Pins and inputs
 
-`pins/pins.yaml` (I05) is the single source of versions: `TOOLCHAIN_EPOCH`, `BUILD_EPOCH`,
-`SOURCE_DATE_EPOCH` derivation, the stage3 tarball (sha256 of the signed autobuild, I03), builder image
+`pins/pins.yaml` (I05) is the single source of versions: `TOOLCHAIN_EPOCH`, the runtime tree pin
+(`BUILD_EPOCH` names it; I02 pins it by gentoo-mirror commit, and the first pin is rc1's tree),
+`SOURCE_DATE_EPOCH` derivation, the stage3 image for builder rebuilds (by digest, M02), the builder image
 digest, crossdev versions (via `crossdev.lock`), rust toolchain, syft, grype, oras, actionlint,
 shellcheck, the boot-media tools (grub, syslinux, xorriso, mtools, dosfstools, squashfs-tools), the
 CI-host QEMU and OVMF, v86, and `PUBLIC_BASE_URL`. GitHub Action SHAs have exactly one home: the
@@ -231,6 +282,11 @@ building `image/`, so an image change lands as two commits: the change, then the
   `v0.1.0-rc1/bom.cdx.json`, every added or removed package and file is listed with a reason. Version
   movement inside packages present in both is summarised by policy, because a new `BUILD_EPOCH` moves
   most versions (O07).
+- **rc1 lane:** the oracle and the gates are developed against the v0.1.0-rc1 artifacts before this
+  repo builds anything (`oracle/fixtures/rc1.yaml`: ISO sha256 `a9600659…eb27a`, SBOM sha256
+  `3cfc322a…75887`, fetched by digest, never committed). Where rc1 fails a check because of a known
+  predecessor bug (for example the shipped musl loader), the check records it as an expected rc1 failure
+  with the study id, so the same check passes on rc1 and is strict on our builds.
 - Serial milestones, the ISOLINUX `serial` label and GRUB entry `(serial)` are interfaces between the
   harness and the disc; changing them is a breaking change to both (O01, B05).
 
@@ -303,7 +359,8 @@ Agent slices (3–8 ACs each), expected CI build cycles, anything that costs mon
 
 A node spec may end with an optional `## Spec defects found` section listing defects in SPEC or the
 graph that it found; the section is emptied when they are fixed. The **Unlocks** column is derived
-from the graph and regenerated by F02. AC ids are `<NODE>-AC-<n>`, numbered from 1, never reused. Sizes: S ≈ one slice, under a day;
+from the graph and regenerated by F02. AC ids are `<NODE>-AC-<n>`, numbered from 1, never reused. A removed AC
+stays as `- **<NODE>-AC-<n>** — *Withdrawn (v0.3):* <reason; the node that now owns it, if any>.` Sizes: S ≈ one slice, under a day;
 M ≈ 2–3 slices; L ≈ 4+ slices or more than three slow CI cycles.
 
 ---
@@ -314,12 +371,12 @@ Owner decisions. A node that names one in `decision:` does not start until it is
 
 | Id | Question | Default if unanswered |
 |---|---|---|
-| OD-1 | Public hosting and domain. `themonolith.org` belongs to a third party (it serves a live site), so it is out. The owner's unused domains are `technomantics.com` and `oracube.com`; `tuckermclean.com` is the personal site and `dcxxiv.com` the infra domain. The URL is baked into every ISO's advisory check, so it must be a dedicated name that can be repointed for decades. Host: Cloudflare R2 (S3-compatible, no egress fees, CORS) or another? | `monolith.technomantics.com` on R2 |
+| OD-1 | Public hosting and domain. The advisory URL is baked into every disc from the first attested build on, so the name must be chosen before MS2 even if the service (P01, P05) comes later. `themonolith.org` belongs to a third party (it serves a live site), so it is out. The owner's unused domains are `technomantics.com` and `oracube.com`; `tuckermclean.com` is the personal site and `dcxxiv.com` the infra domain. The URL is baked into every ISO's advisory check, so it must be a dedicated name that can be repointed for decades. Host: Cloudflare R2 (S3-compatible, no egress fees, CORS) or another? | `monolith.technomantics.com` on R2 |
 | OD-2 | Static truth: make every rootfs binary static (fix util-linux, iproute2, dhcpcd, procps, tar, gawk), or keep a small dynamic allowlist and change the doctrine? | Allowlist now, each entry with an issue to remove it |
 | OD-3 | Factory language: bash + Python stdlib (as predecessor), or Go like strange-company? | bash + Python stdlib |
 | OD-4 | Agent bot identity name and account. | `monolith-agent[bot]` |
 | OD-5 | Distfiles mirror scope: every distfile (storage cost, GB) or only those upstream may lose (git snapshots, unversioned URLs)? | every distfile |
-| OD-6 | Is the AWS account recoverable? If so, rescue `gentoo-20260811.tar.xz` into the snapshot store so rc1 stays reproducible. | treat as lost; first epoch is current |
+| OD-6 | First tree pin: rc1's tree recovered from gentoo-mirror git (rc1's binpkg cache stays valid; the SBOM diff against rc1 is small; but the packages are from 2026-08 and the CVE gate may need waivers), or a current tree (fresh packages; one cold build per iteration until the cache fills; large diff against rc1)? AWS recovery no longer matters for this. | rc1's tree; M01 bumps it right after MS2 |
 | OD-7 | Long-term CI: stay on GitHub Actions, or onboard to strange-company (Forgejo/Woodpecker) at its S01? | GitHub Actions; keep layout compatible |
 | OD-8 | First release version from this repo. | v0.2.0 |
 | OD-9 | Does a CVE in the builder image block a release? (S03 makes the builder scan report-only by default.) | report-only; the owner reviews it at release |
@@ -328,6 +385,7 @@ Owner decisions. A node that names one in `decision:` does not start until it is
 | OD-12 | Hyper-V: provide manual evidence on real Hyper-V, fund a cloud run, or drop the claim? | CI proxies + dated manual evidence files |
 | OD-13 | Keep the undocumented Tier-0 `NET_9P`, `NET_9P_FD`, `NETFS_SUPPORT` symbols? | keep, documented |
 | OD-14 | Dashboard tests need a JS runtime: allow Node on the CI host only, or test the SPA through Python-driven fixtures? | Node on the CI host only, pinned |
+| OD-15 | The first attested build is a prerelease (`v0.2.0-rc1`). If the CVE gate blocks it on rc1's 2026-08 tree, waive with expiry or bump the tree first? | waive with 30-day expiry; M01 bump follows |
 
 ---
 
@@ -339,4 +397,10 @@ Owner decisions. A node that names one in `decision:` does not start until it is
 - Further trailers (F04): `TDD-Slow-Only: <reason>` for a change whose only meaningful test is slow-tier,
   `TDD-Test-Correction: <AC id>` for an owner-approved fix to a RED test.
 - Every PR body has the criterion → test → result table and the CI run links.
-- Phases other than F start only after MS1 (the loop is online); `tools/graph --ready` enforces it.
+- Any node may start once its deps are done; the loop (F05) is not a gate. Before MS3, the owner or an
+  ordinary session builds nodes under the same rules (RED first, one PR per node, trailers).
+- `track` in the graph orders the work: `critical` nodes first (the ancestors of P02, derived),
+  `parallel` when a slot is free, `deferred` after MS2. `tools/graph --ready` lists them in that order.
+- An AC may end with `*When:* after MS2`. Such an AC does not block the node's merge; the node is
+  `partial` in `docs/status.yaml` until it passes. A `partial` node satisfies its dependents. Only an AC that neither fixes a verified predecessor
+  bug nor guards the release path may carry it.

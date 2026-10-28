@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| F | F01 | I01 | — | M |
+| F | F01 | I01 | — (feeds MS1) | M |
 
 **Owns:** `factory/bin/store`, `factory/lib/store/core.sh`, `factory/lib/store/fs.sh`, `factory/lib/store/README.md` (backend interface), `tests/fast/store-contract.lib.sh` (the contract suite), `tests/fast/store-fs.test.sh`, `tests/fast/store-cli.test.sh`, `tests/fast/store-keys.test.sh`, `tests/fast/store-vendor.test.sh`
 **Carries from linux-live-iso-factory@b9f533b:** nothing as code. Lessons only: `scripts/binpkg-store.sh:337-339` (the fail-open classifier) and `scripts/sync-portage.sh:33,44` (error swallowing) are the anti-patterns this node exists to prevent.

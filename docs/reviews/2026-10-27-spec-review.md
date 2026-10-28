@@ -77,3 +77,35 @@ PR. Items fixed above are fixed; F02's first run clears the sections.
 - M03 needs I01 to define how a store key maps to a GHCR package version before `rm` is safe on `oci`.
 - Many first-run unknowns: TCG boot runtimes, distfiles volume (OD-5), reproducibility of kernel, GRUB
   and xorriso output, golden screendumps. Each is named in its node's Risks section.
+
+## Amendment v0.3 (same day)
+
+The owner pointed out that the predecessor already builds this product and asked for speed. v0.3
+changes the plan, not the product. The full plan is `docs/first-attested-build.md`.
+
+**Evidence gathered for v0.3**
+- rc1's builder image and binpkg cache survive on GHCR as public packages (digests in the plan).
+  The predecessor's GHCR GC is chained behind the failing AWS step, so it does not run today; Step 0
+  disables it anyway.
+- rc1's Gentoo tree survives in gentoo-mirror git history: 25 of 25 sampled `versions.lock` entries exist
+  at `d4d0b0c7` (2026-08-10T22:30Z).
+- Timings from the predecessor's runs: cache-hot build job 13 min, from-source tag build 78 min, 17 boot
+  modes ~10 min wall.
+- The predecessor restored binpkgs with plain `--usepkg` (`scripts/build-packages.sh:221`), so with
+  static linking a cached dependent could embed a stale library. I06 adds `--rebuild-if-unbuilt=y`.
+
+**Changes**
+- SPEC: Principles 11 (port first, then fix) and 12 (iterate from cache, release from source); §4.3 keeps
+  `pexpect`; §5.1 build cache; §7 rc1 lane; OD-1, OD-6 rewritten, OD-15 added; §9 withdrawn-AC format;
+  §11 drops the MS1 gate, adds `track` and `*When:* after MS2`.
+- Graph: new nodes I06 (build cache) and P06 (the disc side of the advisory feed, split from P05 because
+  its URL is baked into the first attested ISO); I02 renamed `portage-tree-pin`; `track` on every node (31
+  critical, 10 parallel, 11 deferred); milestones renumbered (MS1 first ISO, MS2 first attested build,
+  MS3 loop online, MS4 parity, MS5 cutover); O02, O06, S01, S04 no longer wait for a build of our own;
+  B01 no longer waits for R03, B04 for R05; R05 follows S04; B06 includes O02.
+- Nodes: amended to the above by five agents (Claude Sonnet) from a common brief; withdrawn ACs keep
+  their ids.
+
+**Considered and dropped:** a thin "core world" first ISO. With rc1's cache restored, a full-world
+iteration costs about the same as a core-only one, and a core-only ISO cannot pass about half of the
+seventeen modes (nat, gui, stele-acid2 and others need non-core packages), so it would have added batch nodes without saving time.

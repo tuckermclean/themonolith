@@ -2,14 +2,14 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| P | I01 | P03, P05 | — | M |
+| P | I01 | P03, P05 | — (feeds MS5) | M |
 
 **Owns:** `factory/lib/store/public_s3.py` (S3-protocol client, SigV4, stdlib only), `factory/lib/store/public.sh` (the `public` backend adapter for `factory/bin/store`), `factory/lib/store/public-mutable.txt` (mutable key patterns), `tests/support/range_server.py` (range- and CORS-capable local server, also used by P03/P04), `tests/support/fake_s3.py` (fake S3 endpoint with failure modes), `tests/smoke/public-host.sh` (live host check), `docs/decisions/0001-public-hosting.md`, `docs/hosting.md` (host requirements and setup runbook), `.github/workflows/public-smoke.yml`.
 **Carries from linux-live-iso-factory@b9f533b:** nothing. Only the knowledge of what the old bucket had to do (Range, CORS, public read; `web/app/view-boot.js:70`, `docs/study/supplychain.yaml` `web_runtime_fetches.cors_and_range_requirements`).
 **Study refs:** supplychain `web_runtime_fetches` (CORS/Range, regional vs global host), supplychain open question "exact CORS configuration of the bucket", supplychain contradiction "two hostnames for the same bucket", workflows `secrets_inventory` (`AWS_*`, `S3_BUCKET`), D-s3-publish-only (superseded), SPEC §2 principle 1, SPEC §5, SPEC §10 OD-1.
 
 ## Purpose
-After this node, anything the world reads — dashboard, ISO for the demo, status files — is served from one stable HTTPS origin, written only through `factory/bin/store` class `public`. No workflow, script or page names a storage vendor; the vendor appears only in a decision record and in repository secrets. Changing host later means changing four secrets and one pin, not code. The old bucket died with the AWS account, and its hostnames were baked into the shipped ISO; this node prevents a repeat.
+After this node, anything the world reads — dashboard, ISO for the demo, status files — is served from one stable HTTPS origin, written only through `factory/bin/store` class `public`. No workflow, script or page names a storage vendor; the vendor appears only in a decision record and in repository secrets. Changing host later means changing four secrets and one pin, not code. The old bucket died with the AWS account, and its hostnames were baked into the shipped ISO; this node prevents a repeat. The name is the urgent part: OD-1 says the advisory URL is baked into every disc from the first attested build (MS2) on, so the domain and `PUBLIC_BASE_URL` must be fixed before MS2 even though the host and this node are on the parallel track and may follow it.
 
 ## Scope
 In:
@@ -39,7 +39,7 @@ Out:
 | H7 | Per-object `Cache-Control` set at upload. | Immutable keys cache forever; mutable keys must not go stale. |
 | H8 | An S3-compatible write API (`PUT`, `HEAD`, `GET`, `ListObjectsV2`) with a scoped key pair. | The `public` backend speaks only this. A host without it needs a new backend; the contract suite still applies. |
 | H9 | Egress cost is flat or zero. | A 212 MB ISO downloaded 1,000 times is 212 GB. |
-| H10 | Domain under owner control, with a path to move DNS to another host. | The domain is baked into released ISOs (P05). It outlives any host. |
+| H10 | Domain under owner control, with a path to move DNS to another host. | The domain is baked into every disc from the first attested build on (P05). It outlives any host. |
 
 ### Recommended default (OD-1 default, restated)
 Cloudflare R2 bucket, custom domain `monolith.technomantics.com` (OD-1 default) (zone on Cloudflare DNS, which R2 custom domains require). Reasons: no egress fee, S3-compatible API, CORS settings, free tier covers this project.
@@ -53,7 +53,7 @@ Approximate cost (verify against current price lists before relying on them):
 | Stored data | releases: 212 MB x about 6 per year = 1.3 GB/yr; CI rows: about 5 MB x 52/yr = 0.3 GB/yr (5 MB per row is an assumption; measure after the first publish) | under 2 GB/yr |
 | Egress | $0 | $0 |
 | Operations | Class A (writes/lists) about $4.50 per million, Class B (reads) about $0.36 per million; free allowances of 1 M and 10 M per month | $0 at this volume |
-| Domain | `.org`, about $10–15 per year | the only real cost |
+| Domain | `technomantics.com` is already owned; renewal only (price unverified) | the only real cost |
 | Plan | R2 may require a card on file even inside the free tier | verify |
 
 Alternatives, rejected as default:
@@ -75,7 +75,7 @@ Selection and configuration (names are vendor-free by design; F06 owns the dispa
 | `STORE_PUBLIC_REGION` | secret | defaults to `auto`. |
 | `PUBLIC_BASE_URL` | pin | the public origin. |
 
-Operations (extending SPEC §5; see defect 1):
+Operations (SPEC §5 defines `set public`):
 - `put public K FILE`: immutable. Same body is a no-op. A different body fails. Sets `Cache-Control: public, max-age=31536000, immutable`.
 - `set public K FILE`: overwrite, allowed only when `K` matches `factory/lib/store/public-mutable.txt`; any other key fails with a usage error. Sets `Cache-Control: no-cache` (always revalidate; the ETag makes that cheap).
 - `get public K DEST`, `has public K`, `ls public PREFIX`, `url public K` per SPEC §5.
@@ -89,6 +89,11 @@ Error mapping (the point of the contract): `404` on a credentialed `HEAD`/`GET` 
 Implementation: Python 3 stdlib (`http.client`, `hashlib`, `hmac`, `xml.etree`) in `public_s3.py` with AWS Signature V4 for `s3`. `public.sh` is a thin adapter. Rejected: `aws` CLI (large, another pinned tool, hides errors in output parsing), `rclone`/`mc` (same), `curl --aws-sigv4` (no `ListObjectsV2` parsing, awkward retries). A 200-line client fits the 486-minimal spirit for the factory too and can be tested against `fake_s3.py`.
 
 Uploads stream from disk; no multipart (ISO is under the 1 GiB bound; H5). A body over that bound fails loudly with the key and size.
+
+### OD-1 before MS2
+The decision has two parts with different deadlines.
+- **The name** (before MS2): the owner settles OD-1, `docs/decisions/0001-public-hosting.md` gets its first lines (`Resolves: OD-1`, the domain, the URL, who owns the registration), and `PUBLIC_BASE_URL` is pinned (I05). P05's `monolith-advisory-check` reads that name. None of this needs a running host or the `s3` backend.
+- **The host** (any time after, on the parallel track): the S3 backend, the live smoke and the full decision table (H1–H10). Until the host answers, the disc must not report a clean advisory state; P05 defines that behaviour.
 
 ### Fake and local servers
 `tests/support/fake_s3.py`: in-memory S3 subset with switchable faults (`404`, `403`-for-absent, `500`, slow, truncated body, wrong digest sidecar). `tests/support/range_server.py`: serves a directory with `Accept-Ranges`, `206`, CORS and preflight, so SPA and demo tests need no network.
@@ -120,24 +125,20 @@ Uploads stream from disk; no multipart (ISO is under the 1 GiB bound; H5). A bod
 - **P01-AC-12** — The decision record states the OD-1 outcome (host, domain, who owns the registration), a table that marks each of H1–H10 as met with the evidence, the approximate monthly cost, and an exit plan (how to move host without a new ISO). *Verify:* `tests/fast/decision-record-0001.test.sh` (required headings and a row per requirement). *Tier:* fast.
 - **P01-AC-13** — On the live host the smoke test passes: `206` with a correct `Content-Range` for a 256 MiB object, preflight headers per H4, `GET /` is HTML, `http://` serves no content, certificate valid. *Verify:* `public-smoke.yml` run on the chosen host (workflow_dispatch), log linked in the PR. *Tier:* slow.
 - **P01-AC-14** — A 256 MiB object round-trips through `store put public` / `store get public` on the live host with matching sha256, and a second `put` of the same body is a no-op. *Verify:* `public-smoke.yml` (same run, second job). *Tier:* slow.
+- **P01-AC-15** — `docs/decisions/0001-public-hosting.md` begins with `Resolves: OD-1` and names the domain and the full `PUBLIC_BASE_URL`, and the pin in `pins/pins.yaml` equals that URL. This is the only part of OD-1 needed before MS2; AC-12 to AC-14 may follow. *Verify:* `tests/fast/decision-record-0001.test.sh` (first lines and pin equality). *Tier:* fast.
 
 ## RED plan
 The tester writes AC-1 to AC-9 first, all in `tests/fast/`, using `fake_s3.py` and the recorded SigV4 vectors. They fail because `factory/lib/store/public_s3.py` and `public.sh` do not exist (the test scripts exit non-zero on "command not found", asserted by checking for the specific message so RED is not accidental). AC-10 depends on the smoke script and range server, written in the same slice. AC-12 fails because the decision record is absent. AC-13/14 are written last and run only after the owner supplies secrets.
 
 ## Risks and open questions
-- **OD-1 blocks the live ACs.** AC-1 to AC-11 do not need it; AC-12 to AC-14 do. Until it is settled, the node can reach "fast tier green" only.
-- `themonolith.org` is a third party's live site, so it is ruled out; OD-1 defaults to `monolith.technomantics.com`, a subdomain of a domain the owner holds and does not use. The domain is baked into released ISOs (P05); losing it orphans every ISO's advisory check. Set auto-renew and a multi-year term.
+- **OD-1 blocks the live ACs, and its name blocks MS2.** AC-1 to AC-11 do not need it; AC-12 to AC-15 do. Until it is settled, the node can reach "fast tier green" only. The name must be settled before the first attested build, because the disc bakes the advisory URL in (see "OD-1 before MS2").
+- `themonolith.org` is a third party's live site, so it is ruled out; OD-1 defaults to `monolith.technomantics.com`, a subdomain of a domain the owner holds and does not use. The domain is baked into every ISO from the first attested build on (P05); losing it orphans every ISO's advisory check. Set auto-renew and a multi-year term.
 - R2 custom-domain behaviour for `/` (H6) and conditional `PUT` are unverified. The adapter uses `HEAD` then `PUT`, which is safe only because P03 serialises all writers in one concurrency group.
 - Workflow files (`public-smoke.yml`) can be pushed only with the owner's PAT (T-workflow-push-needs-pat). Agents hand off a patch.
 - Scheduled workflows are disabled after 60 days of repo inactivity (supplychain, T-canary-silence). The smoke check is on-demand by design; P03 shows a staleness banner instead of relying on a schedule.
 - 5 MB per CI row is an assumption; measure after the first publish and update the cost table.
 
 ## Cost
-- Slices: 3 (backend and fakes; smoke and range server; decision record and live checks). About 13 ACs.
+- Slices: 3 (backend and fakes; smoke and range server; decision record and live checks). About 14 live ACs.
 - CI build cycles: 0 full builds. One manual workflow run on the live host.
-- Money: domain about $10–15/yr; hosting about $0 on the recommended default at this volume (approximate, see table).
-
-## Spec defects found
-1. **SPEC §5 has no mutable write.** `put` is immutable, but the `public` class must hold mutable objects (`latest.json`, `builds-index.json`, `status/<tag>.json`, the site). This node adds `store set` limited to `public-mutable.txt`. SPEC §5 and F06 need the operation; F06's contract suite needs a test for it.
-2. **Protected paths miss the writers.** SPEC §8 protects `.github/workflows/release*.yml` only. The publisher (P03) and the advisory scanner (P05) hold `public` write credentials and feed what ISOs trust. Protect `.github/workflows/publish*.yml` and `.github/workflows/advisory*.yml` too.
-3. **SPEC §6 pin list omits `PUBLIC_BASE_URL`.** It must live in `pins/pins.yaml` (I05) because P05 bakes it into the ISO and P03/X01 read it.
+- Money: domain renewal only if the owner's existing domain is used; hosting about $0 on the recommended default at this volume (approximate, see table).

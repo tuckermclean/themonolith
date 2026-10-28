@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| P | P03 | X01 | — | M |
+| P | P03 | X01 | — (feeds MS5) | M |
 
 **Owns:** `web/app/view-boot.js` (replaces P03's placeholder), `web/vendor/v86/{libv86.js,v86.wasm,seabios.bin,vgabios.bin,VENDOR.lock}`, `web/vendor/v86/LICENSES/`, `factory/bin/vendor-v86`, `oracle/demo/v86-headless.mjs`, `.github/workflows/demo-check.yml`, `tests/smoke/demo-range.sh`, `tests/fast/web/view-boot.test.mjs`, `tests/fast/vendor-v86.test.sh`, `docs/boot-demo.md`.
 **Carries from linux-live-iso-factory@b9f533b:** `web/app/view-boot.js` (v86 options at `:90-102`, serial log, fullscreen, pointer lock), the layout idea of `boot.html` (not the file).
@@ -123,5 +123,5 @@ Tester writes AC-1, 2, 3, 10 first as `tests/fast/vendor-v86.test.sh` against a 
 - Money: none.
 
 ## Spec defects found
-1. **P04 depends on P03 only, but its slow ACs need a published release (P02).** The edge is transitive (P03 depends on P02), so the graph is correct. Noted so the loop does not start AC-11 before the rc exists.
+1. **P04 depends on P03 only, but its slow ACs need a published release (P02).** The edge is transitive (P03 depends on P02) and P04 is `deferred`, so `v0.2.0-rc1` exists when it starts (MS2). Nothing to fix.
 2. **SPEC §6 lists v86 as a pin without saying what it pins.** This node defines it as the npm version in `VENDOR.lock`; I05's "unused pin" check must read `web/vendor/v86/VENDOR.lock` as the consumer of that pin.

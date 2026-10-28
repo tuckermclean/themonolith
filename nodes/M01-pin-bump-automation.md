@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| M | B06, O02, I05 | M02, M04, X01 | — | M |
+| M | B06, O02, I05 | M02, M04, X01 | — (feeds MS5) | M |
 
 **Owns:** `.github/workflows/pin-bump.yml`, `.github/workflows/pin-bump-report.yml`, `factory/bin/pin-check`, `factory/bin/pin-apply`, `factory/bin/lock-diff`, `docs/pin-bump.md`, `tests/fast/pin-check.test.sh`, `tests/fast/pin-apply.test.sh`, `tests/fast/lock-diff.test.sh`, `tests/fast/pin-bump-workflow.test.sh`, `tests/fast/pin-bump-fixtures/`.
 **Carries from linux-live-iso-factory@b9f533b:** `.github/workflows/pin-bump.yml` (shape only: weekly cron, `target_epoch` dispatch input, concurrency group, `pins/bump-*` branch naming, PR body sections); `scripts/update-build-pins.sh` (`verify_portage_snapshot` idea, fail-closed sed read-back at :150-160, `cmd_update` flow); `docs/version-pinning.md` (two-pin model text, fixup loop at :330-356). Nothing from `scripts/update-versions.sh`; versions.lock regeneration is R02's.
@@ -10,6 +10,8 @@
 
 ## Purpose
 After this node a scheduled workflow proposes `BUILD_EPOCH` bumps as pull requests that the ordinary PR checks (B06 build, O02 core oracle) validate, and a human merges. The predecessor merged its own bumps with `gh pr merge --squash --admin`, contradicted its own docs, and its two observed "green" runs were no-op checks. This node makes a bump visible, honestly validated and human-merged.
+
+The first bump is special (v0.3, OD-6): the first attested build ships on rc1's tree, and M01's first bump moves off it right after MS2. That bump is a full rebuild by design, because the tree commit is part of I06's global cache key, so the PR runs against an empty cache namespace. R01's deferred batch (dead-config removal, comment fixes, workaround tags; R01-AC-3 to AC-7) rides in the same PR, since it also forces a full rebuild and the two should cost one cold build, not two.
 
 ## Scope
 In:
@@ -39,6 +41,14 @@ Out:
    d. Run R02's regeneration command inside the builder container (the builder ships no tree, so the command first stages the new snapshot with I02's `snapshot stage` and `snapshot webrsync`) with `--user "$(id -u):$(id -g)"`, bind-mounting `pins/`. The container never runs as root, so the files stay owned by the runner (T-pin-bump-root-owned-locks). Rejected: the predecessor's `sudo chown -R` after the fact.
    e. Run R02's validator on the new lock. A non-zero exit is a failure.
    f. Commit as the bot identity (OD-4 default `monolith-agent[bot]`), push `pins/build-epoch-OLD-NEW`, open the PR.
+
+### The first bump (right after MS2)
+Trigger: the owner dispatches `pin-bump.yml` once the `v0.2.0-rc1` release has been verified (MS2), with a target tree chosen by I02's `snapshot commit-at` (a current gentoo-mirror commit) and ingested by `snapshot seed`. It does not wait for the weekly schedule. Rejected: bumping before MS2 (it would void the rc1 seed and put a version question into every oracle failure, `docs/first-attested-build.md`).
+What makes it different from a routine bump:
+- **Full rebuild.** The global key (builder, tree, global portage config, eclasses, `build-env.yaml`) changes, so I06 restore finds no set and the PR's `packages` job builds everything from source in `pr-<n>/`. Measured on the predecessor, that is about 78 min for the build job and about 95 min to a tested ISO. The PR body says so up front, so a long first run is not read as a hang.
+- **R01's batch rides along.** The PR carries the deferred batch as its own commits ahead of the bump commit (`R01` owns the content; this node only sequences it): removals, comment fixes, `WA` tags, the stanza and path lints switched on. Doing it in the same PR means one cold build. The batch's lints (R01-AC-3 to AC-7) must be green on the PR head.
+- **Versions move.** `lock-diff` will show many MAJOR marks. The CVE gate's rc1-era waivers (OD-15) are reviewed in this PR: each waiver whose expiry has passed is removed, or re-justified by the owner in the PR.
+- **Cache afterwards.** Runs on `master` write the shared namespace under the new key. The first `master` run after merge is cold again (the PR wrote `pr-<n>/`, and a `main` run does not read `pr-*`), about 95 min once; later runs are warm. See Risks.
 
 ### `pin-check`
 `factory/bin/pin-check build-epoch [--target YYYYMMDD]`, Python 3 stdlib + PyYAML. Reads `epochs.build` with I05's `pin get`. Candidate = `--target`, else the newest `gentoo-YYYYMMDD.tar.xz` listed at the snapshot index (`PIN_SNAPSHOT_BASE_URL`, default `https://distfiles.gentoo.org/snapshots/`). The candidate is valid only if both `.tar.xz` and `.tar.xz.gpgsig` answer HTTP 200. Output, one line each on stdout: `current=…`, `candidate=…`, `action=bump|noop`, `reason=…`.
@@ -98,6 +108,9 @@ Sections: pin delta (`BUILD_EPOCH OLD -> NEW`, snapshot sha256 from the store), 
 - **M01-AC-11** — A real dispatch with a known-published older-than-latest `target_epoch` on a throwaway branch produces a PR whose diff contains the intended epoch and a regenerated `versions.lock`, whose build and core-oracle checks ran as PR checks, and whose report comment and label match those checks. *Verify:* CI job `pin-bump-e2e` (`workflow_dispatch` only, run once at node acceptance and recorded in the PR table); the PR stays unmerged. *Tier:* slow.
 - **M01-AC-12** — Only one bump PR is open at a time: a second run with an open `pins/build-epoch-*` PR exits 0 with a notice naming it and creates nothing. *Verify:* `tests/fast/pin-bump-workflow.test.sh` with stubbed `gh pr list` output. *Tier:* fast.
 - **M01-AC-13** — `docs/pin-bump.md` states that automation never merges, names `BUMP_TOKEN` and its scopes, and the repo contains no remaining text claiming auto-merge. *Verify:* `tests/fast/pin-bump-workflow.test.sh` (grep for `auto-merge` outside quoted history, and for the three required statements). *Tier:* fast.
+- **M01-AC-14** — The first bump PR, opened after MS2, (a) changes only `epochs.build`, the new `snapshots` entry and `versions.lock`, plus R01's batch commits, (b) has a PR body that states the new global key, that the run is a full rebuild and the measured time to expect, and (c) on its head `recipes-lint` runs all checks (R01-AC-3 to AC-7 green). *Verify:* the PR itself and `tests/fast/pin-apply.test.sh` (diff scope allows the batch paths only on a branch flagged `first-bump`); recorded in the PR table. *Tier:* slow.
+- **M01-AC-15** — On the first bump PR the `packages` job's `restore.tsv` shows no `cache:` row and the log prints `CACHE MISS <global key>` (a new key opens an empty namespace; nothing is restored from the rc1 seed), and the run completes with every locked atom `built`. The PR table records the wall time of `packages`, `image` and `oracle-gate`. *Verify:* CI run of the first bump PR; `out/cache/restore.tsv` in the `packages-<run_id>` artifact. *Tier:* slow.
+- **M01-AC-16** — The PR body of the first bump lists every CVE waiver in `supplychain/policy/` whose expiry falls within 30 days or has passed (OD-15), each with the owner's decision (removed, renewed with a new expiry, or still needed with a reason). *Verify:* PR table; `tests/fast/pin-bump-workflow.test.sh` checks that the body template has the section. *Tier:* fast and slow.
 
 ## RED plan
 In order, each a `test(M01)` commit with `TDD-Red-Target: make test-fast`: `pin-bump-workflow.test.sh` first (fails because the workflow does not exist; it carries the planted no-merge violation fixture), then `pin-apply.test.sh` and `pin-check.test.sh` (fail: the tools are absent), then `lock-diff.test.sh`. Fixtures under `tests/fast/pin-bump-fixtures/` are committed with the tests so the implementer cannot weaken them (F04 protects them after RED).
@@ -106,12 +119,14 @@ In order, each a `test(M01)` commit with `TDD-Red-Target: make test-fast`: `pin-
 - Hardest: the PR's required checks only run if B06 triggers `build.yml` on `pull_request` for `pins/**` branches and O02 jobs are required. B06 owns that trigger; if it chooses `workflow_dispatch` only, this node has no validation to report. See defects.
 - `BUMP_TOKEN` is a long-lived credential with write access. Owner decision: PAT with expiry versus a GitHub App (OD-4). Default: fine-grained PAT, 90-day expiry, rotation noted in `docs/pin-bump.md`.
 - Branch protection must forbid bypass for bots and require human review; that is a repository setting this node cannot test from code. `docs/pin-bump.md` records the expected settings and the date the owner confirmed them. Unknown today: whether the predecessor's `--admin` ever succeeded (workflows.yaml open_questions).
-- A cold build per bump (weekly): the tree hash changes, so the binpkg cache misses. One build is 30-60 minutes and one core oracle pass; see Cost.
+- A cold build per bump: the tree commit is in I06's global key, so every bump opens an empty namespace and every package rebuilds. Measured on the predecessor, about 78 min for the build job and about 95 min to a tested ISO, plus the oracle gate (about 10 min wall). A weekly cadence is therefore a weekly 95-minute build; see Cost.
+- After the first bump merges, the first `master` run is cold again, because the PR wrote only `pr-<n>/`. Unless I06 can promote a PR's set on merge, that costs one more 95-minute build. Not specified in I06; see Spec defects.
+- The first bump's PR is large (R01's batch plus a tree move). If its checks fail, the fixup commits may touch both; keep the batch commits first so a revert of the bump leaves them standing.
 - Weekly cadence is inherited; a monthly cadence halves cost. Owner may change the cron without a spec change.
 - Unknown: how I02's mirror tool is invoked (`snapshot-mirror` is the name assumed here).
 
 ## Cost
-Two to three agent slices: (1) `pin-check`, `pin-apply`, `lock-diff` with fast tests; (2) `pin-bump.yml`, `pin-bump-report.yml`, the workflow test; (3) docs and the one-time `pin-bump-e2e` run. CI: one build + core oracle cycle per real bump (about 1-1.5 hours of runner time); one cycle at acceptance. Money: runner minutes only (free on a public repository; unknown whether this repository is public). Store: one snapshot (about 150 MB, kept forever by M03).
+Two to three agent slices: (1) `pin-check`, `pin-apply`, `lock-diff` with fast tests; (2) `pin-bump.yml`, `pin-bump-report.yml`, the workflow test; (3) docs and the one-time `pin-bump-e2e` run. CI: one full build + oracle cycle per real bump (measured on the predecessor: 78 min build job, about 95 min to a tested ISO, boot modes about 10 min wall); one cycle at acceptance. The first bump costs two such builds (the PR run and the first `master` run after merge) unless I06 promotes sets. Routine later bumps cost one each. Money: runner minutes only (free on a public repository; unknown whether this repository is public). Store: one snapshot (about 150 MB, kept forever by M03).
 
 ## Spec defects found
 - graph.yaml: M01 does not depend on I05 (`pins/pins.yaml` writer and schema), I02 (snapshot mirror) or R02 (lock regeneration) directly. I02 and R02 are reachable through B06; I05 is not reachable from B06 at all. Add M01 -> I05.
@@ -119,3 +134,5 @@ Two to three agent slices: (1) `pin-check`, `pin-apply`, `lock-diff` with fast t
 - SPEC §8 protects `pins/pins.yaml` ("agents may not edit"). A bot-authored bump PR edits it. Clarify that the workflow bot may open PRs touching it and that CODEOWNERS review is the control.
 - SPEC §8 "Bots ... post statuses": the report job sets a label and a PR comment, not a status. Harmless, but state which is meant.
 - B06 summary says "no publishing" and does not say it runs on `pull_request`; M01 requires it for `pins/**` branches.
+- v0.3 pins the tree by gentoo-mirror commit (I02: `snapshot commit-at`, `seed`, `stage`), but this node's steady-state flow (`pin-check` against dated snapshot tarballs, `snapshot-mirror`, `snapshots.NEW.{sha256,gpgsig_sha256}`) still assumes dated daily snapshots. The first bump uses I02's commit tools; the routine flow needs an owner decision (follow daily snapshots, or the newest commit) and a matching `pin-apply` key set (I05 schema). Left as written pending that decision.
+- I06 has no rule to promote a PR namespace's set into `main` on merge; the first bump (and every later one) pays a second cold build on `master`. Consider adding it to I06.

@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| G | O04 | X01 | — | M |
+| G | O04 | X01 | MS4 | M |
 
 **Owns:** `oracle/modes/persist_init.py`, `oracle/modes/persist_uefi.py`, `oracle/lib/blank_disk.py`, `oracle/fixtures/argv/persist-init.txt`, `oracle/fixtures/argv/persist-uefi.txt`, `oracle/fixtures/serial/persist-init-*.txt`, entries `persist-init` and `persist-uefi` in `oracle/modes.yaml`, `tests/fast/test_persist_modes.py`, `tests/fast/persist-docs-claims.test.sh`. Changes to `monolith-persist`, `topics/persist.txt` and the init `persist` path are made in R01's tree (`recipes/overlay/app-misc/monolith-base/files/`, init under B03) by this node's PR, because the behaviour is G01's; ownership of those files stays with R01/R05/B03.
 **Carries from linux-live-iso-factory@b9f533b:** `configs/overlay/app-misc/monolith-base/files/monolith-persist` (191 lines), `.../20-persist.sh`, `.../50-persist-history.bash`, `.../topics/persist.txt`, `scripts/tests/monolith-persist.test.sh` (stub-based, kept as the fast tier), `scripts/tests/monolith-persist-profile.test.sh`, `scripts/tests/monolith-persist-bashrc.test.sh`, `rootfs/init:446-526` (persist detection, loop of 8 tries, mount, tmpfs fallback), `scripts/build-iso.sh:252-258` (GRUB `(persistent)` entry), `scripts/boot-test.py:2185-2300` (O04 owns the history-persist mode).
@@ -86,10 +86,7 @@ First `test_persist_modes.py` (imports `oracle.modes.persist_init`, absent; incl
 - Unknown: how long `mkfs.ext4` of 128 MB takes under TCG i486 emulation (predecessor never ran it in the guest). Budget: allow 120 s for the `init` step.
 
 ## Cost
-Three agent slices: (1) `blank_disk`, `persist_init` mode, fast tests and fixtures; (2) `persist_uefi`, docs-claims test, doc edits; (3) fixing whatever the first real runs find. CI: about three build-plus-boot cycles expected (first run exposes defects; each fix is a cycle); each persist leg is 10-20 minutes of TCG time. No money beyond runner minutes.
+Three agent slices: (1) `blank_disk`, `persist_init` mode, fast tests and fixtures; (2) `persist_uefi`, docs-claims test, doc edits; (3) fixing whatever the first real runs find. CI: about three build-plus-boot cycles expected (first run exposes defects; each fix is a cycle). With the I06 cache a cycle that changes only `monolith-base` or init is about 25 minutes wall time (`docs/first-attested-build.md`); each persist leg is 10-20 minutes of TCG time. No money beyond runner minutes.
 
 ## Spec defects found
-- O01-AC-13 requires `oracle/modes.yaml` to list exactly the 17 SPEC §7 modes. Every G node adds modes (`persist-init`, `persist-uefi`, and those of G02-G05). Amend O01-AC-13 to "the 17 inherited modes plus any mode with a `node:` of G01-G05".
-- SPEC §7 says the slow tier has "the 17 boot modes inherited"; G nodes make it more. State that phase G modes are additive and part of the oracle for X01.
-- graph.yaml: X01 does not depend on any G node, so cutover can happen with promises (SPEC §1: "a behaviour the README promises and no test proves is a gap") still untested. Add G01-G05 to X01's deps, or record an explicit owner waiver per G node.
 - The `GRUB (persistent)` entry cannot be observed through init milestones (no `console=ttyS0`). G01 and G02 both rely on the `inittab` serial getty (`s0:2345:respawn:… ttyS0 115200 vt100`, `scripts/build-rootfs.sh:359-360`) to reach a shell. R05/B04 must keep that line, and `oracle/interfaces.yaml` should name it as part of the harness interface.

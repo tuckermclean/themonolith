@@ -2,20 +2,21 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| P | P01, S03 | X01 | — | M |
+| P | P01, S03, P06 | X01 | — (feeds MS5) | M |
 
-**Owns:** `factory/bin/advisory-scan`, `.github/workflows/advisory.yml`, `.github/workflows/advisory-e2e.yml`, `supplychain/policy/advisory-legacy.yaml`, `docs/advisory.md` (the status-file contract), `tests/fast/advisory-*.test.*`, `tests/fixtures/advisory/`; edits to `recipes/overlay/app-misc/monolith-base/files/monolith-advisory-check` and `.../40-advisory.sh` (after R01 imports them) with the `monolith-base` revision bump and `pins/versions.lock` line.
-**Carries from linux-live-iso-factory@b9f533b:** `scripts/nightly-cve-monitor.py` (idea and status-file shape, rewritten), `.github/workflows/nightly-cve-scan.yml` (schedule), `configs/overlay/app-misc/monolith-base/files/monolith-advisory-check` and `40-advisory.sh` (disc side, kept compatible).
+**Owns:** `factory/bin/advisory-scan`, `.github/workflows/advisory.yml`, `.github/workflows/advisory-e2e.yml`, `supplychain/policy/advisory-legacy.yaml`, `docs/advisory.md` (the status-file contract), `tests/fast/advisory-*.test.*`, `tests/fixtures/advisory/`. The disc scripts and the `monolith-base` bump moved to P06.
+**Carries from linux-live-iso-factory@b9f533b:** `scripts/nightly-cve-monitor.py` (idea and status-file shape, rewritten), `.github/workflows/nightly-cve-scan.yml` (schedule); the disc scripts are carried by P06.
 **Study refs:** supplychain `script.nightly-cve-monitor` notes (revokes on ANY grype match ignoring `cve-policy.yaml`; `revoked` becomes `fail` the next night; a recovered build never leaves `revoked`/`fail`; rewrites `attestation-summary.json`; syncs `status/` and `dashboard/` into the `attestation/` prefix; scans every build and downloads the whole prefix nightly; `details_url` on `themonolith.org`); supplychain contradictions (monitor "orphaned" in docs but wired in workflow; monitor claims to honour the policy; waiver `expires` never compared); supplychain open question (who is `themonolith.org`); workflows `wf.nightly-cve-scan` (failing daily at AWS credentials since 2026-10-07); T-nightly-scan-old-sboms, T-cve-gate-unfalsifiable, T-canary-silence, T-github-api-503-installs; D-supply-chain-honesty; SPEC §2 principles 1, 5.
 
 ## Purpose
 After this node, a released ISO that finds a new serious CVE after release says so on the console of a booted machine, and the dashboard says so too. The feed is `status/<tag>.json` on the stable domain, produced nightly by re-scanning each published SBOM against the current vulnerability database under the same policy the build gate used. The old monitor revoked builds for any match of any severity, flipped states, rewrote attested summaries, and depended on a dead vendor URL baked into the disc.
 
+The disc side (the URL constant, the not-live behaviour, output sanitising, the `monolith-base` bump) is P06, which lands before MS2. This node is the service and can follow on the parallel track; the status files it writes must keep the shape P06's scripts read.
+
 ## Scope
 In:
 - `advisory-scan`: nightly re-scan, state machine, status files, heartbeat, canary.
 - The status-file format as a versioned contract with the on-disc readers.
-- The disc side: base URL from the single pin, hardened output, tests of the real scripts.
 - `advisory.yml` (scheduled) and `advisory-e2e.yml` (boot-and-fetch check, non-gating).
 - A legacy list so `0.1.0-rc1` can have a status file on the new host.
 
@@ -86,9 +87,7 @@ The SBOM is downloaded, its digest checked against the pin, and scanned like any
 Trigger: `workflow_run` of `Release` and dispatch. Boots the released ISO under QEMU with user networking using O01's harness, writes `_selftest-revoked` into `/etc/monolith-release` over the serial shell, runs `ADVISORY_BASE_URL=${PUBLIC_BASE_URL} monolith-advisory-check` and asserts `/run/monolith-advisory` appears and contains the fixture CVE. This is the only test of curl, TLS, CA bundle and DNS from the i486 userland against the real host. `advisory-scan` writes the fixed fixture `status/_selftest-revoked.json` (a revoked file with a reserved CVE-style id) once, via `set`. It does not gate publishing: it needs the live network and the public host.
 
 ### Disc side
-- `monolith-advisory-check` keeps its logic (POSIX sh, 5 s timeout, silent on every failure, curl then wget). Its default `ADVISORY_BASE_URL` becomes the literal `PUBLIC_BASE_URL` pin value. A test asserts equality with the pin; build-time templating was rejected (more moving parts for a one-line constant). `HOME_URL` in os-release (old `scripts/build-rootfs.sh:266`, B04's) is covered by the same test.
-- `40-advisory.sh` prints the CVE ids (already regex-filtered) and `details_url`. The URL is filtered through `tr -cd 'A-Za-z0-9:/#._?=&%~+-'` before printing, so a hostile or corrupted status file cannot inject terminal escape sequences. rc1 does not have this filter.
-- Both files change, so `monolith-base` gets a revision bump and a `pins/versions.lock` line (D-revbump-on-overlay-change; R03 enforces).
+Owned by P06 (advisory-client) since v0.3. P05 writes status files in the shape P06's scripts read.
 
 ## Traps and doctrines preserved
 - **Revoke ignoring policy:** AC-3. **Flip-flop `revoked` to `fail`:** AC-2. **Recovered build stays revoked/fail:** AC-2.
@@ -96,8 +95,8 @@ Trigger: `workflow_run` of `Release` and dispatch. Boots the released ISO under 
 - **T-nightly-scan-old-sboms:** AC-5, AC-6 (scope is defined; failures are loud rather than skipped silently).
 - **T-cve-gate-unfalsifiable and T-canary-silence:** AC-7, AC-16 (scanner proven alive before every run; heartbeat shows silence).
 - **Whole-prefix sync / egress:** AC-6 (only needed SBOMs are read).
-- **Shipped reader compatibility:** AC-1, AC-11, AC-12.
-- **Dead vendor URL in the ISO:** AC-13. **D-revbump-on-overlay-change:** AC-14.
+- **Shipped reader compatibility:** AC-1 (P06 tests the readers).
+- **Dead vendor URL in the ISO; D-revbump-on-overlay-change:** P06.
 - **Principle 5 (honest success):** AC-5, AC-9, AC-10.
 - **T-workflow-push-needs-pat:** both workflow files are pushed by the owner (Risks).
 
@@ -112,13 +111,14 @@ Trigger: `workflow_run` of `Release` and dispatch. Boots the released ISO under 
 - **P05-AC-8** — A status object is written only when status, advisories, clearing flag or policy hash changed; the heartbeat is written on every completed loop, with `errors` set; `publish.yml` reindex is dispatched only when `changed > 0`. *Verify:* `tests/fast/advisory-changes.test.sh` (stub `gh`). *Tier:* fast.
 - **P05-AC-9** — A legacy entry whose downloaded SBOM digest differs from `sbom_sha256` is an error (exit 1) and writes nothing for it. *Verify:* `tests/fast/advisory-legacy.test.sh`. *Tier:* fast.
 - **P05-AC-10** — `advisory.yml` has the cron schedule, `permissions` exactly `contents: read` and `actions: write`, the `publish-public` concurrency group, only `STORE_PUBLIC_*` secrets, a grype fetched by sha256 (no `install.sh`, no `curl | sh`), and SHA-pinned actions. *Verify:* `tests/fast/advisory-workflow.test.py`. *Tier:* fast.
-- **P05-AC-11** — The real `monolith-advisory-check`, run with a stub `curl` (and separately a stub `wget`), under `dash` and busybox `ash` when present: requests exactly `${BASE}/status/${TAG}.json`; writes the runtime file only for `revoked`; exits 0 silently on fetch failure, missing `/etc/monolith-release`, empty tag and missing `mktemp`. `shellcheck -s sh` passes. *Verify:* `tests/fast/advisory-check-script.test.sh` (paths rewritten into a temp copy). *Tier:* fast.
-- **P05-AC-12** — A status fixture whose `details_url` and `advisories` contain ESC (0x1b) and other control bytes produces no control byte in the output of `40-advisory.sh`. *Verify:* `tests/fast/advisory-banner-sanitize.test.sh`. *Tier:* fast.
-- **P05-AC-13** — The default `ADVISORY_BASE_URL` in `monolith-advisory-check` and the `HOME_URL` baked into os-release equal `PUBLIC_BASE_URL` from `pins/pins.yaml`; no file under `recipes/` or `factory/` contains `amazonaws`. *Verify:* `tests/fast/public-url-single-source.test.sh`. *Tier:* fast.
-- **P05-AC-14** — The `monolith-base` ebuild revision is bumped, `pins/versions.lock` has the matching line, and the R03 gate passes on the change. *Verify:* R03's revbump check, run by `make test-fast`. *Tier:* fast.
+- **P05-AC-11** — *Withdrawn (v0.3):* moved to P06 (advisory-client), which must land before MS2.
+- **P05-AC-12** — *Withdrawn (v0.3):* moved to P06 (advisory-client), which must land before MS2.
+- **P05-AC-13** — *Withdrawn (v0.3):* moved to P06 (advisory-client), which must land before MS2.
+- **P05-AC-14** — *Withdrawn (v0.3):* moved to P06 (advisory-client), which must land before MS2.
 - **P05-AC-15** — `advisory-scan` against the live store (dispatch of `advisory.yml`) completes, writes `status/_heartbeat.json` less than 10 minutes old, and `status/0.1.0-rc1.json` is served at `${PUBLIC_BASE_URL}/status/0.1.0-rc1.json` with valid JSON. *Verify:* `advisory.yml` dispatch run, then `curl -fsS` and `python3 -m json.tool`. *Tier:* slow.
 - **P05-AC-16** — A real nightly run's canary passes with the live grype database (CVE-2014-0160 reported). *Verify:* the log of the AC-15 run. *Tier:* slow.
 - **P05-AC-17** — From a booted `v0.2.0-rc1` ISO in QEMU, the shipped `monolith-advisory-check` over the real network fetches `_selftest-revoked` from the public host and creates `/run/monolith-advisory`. *Verify:* `advisory-e2e.yml` run after the Release run. *Tier:* slow.
+- **P05-AC-18** — *Withdrawn (v0.3):* moved to P06 (advisory-client), which must land before MS2.
 
 ## RED plan
 Tester writes AC-1, 2, 3, 5, 7 first with a stub `grype` script (JSON fixtures in `tests/fixtures/advisory/`), an fs backend and a stub S03 evaluator; they fail because `advisory-scan` does not exist. AC-11, 12, 13 run the imported rc1 scripts: AC-11 passes on today's script for most cases, so the tester adds the cases that fail on it: the new base URL (AC-13), control bytes (AC-12), and `shellcheck` findings if any. AC-4, 6, 8, 9 are written with request and key logs from the fake store. AC-10 fails until the workflow exists. AC-14 fails until the ebuild is bumped. AC-15 to AC-17 have no RED.
@@ -126,20 +126,21 @@ Tester writes AC-1, 2, 3, 5, 7 first with a stub `grype` script (JSON fixtures i
 ## Risks and open questions
 - **TLS from the i486 userland is unproven.** Whether the disc's curl or wget validates a modern Cloudflare-style certificate (TLS 1.3, a current CA bundle, SNI) is unknown. AC-17 is the first real test. If it fails, the options are a plain-HTTP advisory (spoofable, so rejected unless the file is signed) or fixing the CA bundle in the recipe.
 - **S03 interface.** `advisory-scan` needs an evaluator callable outside a build (`evaluate(grype_json, policy, today)` returning gating findings, waived, expired). If S03 ships only a shell script around the build, this node adds a thin adapter and the ACs stay.
-- **Domain risk.** The domain (OD-1; default `monolith.technomantics.com`) is the owner's, but only for as long as it is renewed. The domain is baked into every ISO from `0.2.0` on; losing it silences all advisories. Use long registration and auto-renew.
+- **Domain risk.** The domain (OD-1; default `monolith.technomantics.com`) is the owner's, but only for as long as it is renewed. The domain is baked into every ISO from the first attested build (`v0.2.0-rc1`) on; losing it silences all advisories. Use long registration and auto-renew.
 - **Expired waivers revoke builds.** By design (fail closed); the dashboard shows why. A calendar reminder for waiver expiry belongs to S03.
 - **Dormancy.** GitHub disables scheduled workflows after 60 days without repo activity. The heartbeat and P03's banner make this visible; they do not prevent it.
 - **Secrets on a schedule** run only on the default branch; forks never get them.
 - **Workflow files** are pushed by the owner's PAT (T-workflow-push-needs-pat).
 - **Grype DB is live data.** Two runs on one day can differ. The status records the DB build time so a revocation can be explained.
-- If OD-6 recovers the AWS account, a single frozen `status/0.1.0-rc1.json` on the old host would make rc1's built-in check work again. That is a separate owner action; this node does not depend on it.
+- If the owner ever recovers the AWS account, a single frozen `status/0.1.0-rc1.json` on the old host would make rc1's built-in check work again. That is a separate owner action; this node does not depend on it.
 
 ## Cost
-- Slices: 4 (scan core and state machine; targets and failures; workflows; disc scripts and recipe bump). 17 ACs.
+- Slices: 4 (scan core and state machine; targets and failures; workflows; status contract). 13 live ACs; five moved to P06 in v0.3.
 - CI build cycles: 0 of its own. The recipe change rides the next full build (it is already needed for `v0.2.0-rc1`). AC-17 needs one existing release ISO.
 - Money: nightly run downloads a few SBOMs; at the assumed 1–2 MB each, well under 100 MB per night, free egress on the recommended host (P01). Actions minutes: a few per night.
 
 ## Spec defects found
+0. Fixed in v0.3: the disc slice is now P06 (critical).
 1. **S03 has no stated entry point for re-scans.** The graph lists P05 depending on S03 but SPEC never says S03's policy evaluator is a library usable outside the build. S03 must expose it.
 2. **No node tests the advisory path end to end from the disc.** P05 adds `advisory-e2e.yml` as non-gating. A real oracle mode would belong to O04 (services) and would put a live-network check in the release gate, which this spec avoids; the owner may decide otherwise.
 3. **SPEC §3 has no doctrine for "ISOs must not depend on a vendor host".** The advisory URL and `HOME_URL` are runtime dependencies of the shipped artifact. AC-13 enforces single-sourcing; consider a D-* entry.

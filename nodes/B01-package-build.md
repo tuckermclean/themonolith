@@ -2,16 +2,17 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| B | I02, I03, I04, I05, R02, R03 | B02, B04 | — (feeds MS2) | L |
+| B | I02, I03, I04, I05, I06, R02 | B02, B04 | — (feeds MS1) | L |
 
 **Owns:** `factory/bin/build-packages`, `factory/bin/run-in-builder`, `factory/lib/common.sh`,
-`factory/lib/cachekey`, `factory/lib/verify_complete.py`, `factory/lib/sysroot-seed.sh`,
+`factory/lib/verify_complete.py`, `factory/lib/sysroot-seed.sh`,
 `factory/lib/plan_parse.py`, `factory/data/stage-provided.txt`, `factory/data/network-exceptions.txt`,
-`factory/mk/packages.mk`, `tests/fast/package-*.test.sh`, `tests/fast/cachekey.test.sh`,
+`factory/mk/packages.mk`, `tests/fast/package-*.test.sh`,
 `tests/fast/stage-contract.test.sh`, `tests/fast/run-in-builder.test.sh`
-**Carries from linux-live-iso-factory@b9f533b:** `scripts/build-packages.sh` (rewritten, not copied),
-`scripts/binpkg-store.sh` (cache idea only; transport becomes the `store` CLI), `scripts/savedconfig-cache.sh`
-(deleted; superseded by the profile hash), `Makefile:75-110` (DOCKER_RUN mounts, rewritten with `:ro`).
+**Carries from linux-live-iso-factory@b9f533b:** `scripts/build-packages.sh` (ported: the structure, the emerge
+invocations, the `MONOLITH_USEPKG=n` release switch at `:215-225` and the sysroot seeding are kept; each change is
+forced by a named AC, see Design "Port first"), `Makefile:75-110` (DOCKER_RUN mounts, ported with `:ro` added by
+B01-AC-8). `scripts/binpkg-store.sh` and `scripts/savedconfig-cache.sh` are not carried: the cache moved to I06.
 **Study refs:** build.yaml `script.build-packages` notes FAILURE MASKING 1-3; `script.binpkg-store` (401 as miss);
 `script.savedconfig-cache`; hazards `silent_fallbacks`, `hidden_errors_2_dev_null`, `nondeterminism`;
 contradictions (cp does not delete; kernel build mode `unknown`); T-keep-going-hides-drops,
@@ -21,18 +22,20 @@ D-static-musl-cross-all-the-way, Principles 2, 5, 9.
 ## Purpose
 After B01 a single command cross-compiles the locked world for `i486-linux-musl` and proves, per package, that
 it is installed at its locked version and where it came from: built in this run, restored from a cache entry
-whose key covers the whole tree and profile, or supplied by the builder image. The predecessor decided success
-by globbing for any `.gpkg.tar`, so a stale binary hid a failing rebuild. B01 also gives releases a real
-from-source mode.
+whose key I06 matched, or supplied by the builder image. The predecessor decided success
+by globbing for any `.gpkg.tar`, so a stale binary hid a failing rebuild. B01 ports the predecessor's script and
+fixes that, plus the three failure-masking sites and the acct race, as named criteria. It calls I06 for restore and
+save, and keeps the release-mode guard that makes a tag build compile everything from source.
 
 ## Scope
 In:
 - The builder-container runner `factory/bin/run-in-builder` (mounts, env, uid fix-up) used by every stage.
-- The package stage: config sync, cache restore, plan, emerge, completeness proof, cache save, report.
-- The binpkg cache key and its use of the `store` CLI (class `binpkg`).
+- The package stage: config sync, calls to I06's `cache restore`, plan, emerge, completeness proof, call to `cache save`, report.
+- The release-mode guard: no cache call, empty `PKGDIR`, no `binary` plan line.
 - The shared stage contract (`out/stage/<stage>.json`, exit codes, `common.sh`) all B-nodes follow.
 
 Out:
+- The cache key, per-package fingerprint, restore, save, memo and audit: I06 (B01 only calls them). B01 no longer reads or writes the `binpkg` class itself.
 - Kernel build and its config: B02 (B01 excludes `sys-kernel/monolith-kernel` via `stage-provided.txt`).
 - Sysroot export, rootfs, squashfs: B04. The old live-ROOT `rsync` export is dropped from this stage.
 - Portage snapshot fetch/serve: I02. Distfile mirror and fetch hooks: I04. Builder image contents: I03.
@@ -72,22 +75,18 @@ because of this). Decision: repo mounted `:ro`, rejecting the predecessor's rw `
    `repos.conf`. Mirror **only** `package.mask` to the host `/etc/portage` (BDEPEND resolution; reason kept from
    `build-packages.sh:73-91`). `factory/lib/sysroot-seed.sh` seeds host `games`/`gamestat` groups and sysroot
    `root`/`portage` (uid/gid 250)/`games`/`gamestat` entries, idempotently (`build-packages.sh:94-117`).
-2. **key.** `factory/lib/cachekey` prints `tree=<16 hex> profile=<16 hex>`.
-   `tree` = first 16 hex of the sha256 of the pinned snapshot tarball (the value I02 records).
-   `profile` = sha256 over, in sorted-path order, the bytes of: `recipes/portage/{make.conf,bashrc}`,
-   `env/**`, `package.{env,use,accept_keywords,mask}/**`, `savedconfig/**`, `profile/**`, `pins/crossdev.lock`,
-   plus the builder image digest. `versions.lock`, `world` and the overlay are excluded.
-   Rationale: portage's own reuse test already keys on cpv and USE; the overlay is sound under R03 (any
-   ebuild or `files/` change forces a new `-rN` cpv); `versions.lock` is the cpv list. Everything portage does
-   not hash (env files, savedconfig, bashrc, CFLAGS) is in `profile`, which retires `savedconfig-cache.sh`.
-   Rejected: hashing the overlay (every ebuild edit would cost a full 30-60 min rebuild); per-package
-   dependency hashes (complexity; revisit if rebuild cost bites).
-3. **restore** (`iterate` only). `store ls binpkg <tree>/<profile>/` then `store get` each into
-   `out/packages/<cat>/<pn>/`. `store` exit 3 on the prefix means miss: print `CACHE MISS <tree>/<profile>`
-   and continue with an empty `out/packages`. Any other non-zero exit is fatal (exit 1); a 401 is an
-   error, not a miss (fixes `binpkg-store.sh:338`). Then `emaint binhost --fix`.
-   In `release` mode `out/packages` must be empty at start (exit 4 if not) and the store is neither read nor
-   written. Rejected: pushing release-built binpkgs; a signed release must not depend on or influence the cache.
+2. **key.** Moved to I06. The stage runs `cache key` and `cache fingerprint` (I06) and records `key.json` and
+   `fingerprints.tsv` under `out/cache/`. B01 holds no key logic. Rejected: a B01-private hash (v0.2's `cachekey`),
+   which the per-package fingerprint replaces.
+3. **restore** (`iterate` only). `cache restore out/packages` (I06). It places only entries whose fingerprint
+   matches, writes `out/cache/restore.tsv`, prints `CACHE MISS <global>` on a missing set (exit 0) and exits 1 on
+   any store error other than absent, with `out/packages` emptied. B01 treats exit 1 as fatal and runs no
+   emerge. Then `cache emerge-flags` supplies the `--usepkg --binpkg-respect-use=y --binpkg-changed-deps=y
+   --rebuild-if-unbuilt=y` set, so B01 does not restate it. Emerge output-shaping options come from
+   `factory/data/build-env.yaml` (I06), so they cannot change without changing the key.
+   In `release` mode the stage calls neither `cache` nor `store`, `out/packages` must be empty at start (exit 4
+   if not), and no `--usepkg` is passed. Rejected: pushing release-built binpkgs; a signed release must not
+   depend on or influence the cache. I06 audits release payloads against the cache after the build instead.
 4. **plan.** `i486-linux-musl-emerge --pretend --verbose --usepkg[=n] <atoms>` parsed by `plan_parse.py` into
    `out/stage/packages.plan.tsv` (`cpv<TAB>binary|ebuild`). Atoms are `=<cat>/<pn>-<ver>` for every world line;
    a world atom with no `versions.lock` line is exit 2 before any compile (22 of 99 world atoms lacked one at
@@ -95,34 +94,55 @@ because of this). Decision: repo mounted `:ro`, rejecting the predecessor's rw `
    `sys-kernel/monolith-kernel B02`) are removed from the set and recorded as `provided-by`.
 5. **emerge.** Pass 1: `acct-group/*` and `acct-user/*` found in the plan, `--jobs=1 --oneshot` (serialises the
    uid auto-allocation that dropped `net-dns/dnsmasq`, T-acct-user-dnsmasq-race). Pass 2: all remaining atoms with
-   `--jobs=$JOBS --load-average=$JOBS --keep-going --buildpkg [--usepkg]` (`--usepkg` only in `iterate`).
+   `--jobs=$JOBS --load-average=$JOBS --keep-going --buildpkg` plus the `cache emerge-flags` set (`iterate` only;
+   `release` passes none of them).
    `--keep-going` is kept for diagnostics on a 30-60 min run, but its exit status and its output no longer
    decide success. `JOBS = min(nproc, floor(MemAvailable_GiB / 6))`, at least 1, overridable by `JOBS=`;
    6 GiB per job reproduces the predecessor's CI choice of 2 on a 16 GiB runner (`build.yml:288`).
    `unset BUILD_DIR` (multilib-minimal.eclass, `build-packages.sh:241`) is kept. A memory/disk sampler runs in the
    background and is killed by a `trap` on exit (the predecessor's `while true` monitor was never killed).
-   Network: `emerge --fetchonly` first (mirror-first, I04); the compile pass runs with `--network none` except
-   for atoms listed with a reason in `factory/data/network-exceptions.txt`.
+   Network: the predecessor's compile pass had network access. B01-AC-11 (after MS2) adds `emerge --fetchonly`
+   first (mirror-first, I04) and a `--network none` compile pass except for atoms listed with a reason in
+   `factory/data/network-exceptions.txt`. Until then the pass is ported as is.
 6. **verify-complete.** `verify_complete.py` takes the atom set, `versions.lock`, and the installed set read from
    the VDB under `/usr/i486-linux-musl/var/db/pkg` (not from gpkg files). It exits 4 and prints every atom
    missing or installed at a different version. An older gpkg on disk has no influence.
 7. **quickpkg-missing.** For every installed cpv lacking a gpkg (crossdev-provided: musl, linux-headers, libgcc,
    `acct-*` seeded by the image) run `quickpkg --include-config=y =<cpv>`. Errors are fatal and visible (the
    predecessor used `"*/*" 2>/dev/null || true`, `build-packages.sh:323`). These cpvs get `source=builder-image`.
-8. **save** (`iterate` only, not on forks). For each gpkg not already present, `store has binpkg <key>`; if
-   absent, `store put binpkg <tree>/<profile>/<cpv>.gpkg.tar <file>`. A failed `put` is re-checked with `has`: if the key now
-   exists (concurrent run) warn loudly and continue, otherwise exit 1.
+8. **save** (`iterate` only, not on forks). `cache save out/packages /usr/i486-linux-musl --complete=<true|false>`
+   (I06; argument form to be reconciled with I06). `complete` is the verdict of step 6, passed in. B01 saves even
+   when step 6 failed, because a partial set is internally consistent (I06), and then exits 4. A `cache save`
+   failure is exit 1. B01 holds no `store put` logic.
 9. **report.** `out/stage/packages.cpv.tsv`: `cpv<TAB>source<TAB>gpkg_path<TAB>sha256` with `source` in
    `built | cache | builder-image`. `source` comes from the plan (`binary` means `cache`, `ebuild` means
-   `built`), cross-checked against the gpkg set restored in step 3. Failed-package logs
+   `built`), cross-checked against `out/cache/restore.tsv` from step 3, whose `cache:<sha256>` rows must equal the
+   `binary` plan lines. Failed-package logs
    (`/var/tmp/portage/*/*/temp/build.log`) are copied to `out/logs/` on any failure, as the predecessor did.
 
 Outputs: `out/packages/` (the PKGDIR, `BINPKG_FORMAT=gpkg`, `BINPKG_COMPRESS=xz`), `out/logs/`,
 `out/stage/packages.json`, `packages.cpv.tsv`, `packages.plan.tsv`.
 
+### Port first
+`build-packages` starts as `scripts/build-packages.sh` at b9f533b (435 lines) moved to `factory/bin/build-packages`
+with path changes only. Each change after that is forced by one criterion; nothing else is rewritten.
+
+| Predecessor behaviour | Change | Forced by |
+|---|---|---|
+| FAILURE MASKING 1: success by `compgen -G ...gpkg.tar` (`:286-300`) | completeness from the VDB at the locked version | AC-1 |
+| FAILURE MASKING 2: `quickpkg "*/*" 2>/dev/null \|\| true` (`:323`) | only cpvs without a gpkg; errors fatal | AC-10 |
+| FAILURE MASKING 3: config sync `cp ... 2>/dev/null \|\| true` (`:59-66,90`) | `rsync -a --delete`, fatal | AC-12 |
+| acct-user race (`net-dns/dnsmasq` dropped) | serial first pass for `acct-*` | AC-5 |
+| `MONOLITH_USEPKG=n` release switch (`:215-225`) | kept; guard hardened (empty `PKGDIR`, no `binary` line, no cache call) | AC-6 |
+| Rw `/configs` mount; kernel config overwritten (`:429`) | `:ro` mount | AC-8 |
+| Fixed `-j2` in CI | memory-derived `JOBS` | AC-9 |
+| Env defaults (`build-rootfs.sh:23` built `themonolith-.squashfs`) | required contract env | AC-14 |
+| Disk monitor never killed | trap | AC-9 |
+| Pull and push of one 2 GB epoch blob (`binpkg-store.sh`) | I06 | I06-AC-4..6 |
+
 ### Interfaces assumed from other nodes (reconcile at integration)
-I02: pinned tree already at `/var/db/repos/gentoo`, snapshot sha256 readable as `out/stage/snapshot.json`
-(`outputs.snapshot.sha256`). I03: builder provides `rsync`, `qlist`, `quickpkg`, `emaint`, python3,
+I02: pinned tree already at `/var/db/repos/gentoo`; the tree commit is read by I06's `cache key` from the pins.
+I06: `cache key|fingerprint|restore|emerge-flags|save` as described above. I03: builder provides `rsync`, `qlist`, `quickpkg`, `emaint`, python3,
 `CONFIGS_DIR=/configs` baked as ENV (`Makefile:318`). I05: `BUILD_EPOCH`, `SOURCE_DATE_EPOCH` supplied by
 `make` from `pins/pins.yaml`.
 
@@ -131,36 +151,39 @@ I02: pinned tree already at `/var/db/repos/gentoo`, snapshot sha256 readable as 
   at the locked version. AC-1, AC-2.
 - **T-acct-user-dnsmasq-race:** acct-* merge serially first; any dropped dnsmasq is a completeness failure. AC-5.
 - **T-runner-oom:** memory-derived `JOBS`, per-package `gdb-lowmem.conf` kept by R01, sampler cleaned up. AC-9.
-- **D-tag-builds-from-source:** `release` mode starts empty, never touches the store, and every cpv must be
+- **D-tag-builds-from-source:** `release` mode starts empty, never calls `cache` or `store`, and every cpv must be
   `built` or `builder-image`. AC-6, AC-7.
 - **D-state-and-no-hidden-stderr:** lint on `factory/`. AC-16.
 - **Principle 9 (authored vs generated):** repo mounted read-only; `git status` clean after the stage. AC-8.
-- **Principle 5 (honest success):** store absent vs error; cache provenance per cpv. AC-3, AC-4, AC-10.
-- **Principle 2 (pinned inputs):** compile phase offline. AC-11.
+- **Principle 5 (honest success):** cache provenance per cpv from I06's `restore.tsv`; store absent vs error is I06's (I06-AC-4, I06-AC-5); B01 fails on a cache error. AC-10, AC-18, AC-19.
+- **Principle 2 (pinned inputs):** compile phase offline. AC-11 (after MS2).
 
 ## Gate
-- **B01-AC-1** — `verify_complete.py` exits 4 when any locked atom is missing from the VDB or installed at another version, even if a gpkg for that package exists. *Verify:* `tests/fast/package-completeness.test.sh` (fixture VDB, world, lock, stale gpkg). *Tier:* fast.
+- **B01-AC-1** — (Fixes FAILURE MASKING 1.) `verify_complete.py` exits 4 when any locked atom is missing from the VDB or installed at another version, even if a gpkg for that package exists. *Verify:* `tests/fast/package-completeness.test.sh` (fixture VDB, world, lock, stale gpkg). *Tier:* fast.
 - **B01-AC-2** — A world atom without a `versions.lock` line makes `build-packages` exit 2 before any emerge; atoms in `stage-provided.txt` are excluded and recorded. *Verify:* `tests/fast/package-atoms.test.sh`. *Tier:* fast.
-- **B01-AC-3** — `cachekey` is deterministic; changing one byte of `savedconfig/sys-apps/busybox`, `make.conf`, `crossdev.lock` or the builder digest changes `profile`; changing the snapshot hash changes `tree`; editing the overlay or `versions.lock` changes neither. *Verify:* `tests/fast/cachekey.test.sh`. *Tier:* fast.
-- **B01-AC-4** — Restore treats `store` exit 3 on the prefix as a loud miss and any other non-zero exit (including auth and network stubs) as exit 1 with no partial `out/packages` use. *Verify:* `tests/fast/package-restore.test.sh` with a stub `store`. *Tier:* fast.
-- **B01-AC-5** — Pass 1 of emerge contains exactly the `acct-group/*` and `acct-user/*` entries of the plan and runs with `--jobs=1`. *Verify:* `tests/fast/package-passes.test.sh` against `plan_parse.py` fixtures. *Tier:* fast.
-- **B01-AC-6** — In `release` mode a non-empty `out/packages` at start exits 4, `store` is never invoked, and a plan containing any `binary` line exits 4. *Verify:* `tests/fast/package-release-mode.test.sh` (stub `store` that fails if called). *Tier:* fast.
+- **B01-AC-3** — *Withdrawn (v0.3):* the cache key moved to I06 (I06-AC-1, I06-AC-2 for the global key; I06-AC-3 for the per-package fingerprint).
+- **B01-AC-4** — *Withdrawn (v0.3):* restore semantics (loud miss, store errors are failures) moved to I06 (I06-AC-4, I06-AC-5). B01's side is B01-AC-18.
+- **B01-AC-5** — (Fixes the acct race.) Pass 1 of emerge contains exactly the `acct-group/*` and `acct-user/*` entries of the plan and runs with `--jobs=1`. *Verify:* `tests/fast/package-passes.test.sh` against `plan_parse.py` fixtures. *Tier:* fast.
+- **B01-AC-6** — In `release` mode a non-empty `out/packages` at start exits 4, neither `cache` nor `store` is invoked, no `--usepkg` flag is passed, and a plan containing any `binary` line exits 4. *Verify:* `tests/fast/package-release-mode.test.sh` (stub `cache` and `store` that fail if called). *Tier:* fast.
 - **B01-AC-7** — A tag-triggered CI build produces `packages.cpv.tsv` with every `source` in `{built, builder-image}`, none `cache`. *Verify:* CI job `packages` on a `v*` ref (or `workflow_dispatch` with `mode=release`), step "assert provenance" (awk over the TSV). *Tier:* slow.
 - **B01-AC-8** — `run-in-builder` mounts the repo read-only and `git status --porcelain` is empty after a complete `make packages`. *Verify:* `tests/fast/run-in-builder.test.sh` (parses the generated `docker run` line, `--dry-run`); CI step `git diff --exit-code` after the stage. *Tier:* fast and slow.
 - **B01-AC-9** — `JOBS` equals `min(nproc, floor(MemAvailable_GiB/6))` (minimum 1), an explicit `JOBS=` wins, and the background sampler is not running after `build-packages` exits on success or failure. *Verify:* `tests/fast/package-jobs.test.sh`. *Tier:* fast.
-- **B01-AC-10** — `quickpkg` failure is fatal (exit 1) and its stderr is shown; only cpvs without a gpkg are packaged. *Verify:* `tests/fast/package-quickpkg.test.sh` with a failing stub. *Tier:* fast.
-- **B01-AC-11** — The compile pass runs with `--network none` for every atom not listed in `network-exceptions.txt`; each exception line has a reason. *Verify:* `tests/fast/run-in-builder.test.sh` (dry-run network flag per phase, exceptions-file format); CI `packages` job log. *Tier:* fast and slow.
-- **B01-AC-12** — Removing a file from `recipes/portage/package.use/` removes it from the sysroot `etc/portage`, and a failed sync exits 1. *Verify:* `tests/fast/package-sync-config.test.sh` (temp roots). *Tier:* fast.
+- **B01-AC-10** — (Fixes FAILURE MASKING 2.) `quickpkg` failure is fatal (exit 1) and its stderr is shown; only cpvs without a gpkg are packaged. *Verify:* `tests/fast/package-quickpkg.test.sh` with a failing stub. *Tier:* fast.
+- **B01-AC-11** — The compile pass runs with `--network none` for every atom not listed in `network-exceptions.txt`; each exception line has a reason. *Verify:* `tests/fast/run-in-builder.test.sh` (dry-run network flag per phase, exceptions-file format); CI `packages` job log. *Tier:* fast and slow. *When:* after MS2 (a hardening of Principle 2 that fixes no verified predecessor bug and may break cargo-fetching ebuilds; the predecessor's network-open compile pass is ported until then).
+- **B01-AC-12** — (Fixes FAILURE MASKING 3.) Removing a file from `recipes/portage/package.use/` removes it from the sysroot `etc/portage`, and a failed sync exits 1. *Verify:* `tests/fast/package-sync-config.test.sh` (temp roots). *Tier:* fast.
 - **B01-AC-13** — `sysroot-seed.sh` is idempotent and does not overwrite an existing `root`, `portage`, `games` or `gamestat` entry. *Verify:* `tests/fast/sysroot-seed.test.sh`. *Tier:* fast.
 - **B01-AC-14** — A stage given a missing or zero-byte input exits 3; a missing contract env var exits 2; `out/stage/<stage>.json` is absent after any failure. *Verify:* `tests/fast/stage-contract.test.sh`. *Tier:* fast.
 - **B01-AC-15** — On failure every `build.log` under `/var/tmp/portage` is copied to `out/logs/` and uploaded by CI. *Verify:* `tests/fast/package-faillogs.test.sh` (fake tree); CI `if: failure()` upload step present (checked by `tests/fast/workflow-shape.test.sh`, B06). *Tier:* fast.
 - **B01-AC-16** — No `2>/dev/null` appears under `factory/bin` or `factory/lib` without an `# allow-devnull: <reason>` marker on the same line. *Verify:* `tests/fast/no-hidden-stderr.test.sh`. *Tier:* fast.
-- **B01-AC-17** — A cold `iterate` build on a runner completes with every locked atom present and a second run with the cache saved by the first reports every non-builder cpv as `cache`. *Verify:* CI job `packages` run twice (workflow_dispatch). *Tier:* slow.
+- **B01-AC-17** — *Withdrawn (v0.3):* the warm-build measurement is I06-AC-16 (after the rc1 seed). B01's cold-build evidence is B01-AC-7 and the first B06 run.
+- **B01-AC-18** — In `iterate` mode the stage calls `cache restore out/packages` before the plan and `cache emerge-flags` for its usepkg flags, runs no emerge and exits 1 when `cache restore` exits 1, and takes the `cache:` provenance in `packages.cpv.tsv` from `out/cache/restore.tsv`. *Verify:* `tests/fast/package-cache-calls.test.sh` (stub `cache` with exits 0 and 1, recorded argv, fixture `restore.tsv`). *Tier:* fast.
+- **B01-AC-19** — After the completeness check, `iterate` mode calls `cache save` with the verdict (`--complete=true` when `verify_complete.py` exited 0, `false` otherwise), also when completeness failed, then exits 4; forks do not call `cache save`. *Verify:* `tests/fast/package-cache-calls.test.sh`. *Tier:* fast.
+- **B01-AC-20** — Output-shaping emerge options in `build-packages` are read from `factory/data/build-env.yaml`: a fixture that adds an option to the script but not to the file fails. *Verify:* `tests/fast/package-build-env.test.sh`. *Tier:* fast.
 
 ## RED plan
 The tester writes first, all failing because the scripts do not exist: `package-completeness` (fixture with a
 stale gpkg of the right name and a VDB lacking the atom; the predecessor logic would pass it),
-`package-atoms` (world 99 / lock 77 fixture), `cachekey`, `package-restore` (stub `store` exiting 3, 4, 5),
+`package-atoms` (world 99 / lock 77 fixture), `package-cache-calls` (stub `cache` exiting 0 and 1),
 `package-release-mode`, `stage-contract`, `no-hidden-stderr` (fails on the first copied-over `|| true`).
 Fixtures are small directories under `tests/fast/fixtures/packages/`. No Docker needed.
 
@@ -169,20 +192,22 @@ Fixtures are small directories under `tests/fast/fixtures/packages/`. No Docker 
   the first run; `network-exceptions.txt` is the escape hatch and must shrink (I04 owns the mirroring fix).
 - The acct-* serial pass is a hypothesis for the dnsmasq race (cause recorded in doctrine.yaml, not reproduced).
   If it still drops dnsmasq, AC-1 turns it into a loud failure and the fallback is fixed ids via `package.env`.
-- Whether a coarse profile hash makes iteration too slow. Measure in the first two slow runs; B01-AC-17 gives the data.
+- Cache effectiveness is I06's risk (I06-AC-16 measures it). B01 only has to call it correctly.
+- `cache save`'s argument for the completeness verdict is assumed; reconcile with I06 at integration.
 - Artifact size of `out/packages` for the B06 handoff is unknown (no measurement in the study).
 - Interfaces assumed from I02, I03, I05 above; whoever merges second reconciles.
 - OD-2 does not affect B01. OD-5 (distfile scope) affects only whether `--network none` can hold.
 
 ## Cost
-Slices: (1) stage contract, `common.sh`, `run-in-builder`, lint; (2) cachekey, restore/save with stub store;
-(3) plan parser, passes, completeness; (4) report, release mode, quickpkg. About 4 slices. CI cycles: 3-4 cold
-builds at 30-60 min (first green, cached rerun, release dry run, one repair). Money: binpkg class storage in the
-store, order of hundreds of MB per tree/profile pair (unmeasured); runner minutes only.
+Slices: (1) port the script, stage contract, `common.sh`, `run-in-builder`, lint; (2) the cache calls with a stub
+`cache` (AC-18 to AC-20); (3) plan parser, passes, completeness (the named fixes); (4) report, release mode, quickpkg.
+About 4 slices. CI cycles, using the predecessor's measured timings: a cache-hot packages step took 7.5 min (whole
+build job 13 min); a from-source tag build took 74.6 min (job 78 min). Expect one from-source run (the release
+dry run, B01-AC-7) and two or three cache-hot runs once I06's seed is in. Money: runner minutes only; the cache's
+storage is I06's.
 
 ## Spec defects found
-- B01 needs `BUILD_EPOCH`, `SOURCE_DATE_EPOCH` and the snapshot hash from the pin ledger, but graph.yaml gives B01
-  no dependency on I05 (and B06 none either). Add `I05` to B01 and B06 deps.
+- Env name mismatch: B01's stage contract requires `MONOLITH_BUILD_MODE` (`iterate|release`); I06-AC-10 keys its release guard on `MONOLITH_MODE=release`. One name must win; B01 will export both until SPEC or I06 settles it.
 - SPEC §4.2 does not say how the root `Makefile` composes per-node targets. This spec assumes F01's Makefile does
   `include factory/mk/*.mk`; F01 should confirm.
 - SPEC §4.1 draws the kernel after B01, but `sys-kernel/monolith-kernel` is a world atom in `versions.lock`.

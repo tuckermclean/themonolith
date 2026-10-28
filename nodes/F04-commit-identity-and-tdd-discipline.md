@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| F | F01 | F05 | — | L |
+| F | F01 | F05 | — (feeds MS3) | L |
 
 **Owns:** `tools/ci/identity-check.py`, `tools/ci/tdd-check.py`, `tools/ci/protected-check.py`, `tools/ci/policy.yaml`, `tools/ci/agent-env.sh`, `.github/workflows/discipline.yml`, `.github/CODEOWNERS`, `docs/repo-settings.md`, `tests/fast/identity-*.test.sh`, `tests/fast/tdd-*.test.sh`, `tests/fast/protected-*.test.sh`, `tests/fast/fixtures/discipline/`, the `trusted-check` Make target
 **Carries from linux-live-iso-factory@b9f533b:** `scripts/agent-git-env.sh:50-60` (the `agent_git_clear_empty_identity` function) into `tools/ci/agent-env.sh`. Nothing else; the old repo had no discipline check.
@@ -66,7 +66,7 @@ protected_paths:
   - tools/system/**
 ```
 
-The first seven protected entries are SPEC §8's list verbatim; the rest are additions argued under Spec defects. `*` in an identity pattern matches any run of characters except `<`, `>` and newline. Glob semantics for paths: `**` matches across `/`, `*` and `?` do not match `/`, and a newline in a path is an ordinary character matched by `*` (strange-company CD-68 found that Go's `.` missed `\n` and let `.github/x\ny` escape `.github/**`; the tests include a newline path).
+The first seven protected entries are the original core of SPEC §8's owner-review list; SPEC §8 now also names `.github/**`, `tools/ci/`, `tools/graph/`, `tools/system/`, `oracle/policy/` and `recipes/kernel/tier0-ceiling.txt`, and the implementer adds them to the policy so the two lists agree (F04-AC-11 compares them). The rest are additions argued under Spec defects. `*` in an identity pattern matches any run of characters except `<`, `>` and newline. Glob semantics for paths: `**` matches across `/`, `*` and `?` do not match `/`, and a newline in a path is an ordinary character matched by `*` (strange-company CD-68 found that Go's `.` missed `\n` and let `.github/x\ny` escape `.github/**`; the tests include a newline path).
 
 ### Identity rules (`tools/ci/identity-check.py`)
 `python3 -I tools/ci/identity-check.py --root DIR --base REV --head REV [--mode pr|push] [--policy FILE]`. For every non-merge commit in `base..head`:
@@ -152,7 +152,7 @@ All checkers are tested against scratch git repositories built in `t_tmpdir` by 
 Bootstrap note: F04's own PR cannot be judged by F04 (base lacks it). Its commits still follow the RED/GREEN pattern by hand, and the PR body says the check ran in `head` mode.
 
 ## Risks and open questions
-- OD-4: the agent bot's name and noreply email are not known. The policy holds the default `monolith-agent[bot]` with a wildcard id; it needs one edit once the account exists. The graph does not list `decision: OD-4` on F04 or F05 (see Spec defects).
+- OD-4: the agent bot's name and noreply email are not known. The policy holds the default `monolith-agent[bot]` with a wildcard id; it needs one edit once the account exists. The graph lists `decisions: [OD-4]` on F04 and F05, so neither starts until it is settled or the default is accepted in `docs/decisions/`.
 - Replaying RED commits runs PR code (the tests) in CI. It already does in `verify.yml`, with the same read-only token. A malicious test can still exhaust time: per-test timeout 20 s and a 15-minute job cap.
 - A fixed `red_targets: [test-fast]` means slow-tier-only work has no RED. The `TDD-Slow-Only` form covers it but lets a tester claim slow-only for an AC that could have a fast test; the reviewer (F05) checks this by judgement.
 - Squash-merge identity depends on the owner's GitHub profile name and the bot account's profile; an unexpected `ID_AUTHOR` on master after merge is possible until they are set.
@@ -163,7 +163,7 @@ Bootstrap note: F04's own PR cannot be judged by F04 (base lacks it). Its commit
 Five slices, 15 ACs, size L because of the trusted-base harness and git-fixture tests. About three fast-lane runs per slice. The slow AC needs two scratch PRs on GitHub (CI minutes only, a minute or two each). No builds. No storage or hosting cost. The human owner spends time on `docs/repo-settings.md` and OD-4.
 
 ## Spec defects found
-- SPEC §8 protected paths omit the files that judge PRs: `.github/workflows/verify.yml`, `discipline.yml`, `.github/CODEOWNERS`, `tools/ci/`, `tools/lint/`, `tools/graph/`, `tools/system/`. Without them an agent PR can weaken its own gate. F04's policy includes them; SPEC §8 should too.
-- Graph: F04 and F05 name the bot (OD-4) but neither carries `decision: OD-4`. Either add it or state that the default stands until answered.
-- SPEC §11 says RED commits carry `TDD-Red-Target: <make target>`, but defines no trailer for slow-only tests, though SPEC §7 puts boot modes and artifact checks in the slow tier. F04 adds `TDD-Slow-Only` and `TDD-Test-Correction`; SPEC §11 should list them.
+- SPEC §8's owner-review list now covers the files that judge PRs (`.github/**`, `tools/ci/`, `tools/graph/`, `tools/system/`) but still omits `tools/lint/`. F04's policy includes it; SPEC §8 should too.
+- SPEC §8 says bots may open PRs that touch owner-review paths and the owner merges them, while F04's `protected-check` fails an agent-authored commit that touches a protected path (`PROT_PATH`). Reconcile: either `PROT_PATH` becomes a required-owner-review signal for bot PRs, or SPEC §8 says agent commits there fail CI unless the node's **Owns** line lists the path (as the guard hook does). Owner's call.
+- SPEC §8 allows `dependabot[bot]` as an author (M04). The policy's `identity` block has humans and agents only; the implementer adds a `bots` entry for Dependabot and its trailer format, tested under F04-AC-1.
 - SPEC §8 says F04's checks run "from the PR's base revision" but F01-F03 validators are listed with them; the SPEC does not say which Make target runs them. F04 defines `make trusted-check` for this.

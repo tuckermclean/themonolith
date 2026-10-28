@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| G | O02 | X01 | — | L |
+| G | O02 | X01 | MS4 | L |
 
 **Owns:** `oracle/boot-entries.yaml` (expectations only; the entries themselves are B05's `factory/data/boot/boot-contract.yaml`), `oracle/modes/entries_isolinux.py`, `oracle/modes/entries_grub.py`, `oracle/lib/entries.py` (select, verify, per-entry checks), `oracle/lib/grubcfg.py` (extract and parse `grub.cfg` from `BOOTX64.EFI`), `oracle/lib/isocfg.py` (read `isolinux.cfg`, `f1.txt` from the ISO), `oracle/lib/rootdisk.py` (build the `root=` disk), `oracle/fixtures/argv/entries-*.txt`, `oracle/fixtures/serial/entries-*.txt`, `oracle/fixtures/grub/` (synthetic EFI with embedded tar), entries `entries-isolinux`, `entries-grub` in `oracle/modes.yaml`, `tests/fast/test_boot_entries.py`, `tests/fast/test_grubcfg.py`, `tests/fast/boot-claims.test.sh`.
 **Carries from linux-live-iso-factory@b9f533b:** the entry definitions at `scripts/build-iso.sh:120-250` (f1.txt, `isolinux.cfg`) and `:260-344` (GRUB menu), `rootfs/init:174-200` (rescue shell), `:245-292` (cmdline parsing, `root=` branch); `README.md:119-165` (boot matrix, label table, `root=` examples); `scripts/boot-test.py:732-782` (label and GRUB navigation; O01 owns the port).
@@ -132,13 +132,10 @@ First `test_boot_entries.py::test_shipped_equals_render` with the predecessor's 
 - The `rescue` banner fix touches `rootfs/init` (B03). The change is one string; B03 owns the file and this PR carries the edit with B03's review.
 
 ## Cost
-Five agent slices: (1) expectations file, `grubcfg`, `isocfg`, `check-entries` and fast tests; (2) `select_grub_entry`, ISOLINUX and GRUB mode runners with fixtures; (3) per-entry expectations and sharding in `modes.yaml`; (4) `rootdisk` and the `root=` legs; (5) hybrid-disk legs and first-run calibration. CI: the first real run is expected to find defects (init, README); plan on 3-4 oracle cycles, each over an hour of runner time because of the boot count. No money beyond runner minutes.
+Five agent slices: (1) expectations file, `grubcfg`, `isocfg`, `check-entries` and fast tests; (2) `select_grub_entry`, ISOLINUX and GRUB mode runners with fixtures; (3) per-entry expectations and sharding in `modes.yaml`; (4) `rootdisk` and the `root=` legs; (5) hybrid-disk legs and first-run calibration. CI: the first real run is expected to find defects (init, README); plan on 3-4 oracle cycles. Each uses over an hour of runner time in total because of the boot count, but the sharded legs finish in about 10-20 minutes wall time (the 17 inherited modes take about 10 minutes wall in parallel, `docs/first-attested-build.md`). No money beyond runner minutes.
 
 ## Spec defects found
-- O01-AC-13 lists "exactly the 17" modes in `oracle/modes.yaml`; this node adds `entries-isolinux` and `entries-grub` (and the other G nodes add more). Amend to allow `node: G0x` modes.
-- graph.yaml: G02 is listed as unlocking nothing, but G01 and G03 reuse `select_grub_entry`. Either add G02 as a dependency of those or move the helper into O01.
+- graph.yaml: G02 is listed as unlocking only X01, but G01 and G03 reuse `select_grub_entry`. Either add G02 as a dependency of those or move the helper into O01.
 - SPEC §7 and `oracle/interfaces.yaml` (O01) name milestones and GRUB order as the harness interface but not the `ttyS0` getty that G01, G02 and G03 depend on to reach a shell on entries without `console=`. Add it to the interface list; R05/B04 must keep the `inittab` line.
 - README claims `root=/dev/hda1` for IDE disks; the kernel has no legacy IDE driver (`CONFIG_IDE` absent), so the claim cannot hold for 6.12. Not a SPEC defect; recorded because it is a promise the gate removes.
-- graph.yaml: B05 reaches the kernel only through B03; G02 inherits the same transitive reach. Not a G02 problem; noted in B05.
 - `build-iso.sh:264-267` claims "We pin to GRUB 2.12" while the Dockerfile has no such pin (commit e8ad618 reverted it); I05's `asserted.grub` check is the planned fix, G03 depends on it.
-- X01 (graph.yaml) does not depend on G01-G05; see G01.

@@ -2,20 +2,20 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| B | B02, O01 | B05 | — (feeds MS2) | M |
+| B | B02, O01 | B05 | — (feeds MS1) | M |
 
 **Owns:** `factory/bin/build-initrd`, `factory/lib/newc.py`, `factory/lib/busybox_applets.py`,
-`factory/lib/initrd_modules.py`, `factory/data/initrd/skel/` (files replacing the inline heredocs),
-`factory/data/initrd-applets.required`, `factory/data/initrd-modules-allow-missing.txt`,
+`factory/lib/initrd_modules.py`, `factory/data/initrd-applets.required`, `factory/data/initrd-modules-allow-missing.txt`,
 `factory/data/budgets.yaml` (initrd entry), `factory/mk/initrd.mk`, `tests/fast/initrd-*.test.sh`,
 `tests/fast/init-contract.test.sh`
-**Carries from linux-live-iso-factory@b9f533b:** `scripts/build-initrd.sh` (rewritten), the content of its inline
-`/etc` heredocs (`:148-211`), `rootfs/init` and `rootfs/usr/share/udhcpc/default.script` (imported by R01; B03
+**Carries from linux-live-iso-factory@b9f533b:** `scripts/build-initrd.sh` (ported; the steps that change are listed
+in "Port first" below, each forced by a named AC), its inline `/etc` heredocs (`:148-211`, ported unchanged),
+the module-closure Python (`:244-300`, ported, extracted to a file), `rootfs/init` and `rootfs/usr/share/udhcpc/default.script` (imported by R01; B03
 packs them), `configs/initrd-modules.txt` (R04 owns the manifest).
 **Study refs:** build.yaml `script.build-initrd` notes (applets executed on host, missing modules WARN,
 `ls | head -1`, cpio without `--reproducible`, symlink mtimes, mknod `|| true`), `silent_fallbacks`,
 `privileged_or_root_needs`; T-initrd-busybox-missing-applets, T-pivot-root-overlay, T-persist-race;
-D-486-minimalism, D-all-static (initrd side), Principle 5.
+D-486-minimalism, D-all-static (initrd side), Principles 5, 11.
 
 ## Purpose
 After B03 the initramfs is produced from files and packages alone: no i486 binary is executed on the build host,
@@ -27,14 +27,15 @@ In:
 - `out/themonolith-<ver>.initrd` and its file manifest.
 - Deriving the busybox applet set without executing busybox.
 - Static-kmod gate, module closure from the R04 manifest, `depmod`.
-- A pure-Python deterministic newc cpio writer.
+- A deterministic newc cpio writer in Python. The predecessor used GNU `cpio`; B03-AC-1, AC-2 and AC-11 force the
+  replacement (see "Port first").
 - A contract test on `init` for the milestone and race fixes the oracle depends on.
 
 Out:
 - The content and logic of `init` (R01 imports it; boot behaviour is proven by O02-O04).
 - The Tier-1 manifest content and the kernel config behind it: R04.
 - Kernel and modules: B02. Squashfs and its modules: B04. ISO packing: B05.
-- Busybox `savedconfig` content: R01 (profile hash in B01 makes edits take effect).
+- Busybox `savedconfig` content: R01. I06's fingerprint covers the savedconfig, so an edit takes effect.
 
 ## Design
 
@@ -42,10 +43,35 @@ Out:
 Inputs: `out/kernel/modules/lib/modules/<krel>/` and `out/kernel/kernel.json` (B02); `out/packages/` gpkgs for
 `sys-apps/busybox` and `sys-apps/kmod` (B01), installed into scratch `ROOT=/work/iroot` with
 `emerge --usepkgonly --nodeps`; the `init` and `default.script` files from R01; `recipes/kernel/initrd-modules.txt`
-(R04); `factory/data/initrd/skel/`. Output: `out/themonolith-<ver>.initrd`, `out/initrd.manifest.tsv`
+(R04). Output: `out/themonolith-<ver>.initrd`, `out/initrd.manifest.tsv`
 (`path type mode size sha256 target`, sorted `LC_ALL=C`), `out/stage/initrd.json` (B01 stage contract).
 Decision: B03 depends on B02 only and takes busybox and kmod from gpkgs, not from B04's sysroot, so it can run in
-parallel with B04. Rejected: reading `out/sysroot/bin/busybox` as `build-initrd.sh:23` did.
+parallel with B04. The predecessor read `out/sysroot/bin/busybox` (`build-initrd.sh:23`) from the live-ROOT export,
+which B01 no longer produces. Rejected: waiting for B04's sysroot.
+
+### Port first (Principle 11)
+`factory/bin/build-initrd` is `scripts/build-initrd.sh` with these changes and no others. Everything not listed is
+carried as written, including the log helpers, directory list (`:57`), `/etc` heredocs (`:148-211`), `gzip -9 -n`,
+the `depmod -b` call and the `modules.alias` diagnostic.
+
+| Predecessor step | Treatment | Forced by |
+|---|---|---|
+| inputs from `${OUTPUT_DIR}/sysroot` (`:23`, `:120-121`, `:230`) | gpkgs installed into scratch `ROOT`; modules from `out/kernel/modules` | B01 drops the live-ROOT export; B03-AC-3 |
+| `./busybox --list` and `busybox --list \| grep` (`:68`, `:81`) | applet list parsed from the ELF string table | B03-AC-3, AC-4 (no host-executed i486 binary) |
+| `is_static_elf` falls back to `file`, then trusts the build (`:110-119`) | `readelf` required | B03-AC-6 |
+| `default.script` missing: warn (`:201`) | exit 3 | B03-AC-3 |
+| `mknod ... \|\| true` (`:219-222`) | device nodes written as archive entries | B03-AC-2, AC-11 (no root) |
+| manifest module missing: WARN (`:294-300`) | fatal unless allow-listed | B03-AC-7 |
+| `KVER=$(ls \| head -1)` (`:232`) | `krel` from `kernel.json` | B03-AC-7 |
+| `touch -d` pass and `find \| sort \| cpio -H newc` (`:352-353`) | `newc.py` | B03-AC-1, AC-2, AC-11 |
+| no gates | RD_GZIP and size budget | B03-AC-8 (new behaviour) |
+
+The cpio replacement is a rewrite and the criteria that force it are these: GNU `cpio -o` records the inode numbers
+and owners of the files it reads (B03-AC-1 forbids that), it cannot emit a device node without a real one on disk,
+which needs root (B03-AC-2, AC-11), and `--reproducible` needs cpio >= 2.14 with inode renumbering behaviour that is
+unverified here. If a later check shows `cpio --reproducible --owner=0:0` plus fakeroot-free node entries meets all
+three, the writer can go back to the port. The v0.2 design also moved the heredocs into `factory/data/initrd/skel/`;
+no criterion needs that, so they stay inline.
 
 ### Build steps
 1. **Gates.** `CONFIG_RD_GZIP=y` must be present in `out/kernel/resolved-kernel.config`, else exit 4: gzip, not
@@ -66,8 +92,8 @@ parallel with B04. Rejected: reading `out/sysroot/bin/busybox` as `build-initrd.
 4. **kmod.** Copy `bin/kmod` (or `usr/bin/kmod`) from the gpkg root. Static check: no `PT_INTERP` in
    `readelf -lW`; dynamic means exit 4 with the ELF details. Symlink `modprobe depmod insmod rmmod lsmod modinfo`
    to `kmod` (Gentoo busybox ships no modutils applets, T-initrd-busybox-missing-applets).
-5. **skeleton.** Copy `factory/data/initrd/skel/` (`etc/passwd group fstab inittab hosts resolv.conf
-   iproute2/rt_tables`, the former heredocs), `init` (0755), `usr/share/udhcpc/default.script` (0755, exit 3 if
+5. **skeleton.** Write the `/etc` files from the ported heredocs (`passwd group fstab inittab hosts resolv.conf
+   iproute2/rt_tables`), copy `init` (0755), `usr/share/udhcpc/default.script` (0755, exit 3 if
    absent; the predecessor only warned, `:201`). Directories as `:57` plus `lib/modules`. Device nodes
    `console c5:1 0622`, `null c1:3 0666`, `zero c1:5 0666`, `tty c5:0 0666` are emitted as cpio entries, so no
    `mknod` and no root (the predecessor used `mknod … || true`, `:219-222`).
@@ -81,9 +107,10 @@ parallel with B04. Rejected: reading `out/sysroot/bin/busybox` as `build-initrd.
    number of `pci:` aliases.
 7. **archive.** `newc.py` takes the entry list and writes a `070701` archive: entries sorted by path (byte order),
    inode numbers sequential from 1, `nlink` 1 (2 for directories), uid and gid 0, mtime `SOURCE_DATE_EPOCH` for
-   every entry including symlinks, devmajor/minor 0, `TRAILER!!!`. Compress with `gzip -9 -n`. Decision: write
-   cpio in Python, rejecting GNU cpio `--reproducible` (needs cpio >= 2.14 in the builder, behaviour of inode
-   renumbering unverified) and `touch` pre-passes (symlink mtimes were skipped at `:352`).
+   every entry including symlinks, devmajor/minor 0, `TRAILER!!!`. Compress with `gzip -9 -n` (ported). Decision: write
+   cpio in Python, forced by B03-AC-1, AC-2 and AC-11 (see "Port first"); rejecting GNU cpio `--reproducible`
+   (needs cpio >= 2.14 in the builder, inode renumbering unverified) and `touch` pre-passes (symlink mtimes were
+   skipped at `:352`).
 8. **budget.** Compare the compressed size to `factory/data/budgets.yaml: initrd_compressed_max_bytes`; exceed =
    exit 4. The initial value is the first green build's size + 10 %, set by the implementer with the measurement
    in the PR. Raising it needs a justification line (F05 review checklist). The predecessor documents only
@@ -125,12 +152,13 @@ script, no binaries committed.
 - The packed `applet_names` layout is recalled from busybox sources, not verified against the shipped 6.12-era
   busybox build in this study. If the real binary disagrees, AC-4 passes on the fixture but AC-5 fails in CI;
   fallback is the `busybox-links.tar` Gentoo may install (existence unknown here) or enabling `make-symlinks`.
-- Where R01 places `init` and `default.script` is not fixed in SPEC §4.2; `INITRD_SKEL` env points at them.
+- Where R01 places `init` and `default.script` is not fixed in SPEC §4.2; the `ROOTFS_SKELETON` env (as in the predecessor, `:19`) points at them.
 - `factory/data/initrd-modules-allow-missing.txt` may start non-empty if the broad Tier-1 manifest names modules
   the resolved kernel does not build; each needs a reason.
 - Budget has no baseline until the first build.
 - Open question for O02: whether `udhcpc` default.script is used at all (build.yaml open question); B03 keeps it.
 - OD-2 does not affect the initrd (it is static by construction).
+- rc1 lane: O02's modes run against rc1's ISO first, so the initrd's behaviour is already known good before B03 builds one. B03-AC-9 guards the imported `init`, not rc1's.
 
 ## Cost
 Slices: (1) `newc.py` and archive determinism; (2) applets and kmod gates; (3) module closure, skeleton, gates and

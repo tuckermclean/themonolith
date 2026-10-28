@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| P | P01, P02 | P04, X01 | — | L |
+| P | P01, P02 | P04, X01 | — (feeds MS5) | L |
 
 **Owns:** `web/index.html`, `web/styles.css`, `web/app/{model,data,ui,charts,router,view-landing,view-downloads,view-index,view-build,view-compare,view-package}.js`, `web/app/view-boot.js` (placeholder only; P04 replaces it), `factory/bin/build-index`, `factory/bin/publish-public`, `.github/workflows/publish.yml`, `docs/public-layout.md`, `tests/fast/web/*.test.mjs`, `tests/fast/publish-*.test.*`, `tests/support/dom-stub.mjs`, `tests/fixtures/dashboard/`.
 **Carries from linux-live-iso-factory@b9f533b:** `web/index.html`, `web/styles.css`, `web/app/*.js` (ported, trimmed), `scripts/generate-dashboard.py` (rewritten as `build-index`), the publish steps of `.github/workflows/build.yml:783-822` (moved to `publish.yml`). Not carried: `boot.html` (duplicate of the SPA boot view), design-tool leftovers in `web/app/router.js:104-110`.
@@ -85,7 +85,7 @@ Subcommands `build` and `site`, orchestrated by `publish.yml`.
 Triggers: `workflow_run` of `Build` and of `Release` (completed); `push` to the default branch with paths `web/**` (site only); `workflow_dispatch` with inputs `tag`, `build_run_id`, `reindex`. `concurrency: publish-public`, `cancel-in-progress: false` (this serialises all writers, which P01's `HEAD`-then-`PUT` relies on). Rules:
 - `Build` completed, success, `push` to the default branch: publish a CI row. `Build` on a tag: skip (the `Release` event handles it). `Release` completed and successful: read artifact `release-handoff` (tag; see defect 2) and publish the release row. Forks and non-default branches: skip.
 - `reindex: true` (sent by P05's workflow after it changes statuses): run only `build-index all` and the pointer step. This keeps one index writer (T-dashboard-two-publishers).
-- Secrets: `STORE_PUBLIC_*` only. Permissions: `contents: read`, `actions: read`. Actions pinned by SHA. It is a protected path in practice (P01 defect 2).
+- Secrets: `STORE_PUBLIC_*` only. Permissions: `contents: read`, `actions: read`. Actions pinned by SHA. Every workflow is an owner-review path (SPEC §8: `.github/**`).
 
 ### The SPA
 Same-origin and vendor-free:
@@ -131,7 +131,7 @@ Tests use Node (`node --test`, no npm dependencies) over `model.js` and over vie
 - **P03-AC-14** — Every key in `BUILDER_KEYS` is set by `pageMeta` for a fixture summary, and the Builder view renders a row for each; the Verify tab output contains the fixture's `repo` and `signerWorkflow` and not `extension install` or `rekor`. *Verify:* `tests/fast/web/view-build.test.mjs`. *Tier:* fast.
 - **P03-AC-15** — The package view completes with at most 2 `fetch` calls (`builds-index.json`, `packages-index.json`) for a fixture with 20 builds. *Verify:* `tests/fast/web/view-package.test.mjs` (counting `fetch` stub). *Tier:* fast.
 - **P03-AC-16** — `isPackageName` accepts `sys-libs/zlib-ng`, `dev-libs/libx11`, `x11-libs/libXft`, `sys-apps/util-linux`, `dev-lang/lua`, and rejects empty names, names without a category, and names with spaces or `..`. *Verify:* `tests/fast/web/model-names.test.mjs`. *Tier:* fast.
-- **P03-AC-17** — After the `v0.2.0-rc1` release, with no credentials: `builds-index.json` parses with schema 1 and contains a row `0.2.0-rc1` of kind `prerelease`; `latest-release.json` points to it; the ISO sha256 at its `iso.path` equals the attested digest; `GET /` serves the SPA. *Verify:* `publish.yml` run for the tag plus `tests/smoke/dashboard.sh "$PUBLIC_BASE_URL"` (curl, python3 json). *Tier:* slow.
+- **P03-AC-17** — After the `v0.2.0-rc1` release, with no credentials: `builds-index.json` parses with schema 1 and contains a row `0.2.0-rc1` of kind `prerelease`; `latest-release.json` points to it; the ISO sha256 at its `iso.path` equals the attested digest; `GET /` serves the SPA. *Verify:* a `publish.yml` dispatch for the existing tag plus `tests/smoke/dashboard.sh "$PUBLIC_BASE_URL"` (curl, python3 json). *Tier:* slow.
 - **P03-AC-18** — Each view (landing, downloads, builds, build, compare, package) renders without throwing for the fixture tree and contains its key text; the staleness banners appear for a fixture index older than 10 days and for a missing or 4-day-old heartbeat. *Verify:* `tests/fast/web/views-render.test.mjs`. *Tier:* fast.
 
 ## RED plan
@@ -142,17 +142,16 @@ Tester writes first: AC-1, 2, 3, 4, 16 (pure functions: they fail because `model
 - Summary schema is S-node territory. `build-index` reads keys of today's `attestation-summary.json` (`sbom_check`, `license_check`, `cve_check`, `unowned_check`, `overall`, `cve_coverage`, `cve_scanner`, `cve_db`, `cve_policy`, `package_count`, ...). If S03/S05 rename them, the fixtures and this node change. Unknown until those specs land.
 - Per-row public size (about 5 MB assumed) drives cost and `build-index all` time; measure after the first publish. `build-index all` reads two small objects per row; fine to about 1,000 rows. M03 may thin old CI rows.
 - OD-1 decides the host. If H6 (`/` serves `index.html`) cannot be met on the same origin, the SPA needs a data base URL, which this design avoids on purpose.
-- The `Release`-event path depends on a handoff artifact that P02 must produce (defect 2).
+- The `Release`-event path depends on a handoff artifact that P02 must produce (defect 1).
 - `publish.yml` and `web/` need the owner's PAT for the workflow file (T-workflow-push-needs-pat).
 - Browser behaviour is not covered by the fast tier (DOM stub only). A manual check of the live site in a real browser is part of the PR checklist, stated as such.
 
 ## Cost
 - Slices: 7 (model and build-index; publish-public with fault injection; publish.yml; SPA shell and landing/downloads/builds; build view; compare/package; polish and staleness). 18 ACs.
-- CI build cycles: 0 of its own; it rides the `v0.2.0-rc1` build from P02 for AC-17. One extra dispatch run of `publish.yml`.
+- CI build cycles: 0 of its own. P03 is `deferred`, so `v0.2.0-rc1` already exists at MS2; AC-17 dispatches `publish.yml --tag v0.2.0-rc1` against that release (`publish-public build --tag` downloads the published assets and re-verifies them). No rebuild.
 - Money: public store about $0 on the recommended host (P01); egress of the read-back (212 MB) is free there.
 
 ## Spec defects found
-1. **SPEC §5 `put` is immutable but the site, indexes and pointers must change.** See P01 defect 1; this node depends on `store set`.
-2. **`Release` runs carry no tag in their payload.** Their `head_branch` is the default branch. P02's `release.yml` uploads artifact `release-handoff` (now in P02 Design and AC-15) and this node reads it.
-3. **SPEC §4.3 says host tools are Python.** SPA tests need Node (`node --test`). Declare `node` in `pins/pins.yaml` and the builder or runner toolchain (I05), or accept that the web tests run in the fast lane only with a pinned Node.
-4. **Graph: P03 reads attestation data from S01–S05 outputs.** The dependency is transitive through P02 so no edge is missing, but the summary schema (S05) should be frozen before P03's fixtures.
+1. **`Release` runs carry no tag in their payload.** Their `head_branch` is the default branch. P02's `release.yml` uploads artifact `release-handoff` (now in P02 Design and AC-15) and this node reads it.
+2. **Graph: P03 reads attestation data from S01–S05 outputs.** The dependency is transitive through P02 so no edge is missing, but the summary schema (S05) should be frozen before P03's fixtures.
+3. **The web tests need Node (OD-14, SPEC §4.3).** I05 must pin `node` for the CI host; until OD-14 is settled, the dashboard's tests cannot be required.

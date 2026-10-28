@@ -2,14 +2,14 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| O | O02 | S05, P02 | MS3 | M |
+| O | O02 | P02, S05 | — (feeds MS2) | M |
 
-**Owns:** `oracle/modes/{gui,stele_acid2}.py`, `oracle/lib/golden.py` (PNG codec, comparison, diff image), `oracle/bin/golden-record`, `oracle/golden/gui.png`, `oracle/golden/gui.yaml`, `oracle/golden/stele-acid2.png`, `oracle/golden/stele-acid2.yaml`, `oracle/fixtures/argv/{gui,stele-acid2}.txt`, matrix legs for these modes in `oracle/modes.yaml`.
-**Carries from linux-live-iso-factory@b9f533b:** `scripts/boot-test.py` lines 372-417 (gui argv), 1444-1599 (QMP, PPM; moved to O01), 1742-1893 (runners), `.github/workflows/boot-test.yml` jobs `gui` (:424-479) and `stele-acid2` (:481-536).
+**Owns:** `oracle/modes/{gui,stele_acid2}.py`, rc1 entries for these modes in `oracle/policy/rc1-expected.yaml`, `oracle/lib/golden.py` (PNG codec, comparison, diff image), `oracle/bin/golden-record`, `oracle/golden/gui.png`, `oracle/golden/gui.yaml`, `oracle/golden/stele-acid2.png`, `oracle/golden/stele-acid2.yaml`, `oracle/fixtures/argv/{gui,stele-acid2}.txt`, matrix legs for these modes in `oracle/modes.yaml`.
+**Carries from linux-live-iso-factory@b9f533b (runners and argv ported; the golden comparison is new, forced by O05-AC-3/AC-4):** `scripts/boot-test.py` lines 372-417 (gui argv), 1444-1599 (QMP, PPM; moved to O01), 1742-1893 (runners), `.github/workflows/boot-test.yml` jobs `gui` (:424-479) and `stele-acid2` (:481-536).
 **Study refs:** oracle.yaml `bootmode.gui|stele-acid2`, gaps ("Stele Acid2: gate is exit 0 + non-black", "GUI: dwm bar + terminal asserted only as >0.5% non-black"), contradictions (HMP vs QMP wording at boot-test.py:2401 and boot-test.yml:422); T-gui-boot-labels, T-startx-lean-fonts, T-terminus-xlfd, T-tinyx-xfbdev, D-bitmap-fonts-no-freetype, D-486-minimalism, D-state-and-no-hidden-stderr.
 
 ## Purpose
-After this node a GUI regression that still paints some pixels fails the oracle. The predecessor's `gui` and `stele-acid2` modes passed whenever more than 0.5% of the screendump was non-black, so a wrong font, a broken window manager bar or a mis-laid-out Acid2 page passed. Each mode now compares the framebuffer to a reviewed golden image within a stated tolerance, keeps the liveness assertions, and proves the comparison can fail.
+After this node a GUI regression that still paints some pixels fails the oracle. The predecessor's `gui` and `stele-acid2` modes passed whenever more than 0.5% of the screendump was non-black, so a wrong font, a broken window manager bar or a mis-laid-out Acid2 page passed. Each mode now compares the framebuffer to a reviewed golden image within a stated tolerance, keeps the liveness assertions, and proves the comparison can fail. Both modes run first against the v0.1.0-rc1 ISO (`oracle-rc1`), and the first goldens are captured from rc1's own framebuffer; B06's `oracle-gate` then runs them on built ISOs.
 
 ## Scope
 In:
@@ -49,7 +49,7 @@ Decision: the golden is Stele's own reviewed render, not the W3C Acid2 reference
 version: 1
 width: 800
 height: 600
-source: {iso_version: "...", stele_version: "...", recorded: "2026-..-..", reviewed_by: "..."}
+source: {iso_version: "...", iso_sha256: "...", stele_version: "...", recorded: "2026-..-..", reviewed_by: "..."}
 tolerance:
   channel_delta: 24          # per-channel absolute difference that counts as a changed pixel
   max_diff_fraction: 0.005   # fraction of unmasked pixels allowed to differ
@@ -62,7 +62,7 @@ Defaults for `gui` are `channel_delta: 24`, `max_diff_fraction: 0.005`; for `ste
 Comparison: dimensions must equal exactly; a pixel counts as different when the maximum absolute channel difference exceeds `channel_delta`; masked pixels are ignored; the check passes when the different fraction is at most `max_diff_fraction`. Stability: the screendump is taken until two consecutive frames differ by at most `stability.max_diff_fraction`; if none are stable within `max_tries`, the check fails with both frames saved. This replaces the idea of retrying until a frame matches, which would mask flake. On failure the harness writes `<screendump>.diff.png` (differing pixels red over the dimmed golden) and the actual frame as PNG; CI uploads both.
 
 ### Record and review (bootstrap)
-A missing golden is a failure (SPEC principle 5), never an auto-accept. Procedure: run the leg with `--golden-record`, which saves the stable frame and exits 1 with "no golden". A human downloads the artifact, looks at it (gui: dwm bar, one st terminal with prompt in Terminus; acid2: the smiley layout), runs `oracle/bin/golden-record <frame.png> --mode gui --reviewed-by "<name>"` which writes the PNG and a YAML skeleton, fills `ignore` regions with reasons, and commits. Every later golden change is a PR with before/after images attached. The first goldens cannot be written before a first successful ISO exists; the rc1 PPM artifacts expired with the 14-day retention.
+A missing golden is a failure (SPEC principle 5), never an auto-accept. Procedure: run the leg with `--golden-record`, which saves the stable frame and exits 1 with "no golden". A human downloads the artifact, looks at it (gui: dwm bar, one st terminal with prompt in Terminus; acid2: the smiley layout), runs `oracle/bin/golden-record <frame.png> --mode gui --reviewed-by "<name>"` which writes the PNG and a YAML skeleton, fills `ignore` regions with reasons, and commits. Every later golden change is a PR with before/after images attached. The first goldens are captured from rc1: the `oracle-rc1` job runs the legs with `--golden-record` and uploads the stable frames (the predecessor's rc1 PPM artifacts expired with the 14-day retention, so a fresh capture is needed). `source.iso_sha256` in the YAML records the rc1 digest. Because rc1's tree is the first pin (OD-6 default), our first built ISO should render the same pixels; a difference is then a real change to explain, and a reviewer either fixes the cause or records a new golden in a PR with before/after images. If OD-6 moves to a current tree, the goldens are re-recorded on the first built ISO.
 
 ### Self-test
 `golden.py` ships with synthetic cases so the comparison's ability to fail is proven in the fast tier: identical image passes; every pixel off by 8 in one channel passes; a 40x40 block of the terminal area shifted by 10 px fails; uniform mid-gray fails; a one-pixel size mismatch fails; an ignored region's changes do not count.
@@ -86,6 +86,8 @@ A missing golden is a failure (SPEC principle 5), never an auto-accept. Procedur
 - **O05-AC-8** — A missing golden or YAML fails the mode (exit 1, message names the file and the record procedure) and `--golden-record` never passes a run; `oracle/bin/golden-record` writes a PNG and YAML skeleton and refuses to overwrite without `--force`. *Verify:* `tests/fast/test_oracle_golden.py::test_missing_golden_fails`, `::test_record_cli`. *Tier:* fast.
 - **O05-AC-9** — Frame stability is required before comparison: two consecutive dumps within `stability.max_diff_fraction`; if none stabilize in `max_tries`, the mode fails and saves both frames. *Verify:* `tests/fast/test_oracle_golden.py::test_stability_loop` with a fake QMP that returns a changing frame. *Tier:* fast.
 - **O05-AC-10** — The PNG codec reads and writes using only the standard library (`zlib`, `struct`) and round-trips all five PNG filter types. *Verify:* `tests/fast/test_oracle_golden.py::test_png_roundtrip` and the stdlib-only lint (O01-AC-14). *Tier:* fast.
+- **O05-AC-11** — The `oracle-rc1` job runs `gui` and `stele-acid2` against the rc1 ISO with the committed goldens (captured from rc1 and reviewed, `source.iso_sha256` equal to the rc1 pin); each leg passes, or fails only on checks listed in `oracle/policy/rc1-expected.yaml` with `study` and `node: O05`. *Verify:* CI run of `oracle-rc1` linked in the node PR; `tests/fast/test_oracle_golden.py::test_golden_source_digest_is_rc1_or_built` (the digest is the rc1 pin or a digest recorded by a later re-record PR). *Tier:* slow and fast.
+- **O05-AC-12** — The two legs are registered with `status: implemented` in `oracle/modes.yaml`, so B06's `oracle-gate` runs them on every built ISO without `--rc1`, and a built-ISO mismatch against the rc1-captured golden fails the gate. *Verify:* `tests/fast/test_oracle_modes.py::test_o05_legs_implemented`. *Tier:* fast.
 
 ## RED plan
 Tester commits: `test_oracle_golden.py` (all cases in AC-5..10 with synthetic frames; module absent), `test_oracle_gui.py` (replay of three transcripts), golden argv files. No real golden exists at RED time, so AC-7 is written to read `oracle/golden/` and fails because the directory is empty; AC-3/AC-4 have only slow GREEN.
@@ -94,13 +96,13 @@ Tester commits: `test_oracle_golden.py` (all cases in AC-5..10 with synthetic fr
 - Hardest: dwm and st content that varies between runs (dwm status text, st cursor, prompt contents). The `ignore` list is determined on the first recorded frames; if the status bar shows a clock the ignore region has to cover it. Unknown until the first run.
 - Tolerance numbers are placeholders from reasoning, not measurements.
 - The Acid2 golden freezes Stele's current behaviour, including its bugs. A reviewer must compare it once to the reference by eye and record the verdict in `source.reviewed_by`.
-- Golden churn: every dwm, st, Stele, font or kernel-console change that touches pixels needs a golden PR. Acceptable and intended, but it adds friction to M01 pin bumps (a BUILD_EPOCH bump that changes st or Xfbdev could break the leg and need a human golden update). If it recurs, split `ignore` regions or widen the tolerance with a reviewed reason rather than skipping the check.
+- Golden churn: every dwm, st, Stele, font or kernel-console change that touches pixels needs a golden PR. Acceptable and intended, but it adds friction to M01 pin bumps (a BUILD_EPOCH bump that changes st or Xfbdev could break the leg and need a human golden update; M01's first bump moves off rc1's tree, so expect one re-record there). If it recurs, split `ignore` regions or widen the tolerance with a reviewed reason rather than skipping the check.
 - QMP `screendump` format (PPM P6) and its colour conversion from 16 bpp may differ across QEMU versions; the runner's QEMU version is in the result JSON (O02), and a version change that shifts colors shows up as a golden failure.
 - `vga=788` under `-vga std` is BIOS-only; UEFI GUI is not covered (kernel has no efifb), by design.
 
 ## Cost
-Three agent slices: (1) golden library, PNG codec, self-tests; (2) runners, polling, argv; (3) record procedure, first-run goldens. Two to three CI cycles: the first records frames (fails by design), the second runs with committed goldens. No paid services.
+Three agent slices: (1) golden library, PNG codec, self-tests; (2) runners, polling, argv; (3) record procedure and the rc1 goldens. Two to three `oracle-rc1` cycles: the first records frames from rc1 (fails by design), the second runs with committed goldens. Measured on the predecessor: about 1-2 min per boot leg; `stele-acid2` adds the render step, up to 180 s. No build is needed. No paid services.
 
 ## Spec defects found
-- graph.yaml lists no dependency from O05 to anything that produces the Terminus/dwm/st configuration it asserts; the golden depends on R01's recipes being stable at record time. No change required, but a recipe change that moves pixels invalidates the golden (noted in Risks).
-- SPEC §7 describes the slow tier as "the 17 boot modes inherited from the predecessor" with no place for stored binary reference data; `oracle/golden/*.png` is new repository content (about 10-30 KB each) and should be mentioned in SPEC §4.2.
+- graph.yaml lists no dependency from O05 to anything that produces the Terminus/dwm/st configuration it asserts; the golden depends on R01's recipes being stable at record time. No change required; a recipe change that moves pixels invalidates the golden (noted in Risks).
+

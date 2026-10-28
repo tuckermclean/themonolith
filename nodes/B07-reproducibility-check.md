@@ -2,11 +2,12 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| B | B06 | X01 | — (evidence for MS5) | M |
+| B | B06 | X01 | MS4 | M |
 
 **Owns:** `factory/bin/repro-compare`, `factory/lib/repro_lib.py`, `factory/bin/repro-known-check`,
 `docs/repro/known-differences.yaml`, `docs/repro/README.md` (format and policy, one page), `.github/workflows/repro.yml`,
 `factory/mk/repro.mk` (`make repro`), `tests/fast/repro-*.test.sh`, `tests/fast/fixtures/repro/`
+**Consumes:** I06's `out/cache/audit.tsv` (release-vs-cache payload comparison, per cpv) from each release build, as one input; I06 produces it, B07 reads it.
 **Carries from linux-live-iso-factory@b9f533b:** nothing as code. Ideas only: `scripts/binpkg-store.sh` pack
 (`--sort=name --numeric-owner --mtime`, `:306-310`) and `build-initrd.sh:342-353` as the predecessor's partial
 reproducibility measures.
@@ -23,7 +24,8 @@ differences can shrink and cannot grow silently.
 
 ## Scope
 In:
-- A comparer over two unpacked `iso-<run_id>` artifact sets, with a hash list per layer and a file-level drill-down.
+- A comparer over two unpacked `iso-<run_id>` artifact sets (plus each build's `packages-<run_id>` audit file), with a hash list per layer and a file-level drill-down.
+- Reading I06's audit (`audit.tsv`) as evidence for the package layer and as a cause hint for drill-down entries.
 - The known-differences file, its schema, and the checks on it (coverage, staleness, expiry, ratchet).
 - `repro.yml` (dispatch a comparison of two existing release builds) and `make repro` locally.
 - The first committed list of differences found, with causes.
@@ -32,13 +34,14 @@ Out:
 - Making each stage deterministic: B03-B05 own their stage-level fixes and twice-run checks; B01/B02 own
   package and kernel causes. B07 reports and tracks; it does not patch builds.
 - Upstream package reproducibility fixes beyond recording them as entries with issues.
-- Attestation digest chain: S05. Building the artifacts: B06.
+- Attestation digest chain: S05. Building the artifacts: B06. Producing the audit: I06 (it runs in release builds and never fails them; B07 decides what a `differs` row means).
+- Turning the audit into a blocking gate before B07's ratchet exists: not done; the audit stays non-blocking (SPEC §5.1).
 
 ## Design
 
 ### What is compared
 Two builds are comparable only when their `build-manifest.json` (B06) agree on: `git_sha`, `source_date_epoch`,
-`mode == release`, builder image digest, and the snapshot and distfile hashes recorded in the stage records;
+`mode == release`, builder image digest, the I06 global key (`out/cache/key.json`) and the tree commit, and the distfile hashes recorded in the stage records;
 `run` and `layers` are excluded. Otherwise `repro-compare` exits 2 naming the first mismatching field. Release
 mode (all packages built from source) is the meaningful case; a `cache` comparison only proves the stages after
 packages. Decision: compare two separate from-source builds on separate runners, in addition to the in-job
@@ -69,6 +72,12 @@ Decision: gate on hash lists and the existing manifests, which cost seconds and 
 diffoscope as the gate (very slow and memory-hungry on a half-gigabyte squashfs, drags in unpinned tools).
 diffoscope is a diagnostic only: when present (pinned by I03/I05 if the owner wants it), a `new` difference runs it
 with a size cap and `repro.yml` uploads `repro-diff-<run_id>`; absence never changes the verdict.
+
+### The I06 audit as input
+Each release build leaves `out/cache/audit.tsv` (`cpv same|differs|absent`) in its `packages-<run_id>` artifact (B06). It compares that build's from-source package payloads with the cache entry of the same global key and fingerprint, so it is a third, independent measurement of package reproducibility: a `differs` row means the same inputs gave different bytes across runs separated in time. B07 reads it in two ways, neither of which gates before B07-AC-10 passes:
+- The report gets a `cache_audit` block: counts of `same`, `differs`, `absent`, and the sorted `differs` list.
+- A squashfs or initrd difference whose path is owned (per `rootfs.manifest.tsv` `owner`) by a cpv that the audit lists as `differs` is reported with `cause_hint: cache-audit` so the known-difference entry can name the package. A difference in a package the audit lists as `same` is flagged `unexplained-by-audit`, which usually means a stage, not a compile, caused it.
+`absent` rows (no cache entry to compare) are counted and ignored. If a build has no `audit.tsv`, the block says `not-available` and the verdict is unchanged.
 
 ### Known-differences file
 `docs/repro/known-differences.yaml`:
@@ -143,12 +152,14 @@ Each real one becomes an entry with an issue.
 - **B07-AC-9** — `report.json` and `report.md` are byte-identical across repeated runs of the same pair, sorted, with no timestamps. *Verify:* `tests/fast/repro-layers.test.sh`. *Tier:* fast.
 - **B07-AC-10** — Two release builds of one commit on separate runners, compared by `repro.yml`, exit 0, and `docs/repro/known-differences.yaml` at head lists every difference found with reason, cause and issue (possibly empty). *Verify:* `repro.yml` run ids recorded in the PR table. *Tier:* slow.
 - **B07-AC-11** — At the X01 cutover commit the same comparison passes and every entry has at least 14 days left to expire. *Verify:* `repro.yml` run in X01's evidence; `repro-known-check --min-remaining-days 14`. *Tier:* slow.
+- **B07-AC-12** — Given two builds whose `audit.tsv` lists one cpv as `differs`, the report has a `cache_audit` block with the three counts and that cpv, a differing squashfs path owned by the cpv carries `cause_hint: cache-audit`, one owned by a `same` cpv is flagged `unexplained-by-audit`, and with no `audit.tsv` the block says `not-available` and the verdict is unchanged. *Verify:* `tests/fast/repro-audit.test.sh` (fixture manifests and audit files). *Tier:* fast.
+- **B07-AC-13** — Two manifests whose I06 global keys differ are not comparable: exit 2 naming `global_key`. *Verify:* `tests/fast/repro-comparable.test.sh`. *Tier:* fast.
 
 ## RED plan
 Tester writes first, all failing for want of the tools: fixture pairs under `tests/fast/fixtures/repro/` (a
 build-manifest and two small TSV manifests per side, built by a generator script, no real images): identical;
 one `BUILD_TIME` row differing; an unlisted path differing; an expired entry; a stale entry; an ISO-only difference.
-`repro-known` cases for the glob rule and the schema. `repro-ratchet` uses two small YAML files and a fake commit
+`repro-audit` (fixture `audit.tsv` pairs), `repro-known` cases for the glob rule and the schema. `repro-ratchet` uses two small YAML files and a fake commit
 log for the trailer. None needs Docker or network.
 
 ## Risks and open questions
@@ -162,12 +173,14 @@ log for the trailer. None needs Docker or network.
 - The comparison needs `rootfs.manifest.tsv` and `initrd.manifest.tsv` to include a per-file sha256; those are B04
   and B03 requirements already stated in their specs.
 - diffoscope availability depends on I03/I05; it is optional by design.
+- The audit compares payloads against a cache entry written by an earlier `main` run, not against the sibling build, so a `differs` can also mean the earlier run built under a different (unrecorded) condition. B07 treats it as a hint, never as the verdict.
+- B07 is deferred (after MS2); the first comparison will use rc1-era audit data only if a release build has run, which MS2 guarantees.
 
 ## Cost
-Slices: (1) comparer and layer report; (2) known-differences schema, coverage, glob, ratchet; (3) `repro.yml`,
-`make repro`, first real comparison and baseline list. About 3 slices. CI cycles: 2 cold from-source builds per
-real comparison (30-60 min each, run in parallel on separate runners), at least 2 comparisons (baseline, after
-fixes), so about 4 cold builds in total. Money: runner minutes and short-lived artifact storage; nothing else.
+Slices: (1) comparer and layer report; (2) known-differences schema, coverage, glob, ratchet, audit input; (3) `repro.yml`,
+`make repro`, first real comparison and baseline list. About 3 slices. CI cycles: 2 from-source builds per
+real comparison (measured on the predecessor: 78 min for the build job, about 95 min to a tested ISO; run in parallel on separate runners), at least 2 comparisons (baseline, after
+fixes), so about 4 from-source builds in total. The MS2 release build already provides one of them. Money: runner minutes and short-lived artifact storage; nothing else.
 
 ## Spec defects found
 - graph.yaml gives B07 only `B06`. It reads manifests that B03 and B04 are required to emit; this is satisfied

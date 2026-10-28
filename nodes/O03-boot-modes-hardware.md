@@ -2,14 +2,14 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| O | O02, R04 | S05, P02 | MS3 | M |
+| O | O02, R04 | P02, S05 | — (feeds MS2) | M |
 
-**Owns:** `oracle/modes/{nic,vga,fbdev_modprobe}.py`, `oracle/fixtures/argv/{nic-*,vga-cirrus,fbdev-modprobe}.txt`, `oracle/policy/fbdev-modprobe-exclude.yaml`, matrix legs for these modes in `oracle/modes.yaml`.
-**Carries from linux-live-iso-factory@b9f533b:** `scripts/boot-test.py` lines 419-460 (nic/vga argv), 1231-1319 (model tables and validators), 1895-2036 (runners), `.github/workflows/boot-test.yml` jobs `nic-models` (:538-600), `vga-models` (:602-664), `fbdev-modprobe` (:666-712).
+**Owns:** `oracle/modes/{nic,vga,fbdev_modprobe}.py`, rc1 entries for these modes in `oracle/policy/rc1-expected.yaml`, `oracle/fixtures/argv/{nic-*,vga-cirrus,fbdev-modprobe}.txt`, `oracle/policy/fbdev-modprobe-exclude.yaml`, matrix legs for these modes in `oracle/modes.yaml`.
+**Carries from linux-live-iso-factory@b9f533b (ported; changes only where an AC names one):** `scripts/boot-test.py` lines 419-460 (nic/vga argv), 1231-1319 (model tables and validators), 1895-2036 (runners), `.github/workflows/boot-test.yml` jobs `nic-models` (:538-600), `vga-models` (:602-664), `fbdev-modprobe` (:666-712).
 **Study refs:** oracle.yaml `bootmode.nic|vga|fbdev-modprobe`, gaps (NIC drivers only `.ko`-checked, "rtl8139 regex satisfied by either driver"), contradictions (README `CONFIG_VORTEX`, build.yml comment "6 of 21", boot-test.py comment that e1000e is not carried); T-isa-ne-needs-irq, T-ddc-i2c-escalation, T-kernel-config-symbol-names, T-ahci-q35-nic, D-486-tier-regime, D-state-and-no-hidden-stderr.
 
 ## Purpose
-After this node the ISO is shown to coldplug real emulated network and graphics hardware by modalias, to find an ISA NIC that has no modalias, and to survive hand-loading legacy fbdev drivers with no hardware present. These are the Tier 1/Tier 2 module claims that keep the bzImage small (D-486-tier-regime); a silent drop of a symbol by `olddefconfig` would otherwise ship an ISO that boots on QEMU defaults and fails on a real 3Com or Cirrus machine.
+After this node the ISO (rc1 first, then every built ISO through B06's `oracle-gate`) is shown to coldplug real emulated network and graphics hardware by modalias, to find an ISA NIC that has no modalias, and to survive hand-loading legacy fbdev drivers with no hardware present. These are the Tier 1/Tier 2 module claims that keep the bzImage small (D-486-tier-regime); a silent drop of a symbol by `olddefconfig` would otherwise ship an ISO that boots on QEMU defaults and fails on a real 3Com or Cirrus machine.
 
 ## Scope
 In:
@@ -23,6 +23,9 @@ Out:
 - NAT: O04. GUI on the framebuffer: O05. Hardware QEMU cannot emulate (3c509, wd, smc-ultra, lance, the rest of the 27 fbdev chips, Hyper-V): stays `.ko`-presence only (O06), Hyper-V is G03.
 
 ## Design
+
+### Order of work: rc1 first
+The three modes are first run in `oracle-rc1` (O02's caller workflow, `--rc1`) against the v0.1.0-rc1 ISO. Where rc1 fails a leg because of a known predecessor bug, the failing check is recorded in `oracle/policy/rc1-expected.yaml` (O01 format) with the study id and an issue, and the leg stays strict for our builds. The likely cases are the added legs and checks that the predecessor never ran: the four added NIC models, the single bound rtl8139 driver, and the 21 extra fbdev modules. A new, previously unseen failure is not given a study id by guesswork; it gets a new issue and is recorded with that issue as `study`. B06's `oracle-gate` then runs the same legs on built ISOs with no `--rc1`.
 
 ### Modes
 All three boot BIOS/ISOLINUX with `qemu-system-i386 -cpu 486 -cdrom ISO -boot d -nographic -serial mon:stdio -no-reboot` (the `build_bios_cmd` base, `boot-test.py:191-212`), then add:
@@ -67,7 +70,7 @@ Module list. The predecessor loaded five of 27 (`tdfxfb sm712fb matroxfb_base s3
 
 ## Gate
 - **O03-AC-1** — `nic` boots with `-net nic,model=<m> -net user` for pcnet, rtl8139, tulip and ne2k_pci, reaches a shell, and `lsmod` shows the model's driver (`pcnet32`, the single bound rtl8139 driver recorded from the first run, `tulip`, `ne2k_pci`). *Verify:* CI legs `oracle / boot (nic-pcnet|nic-rtl8139|nic-tulip|nic-ne2k_pci)`. *Tier:* slow.
-- **O03-AC-2** — `nic` legs for `e1000e`, `virtio-net-pci`, `vmxnet3` and `i82559er` pass with `lsmod` showing `e1000e`, `virtio_net`, `vmxnet3`, `e100` respectively. A leg that exposes a product defect is not skipped: the defect is filed, the leg stays red, and the node does not pass until the defect is fixed or the model is removed from the matrix in the same PR with a recorded reason. *Verify:* CI legs `oracle / boot (nic-e1000e|nic-virtio-net-pci|nic-vmxnet3|nic-i82559er)`. *Tier:* slow.
+- **O03-AC-2** — `nic` legs for `e1000e`, `virtio-net-pci`, `vmxnet3` and `i82559er` pass with `lsmod` showing `e1000e`, `virtio_net`, `vmxnet3`, `e100` respectively. A leg that exposes a product defect is not skipped: the defect is filed with an issue. On rc1 the failure is recorded in `rc1-expected.yaml` (study id or issue) so the node can pass; the leg stays strict for built ISOs, so B06's `oracle-gate` is red until the recipe fix (R04 or R01) lands, or the model is removed from the matrix in the same PR with a recorded reason. *Verify:* CI legs `oracle / boot (nic-e1000e|nic-virtio-net-pci|nic-vmxnet3|nic-i82559er)` in `oracle-rc1`. *Tier:* slow.
 - **O03-AC-3** — `nic ne2k_isa` asserts `ne` absent after boot, `monolith-net probe` prints `found` within 60 s, `ne` resident afterwards, and a new non-loopback interface exists in `ip link show`. *Verify:* CI leg `oracle / boot (nic-ne2k_isa)`. *Tier:* slow.
 - **O03-AC-4** — `vga` boots with `serial vga=788 -vga cirrus` at 64 MB, and `^cirrusfb\b` is resident. *Verify:* CI leg `oracle / boot (vga-cirrus)`. *Tier:* slow.
 - **O03-AC-5** — Every PCI NIC leg also asserts that `ip link show eth0` succeeds after boot. *Verify:* `tests/fast/test_oracle_nic.py::test_pci_model_requires_eth0` (replay transcript where the module is in `lsmod` but `eth0` is absent must fail); then CI legs. *Tier:* fast (logic), slow (legs).
@@ -76,20 +79,23 @@ Module list. The predecessor loaded five of 27 (`tdfxfb sm712fb matroxfb_base s3
 - **O03-AC-8** — Each NIC model and the VGA model is its own matrix leg in `oracle/modes.yaml` with its own `job_timeout_minutes`; no job runs a shell loop over models. *Verify:* `tests/fast/test_oracle_modes.py::test_nic_legs_are_individual` (nine NIC legs, one VGA leg) and the O02 workflow test that no step contains `for m in`. *Tier:* fast.
 - **O03-AC-9** — `fbdev-modprobe-exclude.yaml` entries each carry `module`, `reason`, `issue`; an entry for a module not in the fbdev list, or a duplicate, fails. *Verify:* `tests/fast/test_oracle_fbdev.py::test_exclusion_file_schema`. *Tier:* fast.
 - **O03-AC-10** — Golden argv files exist for each leg (`nic-<model>`, `vga-cirrus`, `fbdev-modprobe`) and match the builders, including that NICs use the legacy `-net nic,model=<m> -net user` form. *Verify:* `tests/fast/test_oracle_argv.py`. *Tier:* fast.
+- **O03-AC-11** — The `oracle-rc1` job runs every O03 leg (nine NIC legs, `vga-cirrus`, `fbdev-modprobe`) against the rc1 ISO; each leg passes or fails only on checks listed in `oracle/policy/rc1-expected.yaml` with `study` and `node: O03`, and no listed check passes (a stale entry fails the job). *Verify:* CI run of `oracle-rc1` linked in the node PR. *Tier:* slow.
+- **O03-AC-12** — The same legs are registered with `status: implemented` in `oracle/modes.yaml`, so B06's `oracle-gate` runs them on every built ISO without `--rc1`. *Verify:* `tests/fast/test_oracle_modes.py::test_o03_legs_implemented`. *Tier:* fast.
 
 ## RED plan
 Tester commits: `test_oracle_fbdev.py` (verdict function, list-minus-exclusions, tainted `4096`, exclusion schema; modules absent), `test_oracle_nic.py` (replay transcripts under `oracle/fixtures/serial/` for module-present-eth0-absent and for ISA probe with no new interface), the golden argv files, and the `test_oracle_modes.py` leg assertions. They fail because the mode modules, the exclusion file and the legs do not exist.
 
 ## Risks and open questions
-- Hardest: the four added NIC models and the 26-module fbdev list may surface genuine product bugs on first run (a driver oopsing with no hardware, `i82559er` not binding). That is the point, but it makes MS3 depend on fixes outside the oracle. If any leg needs a recipe change, that fix belongs to R04 or R01 and blocks this node.
-- Which of `8139too` / `8139cp` binds QEMU's rtl8139 is unknown; measure on the first run.
+- Hardest: the four added NIC models and the 26-module fbdev list may surface genuine product bugs on first run (a driver oopsing with no hardware, `i82559er` not binding). That is the point, but it makes MS2 (the first attested build) depend on fixes outside the oracle, because P02 runs these legs on the tag build. The rc1 lane lets this node merge first; if a leg needs a recipe change, that fix belongs to R04 or R01 and must land before P02, and B06's gate shows it red until then.
+- Which of `8139too` / `8139cp` binds QEMU's rtl8139 is unknown; measure on the first rc1 run.
 - `monolith-net probe` timing under TCG: the 60 s budget was set for the predecessor and may be tight with a long irq sweep.
 - Whether QEMU's `-net nic,model=` legacy form stays supported across runner QEMU versions (the oracle setup records the version, O02).
 - 26 sequential `modprobe` runs on a 64 MB 486 TCG guest may exceed 30 s per check; the check timeout for `modprobe` should be 60 s and is part of the first-run calibration.
 - `rtl8139`, `tulip`, `ne2k_pci` and `pcnet` all also exist as `.ko`-presence checks in O06; keep the two lists generated from one source (R04's module lists).
 
 ## Cost
-Two to three agent slices: (1) fast tests, mode modules, golden argv; (2) matrix legs, exclusion file; (3) first-run calibration. One to three CI cycles with the O02 `oracle.yml` plus an ISO. Added NIC legs add roughly four more 256 MB TCG boots per run (unmeasured). No paid services.
+Two to three agent slices: (1) fast tests, mode modules, golden argv; (2) matrix legs, exclusion file, rc1 entries; (3) first-run calibration on rc1. One to three CI cycles of `oracle-rc1`, no build needed. Timing, measured on the predecessor: its `nic-models` job ran the five NIC models sequentially in 9.1 min, so about 2 min per 256 MB TCG boot; nine parallel legs should finish in about 2 min each plus setup. The 26-module `fbdev-modprobe` leg is unmeasured (the predecessor loaded five). No paid services.
 
 ## Spec defects found
-- graph.yaml says O03 is "nic (model matrix), vga, fbdev-modprobe modes" and gives the milestone as MS3, but the modes depend on R04's module lists (the 27 fbdev symbols, NIC symbols), and R04 is not a dependency. Add R04 as a dependency of O03, or have O03 keep its own list (rejected here: duplication).
+- None. The R04 dependency this node needed is in the v0.3 graph.
+

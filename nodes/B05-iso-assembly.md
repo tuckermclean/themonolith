@@ -2,15 +2,16 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| B | B02, B03, B04, O01 | B06, S01 | — (feeds MS2) | M |
+| B | B02, B03, B04, O01 | B06 | — (feeds MS1) | M |
 
 **Owns:** `factory/bin/build-iso`, `factory/bin/check-iso`, `factory/lib/render_boot_cfg.py`,
 `factory/lib/gpt_esp_patch.py`, `factory/data/boot/boot-contract.yaml`, `factory/data/boot/isolinux.cfg.in`,
-`factory/data/boot/grub.cfg.in`, `factory/data/boot/f1.txt.in`, `factory/data/boot/bootbg.png`,
+`factory/data/boot/grub.cfg.in`, `factory/data/boot/f1.txt`, `factory/data/boot/bootbg.png`,
 `factory/mk/iso-image.mk` (stage target `iso-image` only; the aggregate `make iso` is B06's), `tests/fast/boot-*.test.sh`,
 `tests/fast/iso-*.test.sh`, `tests/fast/fixtures/boot/`
-**Carries from linux-live-iso-factory@b9f533b:** `scripts/build-iso.sh` (rewritten; every label, entry and flag
-carried), `configs/bootbg.png`, the inline GPT patch (`build-iso.sh:430-484`).
+**Carries from linux-live-iso-factory@b9f533b:** `scripts/build-iso.sh` (ported; every label, entry and flag
+carried, the changes are listed in "Port first" below), `configs/bootbg.png`, the inline GPT patch (`build-iso.sh:430-484`,
+ported, extracted to a file).
 **Study refs:** build.yaml `script.build-iso` notes (labels and GRUB entries, GPT patch, no date flags,
 `log_error` before definition, stale hints, GRUB 2.12 pin claim); oracle.yaml harness (`select_isolinux_label`,
 `select_grub_serial_entry`, `GRUB_SERIAL_ENTRY_DOWN_PRESSES=2`); T-grub-initrd-same-line, T-isolinux-timeout,
@@ -20,7 +21,10 @@ T-efi-esp-size, T-iso-readability, T-run-rerun-reuses-cache (input identity); SP
 ## Purpose
 After B05 one command turns kernel, initrd and squashfs into the hybrid BIOS and UEFI ISO, with the boot menus
 generated from one machine-readable contract that the oracle reads, and with every timestamp and GUID derived from
-`SOURCE_DATE_EPOCH`. The ISO's name, labels and entries are the interface the boot harness types against.
+`SOURCE_DATE_EPOCH`. The ISO's name, labels and entries are the interface the boot harness types against. B05 ports
+`scripts/build-iso.sh` (Principle 11): the xorriso flags, GRUB module list, ESP sizing and GPT patch are carried, and
+every change is a named criterion. O02 already boots rc1's ISO, so a mismatch between this ISO and rc1's boot behaviour
+is a B05 defect, not an oracle question.
 
 ## Scope
 In:
@@ -44,12 +48,36 @@ records `out/stage/{kernel,initrd,rootfs}.json`; syslinux files from the builder
 Output: `out/themonolith-<ver>.iso` (mode 0644, host-owned), `out/stage/iso.json` (sha256 of the ISO and of every
 intermediate: `BOOTX64.EFI`, `efi.img`, rendered `isolinux.cfg`, `grub.cfg`, tool versions).
 Decisions: single kernel path `out/kernel/vmlinuz` (rejecting the versioned-name fallback at `build-iso.sh:22-30`,
-a CI renaming hack); Gentoo syslinux layout only (rejecting the Debian branch at `:48-54`, which also called
-`log_error` before it was defined); scratch under `/work`, not `/tmp`, same reason as `:390`.
+a CI renaming hack); Gentoo syslinux layout only (rejecting the Debian branch at `:48-55`, which also called
+`log_error` before it was defined); scratch under `/work`, not `/tmp`, same reason as `:392`.
+
+### Port first (Principle 11)
+`factory/bin/build-iso` is `scripts/build-iso.sh` with the changes below and no others. Carried unchanged: the xorriso
+flag list (`:395-417`), the `grub-mkstandalone` module list (`:350-357`), the ESP size formula (`:365-367`), the
+`mmd`/`mcopy` copies, the `TIMEOUT 300`, `DEFAULT fb800` and `PROMPT 1` lines, the `f1.txt` text (`:125-149`), the GPT
+patch arithmetic (`:430-484`) and the log helpers.
+
+| Predecessor step | Treatment | Forced by |
+|---|---|---|
+| configs written by heredocs (`:153-348`) | rendered from `boot-contract.yaml` | B05-AC-4 (a contract edit is rejected) and G02, which reads the contract; B05-AC-1 proves the output equals the heredocs |
+| kernel path fallback (`:22-30`) | single path `out/kernel/vmlinuz` | B05-AC-8 (a missing input must exit 3, not fall back) |
+| Debian syslinux branch (`:48-55`) | deleted; unreachable in the Gentoo builder and it calls `log_error` before its definition. No AC needs it, so this is a visible deletion | none (listed for visibility) |
+| missing `bootbg.png`: warn (`:275`) | exit 3 | B05-AC-8 |
+| no input identity check | stage-record sha256 compared | B05-AC-8 |
+| `/tmp/iso`, `mktemp /tmp/...` (`:20`, `:392`) | `/work/iso`, `/work/iso.tmp` | B05-AC-7 |
+| no date or GUID flags; plain `mkfs.vfat` (`:370`) | explicit date and GUID flags, `--invariant`, `touch -h` | B05-AC-7, AC-10 |
+| GPT patch skips a missing signature with a message (`:452`) | exits non-zero; idempotent | B05-AC-6 |
+| GRUB version only in comments (`:264-267`) | checked against the pin | B05-AC-11 |
+| no structural check | `check-iso` | B05-AC-9 |
+| inline Python for the GPT patch | `gpt_esp_patch.py` | extracted so B05-AC-6 can test it; logic unchanged |
+
+The v0.2 design also rendered `f1.txt` from the label list. No criterion needs that (AC-1 checks that the text names
+all nine labels), so `f1.txt` is the predecessor's text, unrendered.
 
 ### Boot contract
 `factory/data/boot/boot-contract.yaml` is the single source; `render_boot_cfg.py` renders both configs from it with
-`@BUILD_VERSION@` substituted. Hand-editing a generated config is impossible by construction.
+`@BUILD_VERSION@` substituted. Hand-editing a generated config is impossible by construction. The templates
+(`isolinux.cfg.in`, `grub.cfg.in`) hold the predecessor's comments, `SAY` block and GRUB preamble verbatim.
 ```yaml
 isolinux: {default: fb800, timeout: 300, prompt: 1, f1: f1.txt, serial_directive: false}
 labels:   # order matters; APPEND always starts with initrd=/boot/initrd.img
@@ -77,15 +105,15 @@ Complete lists from `build-iso.sh:200-256,305-347`: nine ISOLINUX labels, seven 
 `-nographic -serial mon:stdio`, T-isolinux-timeout). `TIMEOUT 300` (30 s) stays. GRUB `kernel` and `initrd` are
 always separate lines. The GRUB cfg keeps `search --no-floppy --set=root --label MONOLITH`, `insmod gfxterm png
 serial`, `terminal_input console serial`, `terminal_output gfxterm serial`, `background_image
-/boot/grub/bootbg.png`. `f1.txt` lists every label with one line each plus the toram, root=, console=, vga=ask
-note, rendered from the label list so a new label cannot be left out of help.
+/boot/grub/bootbg.png`. `f1.txt` is the predecessor's help text, which lists every label with one line each plus the toram, root=, console=,
+vga=ask note; B05-AC-1 fails if a label is added to the contract and not to `f1.txt`.
 Changing any label name, entry index, `(serial)` suffix, default or the no-SERIAL rule is a breaking change to the
 harness (SPEC §7).
 
 ### ISO layout (inner names are a contract)
 `boot/vmlinuz`, `boot/initrd.img`, `rootfs.squashfs`, `boot/efi.img`, `boot/grub/bootbg.png`,
 `isolinux/{isolinux.bin,ldlinux.c32,libutil.c32,libcom32.c32,isolinux.cfg,f1.txt,boot.cat}`,
-`EFI/BOOT/BOOTX64.EFI`. Volume id `MONOLITH`. Missing `bootbg.png` is exit 3 (was a warning, `:274`).
+`EFI/BOOT/BOOTX64.EFI`. Volume id `MONOLITH`. Missing `bootbg.png` is exit 3 (was a warning, `:275`).
 
 ### Steps (`factory/bin/build-iso`)
 1. **verify inputs.** Each input exists and is non-empty (exit 3). Its sha256 must equal the `outputs` hash in the
@@ -155,8 +183,8 @@ mutated-contract cases), `iso-gpt` (synthetic GPT built in the test, no xorriso)
   documentation, not tested here. B07 is the arbiter; fallbacks are a pinned `libfaketime` in the builder (I03) or
   writing the FAT image with a small Python writer.
 - `mkfs.vfat --invariant` needs dosfstools 4.2 or newer; unknown whether the builder's stage3 has it.
-- Pins missing from SPEC §6: grub, syslinux, xorriso, mtools, dosfstools, squashfs-tools. The grub pin matters:
-  2.14 has a Hyper-V regression (`build-iso.sh:264-266`).
+- The grub pin matters: 2.14 has a Hyper-V regression (`build-iso.sh:264-266`). SPEC §6 now pins the boot-media
+  tools; B05-AC-11 checks the version actually used.
 - Whether Hyper-V needs the current layout is G03's question; B05 preserves it.
 - 32-bit UEFI machines (ia32 firmware) still cannot boot; out of scope.
 - Golden-file fixtures contain the predecessor's wording; a deliberate change updates the golden in the same PR
@@ -166,10 +194,3 @@ mutated-contract cases), `iso-gpt` (synthetic GPT built in the test, no xorriso)
 Slices: (1) contract, renderer, goldens; (2) GPT patch, ESP, xorriso invocation with stubs; (3) `check-iso`,
 inputs verification, determinism. About 3 slices. CI cycles: 3 (first real ISO, determinism repair, UEFI repair);
 each iteration is minutes because the ISO job reuses earlier artifacts. No money.
-
-## Spec defects found
-- SPEC §6 does not pin the ISO toolchain (grub, syslinux, xorriso, mtools, dosfstools, squashfs-tools) although
-  they decide reproducibility and a known Hyper-V regression. Add them to `pins/pins.yaml` scope (I05) and the
-  builder image (I03).
-- B05 consumes the kernel (`out/kernel/vmlinuz`) but graph.yaml lists deps `[B03, B04]`; the kernel arrives only
-  transitively through B03 to B02. Add `B02` to B05 deps for honesty.

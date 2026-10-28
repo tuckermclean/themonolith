@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| G | O04 | X01 | — | M |
+| G | O04 | X01 | MS4 | M |
 
 **Owns:** `oracle/modes/serial_net.py` (mode `serial-net`: SLIP, chat, PPP over a serial link between two guests), `oracle/modes/dropbear.py` (mode `dropbear`), `oracle/lib/serial_link.py` (QEMU `-chardev socket` pair and ordering), `oracle/lib/ssh_client.py` (host-side `ssh`/`ssh-keygen` wrapper, key lifecycle), `oracle/fixtures/argv/serial-net-{a,b}.txt`, `oracle/fixtures/argv/dropbear.txt`, `oracle/fixtures/serial/serial-net-*.txt`, `oracle/fixtures/serial/dropbear-*.txt`, entries `serial-net` and `dropbear` in `oracle/modes.yaml`, `tests/fast/test_serial_net.py`, `tests/fast/test_dropbear_mode.py`, `tests/fast/networking-claims.test.sh`. Edits to the README Networking section, `topics/network.txt`, `topics/tools.txt`, `50-dropbear-hint.sh` and the `S20keygen` text are made by this node's PR in R01's/R05's files.
 **Carries from linux-live-iso-factory@b9f533b:** the claims at `README.md:93-94,280-298`, `configs/overlay/app-misc/monolith-base/files/topics/network.txt:23-24` and `topics/tools.txt:21`, `configs/portage/env/ppp-no-plugins.conf`, `configs/portage/package.env/cross-compile:37-39`, `configs/portage/world:132-137`, `scripts/build-rootfs.sh:297-322` (dropbear hint), `:593-612` (`S20keygen`), `RELEASE-READINESS.md:215-228` (dropbear never started), kernel symbols `SLIP=y`, `PPP=y`, `PPP_ASYNC=y`, `PPP_SYNC_TTY=y`, `PPPOE=y`, `PPP_DEFLATE`, `PPP_BSDCOMP` (`kernel.config:1692-1710`), `SERIAL_8250_NR_UARTS=4` (:1859), busybox `CONFIG_SLATTACH=y` (savedconfig:961).
@@ -103,8 +103,6 @@ First `networking-claims.test.sh` (red on the current README: PPPoE and RSA text
 Three agent slices: (1) claims test, doc corrections, `serial_link`, mode skeletons with transcripts; (2) `serial-net` steps and fixes found; (3) `dropbear` mode, ssh wrapper, kernel invariant group. CI: two to three oracle cycles; `serial-net` is two 128 MB guests for about 10-15 minutes, `dropbear` about 8. No money.
 
 ## Spec defects found
-- O01-AC-13 requires exactly 17 modes; this node adds `serial-net` and `dropbear` (see G01).
-- graph.yaml: G04 depends on O04 for the two-guest harness; it also needs R04 (kernel invariant group) and B03 (applet list) for two of its fast checks. Both are earlier in the graph (via O02/B06); no cycle, but the edges are implicit.
+- graph.yaml: G04 depends on O04 for the two-guest harness; it also needs R04 (kernel invariant group) and B03 (applet list) for two of its fast checks, and neither is an ancestor of O04. Both are ancestors of P02, so they are done by MS2 and G04 is `deferred`; the edges are implicit. Add them if G04 ever moves earlier.
 - SPEC §1 lists networking services (`monolith-net`, `monolith-router`, nftables, dnsmasq, dhcpcd) and omits dial-up and SSH although the README markets them; this node keeps them as documented, tested features. If the owner drops them, SPEC §1 and the README change together.
 - `RELEASE-READINESS.md` (dropbear never started) is stale evidence; the rebuild has no such file. Its open item is closed here by decision, not by code.
-- X01 (graph.yaml) does not depend on G04 (see G01).

@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| G | O02 | X01 | — | M |
+| G | O02 | X01 | MS4 | M |
 
 **Owns:** `oracle/modes/hyperv_proxy.py` (mode `hyperv-gen2-like`), `oracle/fixtures/argv/hyperv-gen2-like.txt`, `oracle/fixtures/serial/hyperv-*.txt`, entry `hyperv-gen2-like` in `oracle/modes.yaml`, the `hyperv` group in `recipes/kernel/invariants.yaml` and the hyperv rows of `oracle/policy/required-modules.yaml` (files owned by R04 and O06; this node edits only those groups), `oracle/bin/check-hybrid-layout`, `docs/evidence/hyperv/` (README, `TEMPLATE.md`, evidence files), `factory/bin/check-evidence`, `tests/fast/test_hyperv_proxy.py`, `tests/fast/hyperv-claims.test.sh`, `tests/fast/test_hybrid_layout.py`, `tests/fast/test_evidence.py`.
 **Carries from linux-live-iso-factory@b9f533b:** the Hyper-V facts only: `README.md:167` (claims), `scripts/build-iso.sh:260-266` (GRUB 2.12 comment), `:300-308` (default entry reasoning), `:400-420` (xorriso hybrid flags), `:424-484` (GPT ESP GUID patch), `configs/kernel.config` symbols `HYPERV`, `HYPERV_TIMER`, `HYPERV_STORAGE`, `HYPERV_KEYBOARD`, `HYPERV_NET`, `FB_HYPERV`, `HID_HYPERV_MOUSE`, `HYPERV_BALLOON`, `HYPERV_IOMMU`, `HYPERVISOR_GUEST` (lines 272, 1324, 1731, 1822, 2179, 2308, 2518-2520, 2592). No test code exists to carry.
@@ -116,8 +116,5 @@ First `hyperv-claims.test.sh` (red against a checkout whose README still says th
 Three agent slices: (1) kernel invariant group, required-modules rows, alias check, layout checker with fast tests; (2) `hyperv-gen2-like` mode with classifier and goldens; (3) evidence tooling, README claim rules and the claims test. CI: two or three oracle cycles; the mode is two short boots (about 10 minutes of TCG). Manual: one Gen 1 and one Gen 2 test session by the owner per release for the "verified" wording; if skipped, the README says so. Money: none unless the owner approves the Azure option.
 
 ## Spec defects found
-- O01-AC-13 requires exactly 17 modes; this node adds `hyperv-gen2-like` (see G01).
 - SPEC §1 lists Hyper-V as a target "per G03" with no definition of what makes a target supported. This node defines: CI proxies plus dated manual evidence, with README wording tied to the evidence.
-- SPEC §6 does not list GRUB (or syslinux, xorriso) among pinned items although a known Hyper-V regression depends on the GRUB version; I05's `asserted.grub` and B05's `iso.json.tools` are the planned fix. B05 already notes it; X01 should check G03-AC-9 holds before release.
-- `build-iso.sh:264-267` and `:503` still claim a GRUB 2.12 pin that commit e8ad618 removed. The rebuild's B05 must not carry the comment; G03-AC-10 guards it.
-- X01 (graph.yaml) does not depend on G03, so the first release can ship with README Hyper-V text unreviewed. Add G03 (or G01-G05) to X01.
+- `build-iso.sh:264-267` and `:503` still claim a GRUB 2.12 pin that commit e8ad618 removed. The rebuild's B05 must not carry the comment; G03-AC-10 guards it. X01 should check G03-AC-9 holds before release.

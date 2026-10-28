@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| F | none | F02, F03, F04, F06, R01, O01, M04 | — | M |
+| F | none | F02, F03, F04, F06, M04, O01, R01 | — (feeds MS1) | M |
 
 **Owns:** `README.md`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`, `Makefile`, `.gitignore`, `.github/workflows/verify.yml`, `tools/ci/run-fast`, `tools/ci/fetch-tool.sh`, `tools/ci/tools.lock`, `tools/ci/requirements.txt`, `tools/lint/` (all lint rules and `layout.allow`), `tests/fast/lib.sh`, `tests/fast/` tests for the above, `docs/traps.md`
 **Carries from linux-live-iso-factory@b9f533b:** `LICENSE` (MIT, `LICENSE:1-3`), the doctrine and working-rule parts of `AGENTS.md:1-70` (not the Paperclip harness traps), the trap section of `AGENTS.md` into `docs/traps.md`, the intent of `.github/workflows/pr-validate.yml` (not its hard-coded file lists), `.gitignore` minus the `.claude/` line
@@ -19,7 +19,7 @@ In:
 - Lint rules: shell syntax and shellcheck, Python compile, strict YAML, actionlint, action pinning, workflow hygiene, banned fetch patterns, the stderr-hiding rule, layout.
 - The fast CI workflow `.github/workflows/verify.yml`.
 - `README.md`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`, `docs/traps.md`.
-- Interim tool pins in `tools/ci/tools.lock` with a retrying, checksum-verifying fetcher.
+- Interim tool pins in `tools/ci/tools.lock` with a retrying, checksum-verifying fetcher, and hash-pinned Python packages (PyYAML, pexpect) in `tools/ci/requirements.txt`.
 
 Out:
 - Graph and node-spec validation: F02. System inventory check: F03. Identity, TDD discipline, trusted-base execution, `CODEOWNERS`: F04. Agent files under `.claude/`: F05. The `store` CLI: F06.
@@ -80,6 +80,8 @@ Tools missing on the host make `lint` exit 2 with the install hint (`make tools`
 ### Tool pinning (interim)
 `tools/ci/tools.lock` lines: `name version sha256 url` for shellcheck, actionlint, and (via `requirements.txt` with `--require-hashes`) PyYAML. `fetch-tool.sh <name>` downloads with up to 6 attempts, 30 s apart (the retry shape of the old Dockerfile fix for transient GitHub 503s, T-github-api-503-installs), verifies the sha256 before extracting, and fails closed on a mismatch. I05 moves these pins into `pins/pins.yaml` and deletes `tools.lock`; until then Principle 2 is only half met (pinned, not mirrored).
 
+`pexpect` is the one third-party Python package besides PyYAML that SPEC §4.3 allows. O01's fast tests replay recorded serial fixtures through the ported harness, so the fast lane needs it. Until I05, it is pinned in `tools/ci/requirements.txt` with `--require-hashes`, next to PyYAML (O01's PR adds the line; F01 owns the file). After I05 it is `python.pexpect` in `pins/pins.yaml`. CI-host setup for the slow tier installs it from the same pin.
+
 ### Fast CI lane
 `.github/workflows/verify.yml`: trigger `pull_request` and `push` to the default branch. `runs-on: ubuntu-24.04`, `permissions: contents: read`, one job `fast` with `timeout-minutes: 10`, steps: pinned `actions/checkout` (SHAs known good in strange-company's `verify.yaml`: checkout `3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`; the implementer re-resolves the tag), `make tools`, `make lint`, `make test-fast`, upload `out/test-fast/` as an artifact. Concurrency cancels superseded PR runs only. Other fast validators join by adding a Make target to `check`, never by growing the YAML. Job name `fast` is a required-check name that F04's settings doc cites.
 
@@ -131,6 +133,5 @@ Bootstrap order matters: the runner cannot be RED-tested through itself. Slice 0
 Four agent slices (slice 0 plus three), about 13 ACs. One or two runs of the fast lane per slice (about 2 minutes each). No build cycles. No money: no storage, no hosting. Human time: resolve action SHAs, review `AGENTS.md`.
 
 ## Spec defects found
-- SPEC §4.2 omits `tools/` (host-side tooling used by F02, F03, F04, F05), the root files (`Makefile`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`), `docs/status.yaml` (F05), `docs/traps.md`, and `.github/CODEOWNERS` (F04). Proposed: add `tools/` and these rows.
-- SPEC §6 says `pins/pins.yaml` (I05) holds actionlint, shellcheck and every Action SHA, but F01 has no dependencies and needs them first. F01 uses the interim `tools/ci/tools.lock` and inline SHAs; I05 should migrate and delete the lock.
-- SPEC §8 protected paths list only `release*.yml`. `verify.yml` is the fast gate and should be protected too (see F04).
+- SPEC §4.2 still omits the root files (`Makefile`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`) and `docs/traps.md`. Proposed: add the rows. (`tools/`, `docs/status.yaml` and `CODEOWNERS` were added in v0.3.)
+- SPEC §6 says `pins/pins.yaml` (I05) holds actionlint and shellcheck, but F01 has no dependencies and needs them first. F01 uses the interim `tools/ci/tools.lock`; I05 should migrate and delete the lock.

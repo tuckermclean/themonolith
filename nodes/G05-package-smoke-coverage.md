@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| G | O02 | X01 | — | L |
+| G | O02 | X01 | MS4 | L |
 
 **Owns:** `oracle/smoke/manifest.yaml`, `oracle/smoke/schema.json`, `oracle/smoke/covered_by.yaml`, `oracle/smoke/lint.py`, `oracle/smoke/build_script.py` (manifest to guest script), `oracle/smoke/evaluate.py` (host-side step evaluation), `oracle/smoke/versions.py` (upstream version from `pins/versions.lock`), `oracle/modes/smoke.py` (mode `smoke`), `oracle/fixtures/argv/smoke.txt`, `oracle/fixtures/smoke/` (recorded guest outputs), `oracle/lib/fixture_whois.py` (host-side fixture for `whois`), entry `smoke` in `oracle/modes.yaml`, `tests/fast/test_smoke_manifest.py`, `tests/fast/test_smoke_evaluate.py`, `tests/fast/test_smoke_build_script.py`.
 **Carries from linux-live-iso-factory@b9f533b:** the shape of `scripts/boot-test.py:844-880` (`run_check` sentinel protocol, O01 ports it) and the existing coverage list `harness.full_smoke_suite` (curl, sqlite3, perl, CGI, man, `monolith`; O02 owns those checks and this node does not duplicate their code). `configs/portage/world` (99 atoms; becomes `recipes/portage/world` via R01) is the list this node must cover.
@@ -237,8 +237,6 @@ First `test_smoke_manifest.py` with the real b9f533b world file as a fixture and
 Five agent slices: (1) manifest schema, normaliser, linter and fast tests with the world fixture; (2) evaluator, script generator, transcript tests; (3) the 99-entry manifest content written against real package help (without the disc, so every row marked provisional); (4) the `smoke` mode, fixtures, workflow leg; (5) first-run triage: correct wrong commands, set shards. CI: three to five oracle cycles (each build plus a smoke run of 15-60 minutes); the first real run will fail on many rows, by design. No money beyond runner minutes.
 
 ## Spec defects found
-- O01-AC-13 requires exactly 17 modes; this node adds `smoke` (see G01).
 - SPEC §8 "trusted base" lists F04, F02/F03 validators and release gates; the smoke lint and its schema are a gate that a PR adding a world atom could weaken in the same diff. Add `oracle/smoke/lint.py` and `oracle/smoke/schema.json` to the trusted-base checker list (or rely on F04's protected-test rule, which covers tests but not tools).
-- graph.yaml: G05 depends on O02 but also reads R01's world file, R02's `versions.lock` and uses O01's HTTP fixture; R01 and R02 are reachable through B06/O02, so no edge is missing, but R02's completeness gate is a precondition (a missing lock line is an error here).
-- SPEC §1 says "99 atoms at b9f533b"; the world file has 99 lines but only 77 lines in `versions.lock` at b9f533b (recipes.yaml coverage_gap, I05 table). Until R02 lands, `{V}` templating cannot run for the 23 atoms the lock lacks (76 of 99 are present). G05's gate presumes R02.
-- X01 (graph.yaml) does not depend on G05 (see G01).
+- graph.yaml: G05 depends on O02 but also reads R01's world file, R02's `versions.lock` and uses O01's HTTP fixture. R01 and R02 are not ancestors of O02, but both are ancestors of P02 and G05 is `deferred`, so they are done by MS2. R02's completeness gate is a precondition (a missing lock line is an error here).
+- SPEC §1 says "99 atoms at b9f533b"; the world file has 99 lines but `versions.lock` at b9f533b has 77 lines covering 76 of them (recipes.yaml coverage_gap, I05 table). Until R02 lands, `{V}` templating cannot run for the 23 atoms the lock lacks. G05's gate presumes R02.

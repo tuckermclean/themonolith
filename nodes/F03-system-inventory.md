@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| F | F01 | I05, B06 | — | M |
+| F | F01 | B06, I05 | — (feeds MS1) | M |
 
 **Owns:** `docs/system.yaml`, `tools/system/system-check.py`, `tools/system/rules.yaml`, `tools/system/convert-study.py`, `tests/fast/system-*.test.sh`, `tests/fast/fixtures/system/`, the `system-check` Make target
 **Carries from linux-live-iso-factory@b9f533b:** nothing as code. The seed is `docs/study/inventory.yaml` (125 components, id scheme from the study BRIEF), converted mechanically by `tools/system/convert-study.py`.

@@ -2,14 +2,14 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| F | F02, F04 | none | MS1 | L |
+| F | F02, F04 | none | MS3 | L |
 
-**Owns:** `.claude/settings.json`, `.claude/skills/node/SKILL.md`, `.claude/agents/node-tester.md`, `.claude/agents/node-implementer.md`, `.claude/agents/node-reviewer.md`, `.claude/hooks/guard.py`, `.claude/PROVENANCE.md`, `tools/agent/brief.py`, `tools/agent/attempts.py`, `tools/agent/status-check.py`, `docs/status.yaml`, `tests/fast/agent-*.test.sh`, `tests/fast/fixtures/agent/`
+**Owns:** `.claude/settings.json`, `.claude/skills/node/SKILL.md`, `.claude/agents/node-tester.md`, `.claude/agents/node-implementer.md`, `.claude/agents/node-reviewer.md`, `.claude/hooks/guard.py`, `.claude/PROVENANCE.md`, `tools/agent/brief.py`, `tools/agent/attempts.py`, `tools/agent/status-check.py`, `tests/fast/agent-*.test.sh`, `tests/fast/fixtures/agent/`
 **Carries from linux-live-iso-factory@b9f533b:** nothing. Adapted from strange-company `566f0cac` (`.claude/skills/sc-node/SKILL.md`, `.claude/agents/sc-{tester,implementer,reviewer}.md`, `.claude/hooks/guard.py`, `.claude/settings.json`), same owner.
 **Study refs:** T-git-dubious-ownership, T-git-empty-identity, T-shallow-fresh-clone, T-handoff-as-patch (harness traps, not carried as code; see Design), T-workflow-push-needs-pat, T-recovery-pattern, D-486-minimalism (review checklist, SPEC §3), D-state-and-no-hidden-stderr, doctrine.yaml decisions DEC-recovery-from-artifact and DEC-releases-immutable-tags; strange-company CD-44, CD-46, CD-47, CD-54, CD-58, CD-63, CD-69.
 
 ## Purpose
-After F05, one command, `/node <ID>`, drives a node from its spec to a reviewed PR: a fresh tester writes RED, a fresh implementer makes it GREEN, a fresh reviewer judges, and the orchestrator records evidence in the PR body. The roles are fenced by a hook that makes the cheap mistakes (editing frozen tests, touching protected paths, merging, rewriting history, changing identity) fail before they reach CI. Milestone MS1 is reached: later nodes can be built test-first with F04 enforcing the result.
+After F05, one command, `/node <ID>`, drives a node from its spec to a reviewed PR: a fresh tester writes RED, a fresh implementer makes it GREEN, a fresh reviewer judges, and the orchestrator records evidence in the PR body. The roles are fenced by a hook that makes the cheap mistakes (editing frozen tests, touching protected paths, merging, rewriting history, changing identity) fail before they reach CI. Milestone MS3 (loop-online) is reached: nodes can be built test-first by the loop with F04 enforcing the result. The loop is a convenience, not a gate. Before MS3 the owner or an ordinary session builds nodes under the same rules (RED first, one PR per node, trailers, SPEC §11), and F05 itself is built that way.
 
 ## Scope
 In:
@@ -17,7 +17,7 @@ In:
 - The guard hook for roles and for the whole session.
 - `PROVENANCE.md` stating exactly what was copied from strange-company and what changed.
 - Three small host-side tools: a brief generator, an attempt counter, a status validator.
-- `docs/status.yaml`, the record of which nodes are done.
+- The status validator and the orchestrator's writes to `docs/status.yaml` (the file itself is owned by F02, SPEC §4.2).
 
 Out:
 - The CI checks that actually enforce discipline: F04. The guard is a guardrail for cooperative agents, not enforcement (as in strange-company's guard docstring).
@@ -40,7 +40,7 @@ Out:
 | `settings.json` | `settings.json` | Same session hook. |
 | model/bot names `sc-agent-bot` | `monolith-agent[bot]` | OD-4. |
 | retry budget "at most 4 attempts, the 4th Opus" (CD-63) | "at most 3 Sonnet attempts, then 1 Opus" | Same number, now counted by a tool, not by memory. |
-| `/sc-node` step 8 (chain nodes) | kept, optional | Uses `graph-check.py --ready docs/status.yaml`. |
+| `/sc-node` step 8 (chain nodes) | kept, optional | Uses `graph-check.py --ready docs/status.yaml`, which lists critical-track nodes first (SPEC §11). |
 
 ### Files
 - `.claude/skills/node/SKILL.md`: the procedure below.
@@ -51,16 +51,16 @@ Out:
 - `tools/agent/brief.py ID [AC-ID ...]`: writes `out/node/<ID>/brief.md` containing the node's header facts, the in-scope ACs copied verbatim from `graph-check.py --dump-node`, pointers (`path §heading`) to Design and Traps sections, the node's `decision` and whether it is settled, and the RED and GREEN commands. It never paraphrases.
 - `tools/agent/attempts.py record|check ID SLICE [--model sonnet|opus]`: keeps `out/node/<ID>/attempts.json`. `check` exits 0 and prints the model to use (`sonnet` for attempts 1 to 3, `opus` for attempt 4), or exits 4 when four attempts are spent. `record` appends an attempt with the head SHA and outcome. Rejected: counting in the skill's prose (strange-company needed one-off grants, CD-59 and CD-61, when counts blurred).
 - `tools/agent/status-check.py`: validates `docs/status.yaml`.
-- `docs/status.yaml`: `nodes: {ID: {status: done|in-progress, pr: <number>, ci_runs: [url,...], date: YYYY-MM-DD}}`. Validation: ids exist in the graph; a `done` node has `pr`, at least one `ci_runs` link, and all its deps `done`; no node is both. The orchestrator writes it in the final `docs(<ID>): gate evidence` commit of the node's PR; it counts only once merged to the default branch.
+- `docs/status.yaml` (F02 creates it): `nodes: {ID: {status: done|partial|in-progress, pr: <number>, ci_runs: [url,...], date: YYYY-MM-DD, pending: [AC-ID,...]}}`. Validation: ids exist in the graph; a `done` or `partial` node has `pr`, at least one `ci_runs` link, and all its deps `done` or `partial`; a `partial` node lists in `pending` exactly the ACs of its spec that carry `*When:* after MS<n>` and have not passed; a `done` node has no `pending`. The orchestrator writes it in the final `docs(<ID>): gate evidence` commit of the node's PR; it counts only once merged to the default branch.
 
 ### The `/node <ID> [AC ids]` procedure
 0. Preconditions (stop and say what is missing):
    - Working tree clean; default branch current (`git symbolic-ref refs/remotes/origin/HEAD` gives the name; nothing is hard-coded).
    - `make check` passes on the default branch (otherwise the next RED is judged against a broken base).
-   - `graph-check.py --ready docs/status.yaml` lists the node (all deps `done`, any `decision:` settled by a `docs/decisions/` record `Resolves: OD-n`). A node with an unsettled OD does not start; ask the owner.
+   - `graph-check.py --ready docs/status.yaml` lists the node (all deps `done` or `partial`, any `decision:` settled by a `docs/decisions/` record `Resolves: OD-n`). A node with an unsettled OD does not start; ask the owner.
    - Create branch `node/<ID>-<name>` (SPEC §11). Source `tools/ci/agent-env.sh` so commits carry the bot identity.
 1. Brief: `python3 -I tools/agent/brief.py <ID> [ACs]`. Split a node into slices of 3 to 8 related ACs; each slice runs steps 2 to 5.
-2. RED: dispatch a fresh `node-tester` with the brief path and the slice's AC ids. Before accepting, the orchestrator checks: `git show --stat <red>` touches only test paths; subject `test(<ID>): ...` with exactly one `TDD-Red-Target:` trailer; running the target at that commit with the trusted runner exits 1 with only new or changed tests failing (`tools/ci/tdd-check.py` on the one commit). An AC that already passes is reported `already_satisfied` and dropped. A slow-tier-only AC gets a `TDD-Slow-Only` commit instead. `blocked` goes to step 7.
+2. RED: dispatch a fresh `node-tester` with the brief path and the slice's AC ids. Before accepting, the orchestrator checks: `git show --stat <red>` touches only test paths; subject `test(<ID>): ...` with exactly one `TDD-Red-Target:` trailer; running the target at that commit with the trusted runner exits 1 with only new or changed tests failing (`tools/ci/tdd-check.py` on the one commit). An AC that already passes is reported `already_satisfied` and dropped. A slow-tier-only AC gets a `TDD-Slow-Only` commit instead. An AC marked `*When:* after MS<n>` is listed in the brief as not blocking the merge; its slice may be skipped, and the node's status becomes `partial`. `blocked` goes to step 7.
 3. GREEN: `attempts.py check` chooses the model; dispatch a fresh `node-implementer` with the brief, the RED SHA, the target and the failing test ids (on retry: every earlier review finding and failed diff SHA, so attempt 4 is not a replay). Orchestrator checks: target passes; `make check` passes; `git diff <red>..HEAD` shows no change to frozen tests. Push (the orchestrator pushes, never a role). Wait for CI; for every AC with tier slow, wait for the named CI job and record its run URL. A CI failure returns to step 3 with the log excerpt; `attempts.py record` is called each time. After attempt 4 fails: step 7.
 4. Review: dispatch a fresh `node-reviewer` with the brief, base, RED and head SHAs and the evidence. `request_changes` goes back to a new implementer (the budget applies). `test_spec_conflict` goes to step 7. Never edit a test to satisfy a reviewer; a wrong test needs a new RED from a new tester, and the human approves that.
 5. Evidence: write `docs/status.yaml` entry and the PR body table (below); commit `docs(<ID>): gate evidence`.
@@ -100,14 +100,15 @@ The reviewer prompt contains, verbatim, the SPEC §3 doctrine ids with a one-lin
 - **F05-AC-7** — `attempts.py check` prints `sonnet` for the first three attempts of a slice and `opus` for the fourth, exits 4 once four are recorded, keeps slices independent, and survives re-invocation (state in `out/node/<ID>/attempts.json`). *Verify:* `tests/fast/agent-attempts.test.sh`. *Tier:* fast.
 - **F05-AC-8** — `brief.py F02` writes a brief whose AC lines are byte-identical to the spec's; it records whether a `decision:` is settled; it refuses an unknown node or AC id (exit 2). The skill text names `make test-fast`, `tools/agent/attempts.py`, "at most three Sonnet attempts, then one Opus", the evidence table in the PR body, slow-tier CI run links, `docs/status.yaml`, the rule that a human merges, and the recovery rule (reuse a green run's artifacts and logs; never rebuild to fix a publish or wrapper step). *Verify:* `tests/fast/agent-brief.test.sh`, `tests/fast/agent-skill-text.test.sh`. *Tier:* fast.
 - **F05-AC-9** — The reviewer agent file contains every `D-*` id from SPEC §3, the read-only tool list (no `Edit`, `Write`), `model: opus`, and the verdict values `approve|request_changes|test_spec_conflict`; the tester and implementer files name `model: sonnet` and the `PreToolUse` hook with their own role. *Verify:* `tests/fast/agent-agents.test.sh`. *Tier:* fast.
-- **F05-AC-10** — `docs/status.yaml` validates: known ids, `done` implies `pr`, a CI run link and all deps done; `status-check.py` exits 1 otherwise; `graph-check.py --ready docs/status.yaml` agrees. At merge, F01, F02, F03, F04 and F06 are marked per their actual state. *Verify:* `tests/fast/agent-status.test.sh`. *Tier:* fast.
+- **F05-AC-10** — `docs/status.yaml` validates: known ids, `done` or `partial` implies `pr`, a CI run link and all deps done or partial, `partial` lists its pending `When` ACs and `done` lists none; `status-check.py` exits 1 otherwise; `graph-check.py --ready docs/status.yaml` agrees. At merge, F01, F02, F03, F04 and F06 are marked per their actual state. *Verify:* `tests/fast/agent-status.test.sh`. *Tier:* fast.
 - **F05-AC-11** — `.claude/PROVENANCE.md` has a row for every other file under `.claude/` and for the three `tools/agent` files, each with a source path and the strange-company commit or the word `new`, and states the licence situation. `.claude/` is tracked (not ignored). *Verify:* `tests/fast/agent-provenance.test.sh`. *Tier:* fast.
 - **F05-AC-12** — No strange-company residue: `.claude/` and `tools/agent/` contain none of `SC-STUB`, `sc-agent-bot`, `plans/`, `PLAN.md`, `STATUS.md`, `go test`, `tools/stage0`, `make verify`. `AGENTS.md` carries the one-line "a git error is not a missing checkout" lesson. *Verify:* `tests/fast/agent-residue.test.sh`. *Tier:* fast.
 - **F05-AC-13** — Dry run: on a scratch repository seeded with a toy two-node graph, the orchestrator procedure's mechanical parts (ready check, brief, RED validation with `tdd-check.py`, attempts, status) run end to end with a scripted fake agent, producing a PR body table. *Verify:* `tests/fast/agent-dryrun.test.sh`. *Tier:* fast.
 - **F05-AC-14** — A live `/node` run on a trivial real node slice (a documentation-only AC supplied by the owner, or F06's smallest slice) produces a RED commit that the `discipline` job accepts, a GREEN commit, a review verdict, and a PR from the bot identity that passes `fast` and `discipline`. *Verify:* PR with run links in its body, linked from `docs/status.yaml`. *Tier:* slow.
+- **F05-AC-15** — The skill text says a node may be built without `/node` under the same rules (the loop is not a gate), and `brief.py` marks each `*When:* after MS<n>` AC as non-blocking and lists it as pending for the `partial` status. *Verify:* `tests/fast/agent-optional.test.sh`. *Tier:* fast.
 
 ## RED plan
-Tests drive `guard.py` by piping hook JSON (`{"tool_name": ..., "tool_input": ...}`) and asserting exit code 0 or 2; they drive the tools in scratch repositories using F04's fixture helpers. Before implementation the guard and tools do not exist; the calls exit 2 or 127, an assertion failure under `t_assert_exit`. Slices: (1) guard path rules, AC-1, AC-2; (2) guard git, session, credentials and identity, AC-3 to AC-6; (3) tools, AC-7, AC-8 (tool half), AC-10; (4) agent and skill text, provenance, residue, AC-8 (text half), AC-9, AC-11, AC-12; (5) dry run and the live run, AC-13, AC-14. Text-content ACs are fast tests that grep the files for required phrases; they are weak evidence of quality, so the reviewer (a human for this node) reads the prompts. A roleplay check is not automatable.
+Tests drive `guard.py` by piping hook JSON (`{"tool_name": ..., "tool_input": ...}`) and asserting exit code 0 or 2; they drive the tools in scratch repositories using F04's fixture helpers. Before implementation the guard and tools do not exist; the calls exit 2 or 127, an assertion failure under `t_assert_exit`. Slices: (1) guard path rules, AC-1, AC-2; (2) guard git, session, credentials and identity, AC-3 to AC-6; (3) tools, AC-7, AC-8 (tool half), AC-10; (4) agent and skill text, provenance, residue, AC-8 (text half), AC-9, AC-11, AC-12; (5) dry run and the live run, AC-13, AC-14; (6) optional-loop wording and `When` handling, AC-15. Text-content ACs are fast tests that grep the files for required phrases; they are weak evidence of quality, so the reviewer (a human for this node) reads the prompts. A roleplay check is not automatable.
 
 ## Risks and open questions
 - Licensing. The copied files are AGPL-3.0-or-later in strange-company; this repo is MIT. Same copyright holder, but the files were largely written by `sc-agent-bot` under his direction. The owner should confirm in writing (a line in `PROVENANCE.md`) that relicensing is intended. If not, F05 must be rewritten clean-room instead of adapted.
@@ -115,15 +116,13 @@ Tests drive `guard.py` by piping hook JSON (`{"tool_name": ..., "tool_input": ..
 - A cooperative-agent guard is bypassable (shell tricks). The real gate is F04; a false sense of security is the risk. The PR body must say this.
 - Role agents may write workflow files, but only the human can push them (workflow scope). That makes B06-like nodes need a human push step; the orchestrator should plan for it, not discover it at the end (T-workflow-push-needs-pat).
 - Retry limits are per slice; a node of 10 slices could still burn 40 attempts. A per-node cap is not set; the owner's call.
-- MS1 is not enforced by the graph (see Spec defects). Until `--ready` refuses non-F nodes before F05 is done, nothing stops a node being built without the loop.
+- Before MS3 nodes are built without the loop. Their PRs are reviewed by the owner against the same gate (SPEC §11); F04's CI checks apply from the day F04 merges. Quality of those earlier PRs does not depend on F05.
 - Review quality: the reviewer is Opus, the implementer Sonnet. Whether Opus review catches what mechanical checks cannot is untested; AC-14 is the first evidence.
 
 ## Cost
-Five slices, 14 ACs, size L. CI: about two fast-lane runs per slice. AC-14 needs one live run: a few agent invocations (Sonnet for tester and implementer, Opus for reviewer) and CI minutes, no build cycle. Token spend is the main cost and the retry budget bounds it per slice. No storage or hosting cost.
+Six slices, 15 ACs, size L. CI: about two fast-lane runs per slice. AC-14 needs one live run: a few agent invocations (Sonnet for tester and implementer, Opus for reviewer) and CI minutes, no build cycle. Token spend is the main cost and the retry budget bounds it per slice. No storage or hosting cost.
 
 ## Spec defects found
 - SPEC §8 lists `.claude/` as protected, yet F05 must create it; the first PR is necessarily human-reviewed. Say so in the PR.
-- The graph gives no dependency from later nodes to F05, though MS1 says nodes are built by the loop after F05. See F02's defect list.
 - SPEC §11 says "Every PR body has the criterion → test → result table and the CI run links" but gives no place for the retry and escalation record. F05 puts it in the PR body.
-- `docs/status.yaml` is not in SPEC §4.2; F05 adds it (see F01's defect list).
 - F05 depends on F02 and F04 only; it also reads `tools/ci/policy.yaml` (F04) and `tools/ci/agent-env.sh` (F04); this is covered by the F04 dependency.

@@ -2,14 +2,16 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| P | S05, O02, O03, O04, O05, O06 | P03, X01 | MS4 | M |
+| P | S05, O02, O03, O04, O05, O06 | P03, X01 | MS2 | M |
 
 **Owns:** `.github/workflows/release.yml`, `factory/bin/release-plan`, `factory/bin/release-verify`, `factory/bin/release-notes`, `factory/bin/release-evidence`, `supplychain/policy/release-required.yaml`, `docs/releasing.md`, `tests/fast/release-*.test.*`, `tests/fixtures/release/`.
-**Carries from linux-live-iso-factory@b9f533b:** `.github/workflows/release.yml` (tag-to-commit check at `:77-114`, prerelease rule at `:242-271`, digest check at `:136-164`, changelog at `:180-195`), `docs/releasing.md` (versioning scheme, digest-chain trace, operator steps).
+**Carries from linux-live-iso-factory@b9f533b:** `.github/workflows/release.yml` (278 lines; **ported**: tag-to-commit check at `:77-114`, prerelease rule at `:242-271`, changelog at `:180-195`; the digest check at `:136-164` is replaced by S05's `digest_chain.py`), `docs/releasing.md` (versioning scheme, digest-chain trace, operator steps). What is added to the port is listed in Design; each addition is forced by a named AC.
 **Study refs:** workflows `job.release.publish`, `wf.release`; workflows contradiction "latest pointers copied before boot-test" (`build.yml:495-546` vs `:559`); workflows contradiction "tag builds still push the binpkg cache"; T-attest-entry-workflow, T-prerelease-never-latest, T-recovery-pattern; D-tag-builds-from-source, D-supply-chain-honesty; decisions DEC-build-yml-owns-tag, DEC-prerelease-never-latest, DEC-releases-immutable-tags, DEC-iso-naming; supplychain contradiction "release.yml verifies ISO == summary == SBOM only; `gh attestation verify` is manual"; SPEC §2 principles 5, 7, 8; SPEC §8.
 
 ## Purpose
-After this node, pushing a `vX.Y.Z[-rcN|-betaN]` tag yields a GitHub release only if the same build passed the whole oracle, the supply-chain gates and attestation for the exact ISO digest, and the release workflow has itself verified that evidence and the Sigstore attestation. The old workflow trusted an S3 round trip and left `gh attestation verify` to a human. This one reads back artifacts of the tag's own Build run, re-checks every link, and publishes nothing else.
+After this node, the first tag, `v0.2.0-rc1`, yields a GitHub prerelease: reaching it is milestone MS2 (first attested build). More generally, pushing a `vX.Y.Z[-rcN|-betaN]` tag yields a GitHub release only if the same build passed the whole oracle, the supply-chain gates and attestation for the exact ISO digest, and the release workflow has itself verified that evidence and the Sigstore attestation. The old workflow trusted an S3 round trip and left `gh attestation verify` to a human. This one reads back artifacts of the tag's own Build run, re-checks every link, and publishes nothing else.
+
+The release path stays small and owner-reviewed. `release.yml` and the scripts under `factory/bin/release-*` are the only code between a green Build and a public release, so they are kept short, run from the default branch, and (with `release-required.yaml`) change only through an owner-reviewed PR (SPEC §8). Anything that can be done in `build.yml` or in S05's checker is done there.
 
 ## Scope
 In:
@@ -27,6 +29,27 @@ Out:
 - First production release (v0.2.0) and the README: X01.
 
 ## Design
+
+### Port first, and what is added
+
+The port keeps the predecessor's `workflow_run` consumer, tag-to-commit check, prerelease flags and changelog. Additions to it:
+
+| Addition | Forced by |
+|---|---|
+| `release-plan --event`: exact tag regex, fork and workflow-path checks | P02-AC-1, AC-4 (`startsWith(head_branch,'v')` accepted `vanilla`) |
+| `release-verify`: evidence completeness | P02-AC-5, AC-6 (nothing proved the oracle ran for this digest) |
+| `release-verify`: from-source proof | P02-AC-7 (tag builds still pushed cache) |
+| `release-verify`: `digest_chain.py`, then `gh attestation verify` | P02-AC-8, AC-9 (the SLSA subject was never re-checked) |
+| Immutable publish, no `--clobber` | P02-AC-10 |
+| Applied CVE waivers listed in the notes and evidence | P02-AC-17 (OD-15) |
+
+### The first tag: `v0.2.0-rc1` (MS2)
+
+`v0.2.0-rc1` is a prerelease and never Latest (AC-2). Its Build run is a release-mode build:
+- **From source, no cache read.** B01 compiles every package; I06's `restore`, `memo-get` and `result-get` refuse release mode (I06-AC-10), so every boot mode runs against the fresh ISO and no stored result is reused.
+- **Audit after the build.** B06 runs I06's `audit` once the from-source build is done. It compares the fresh payloads with the cache and writes `audit.tsv`; it never fails the build. The evidence records `build.audit` counts (`same`, `differs`, `absent`) and the notes print them. B07 consumes the file later.
+- **Cost, from the predecessor's measured runs:** one from-source build job (78 min, of which packages 74.6 min), the oracle (17 boot modes in parallel, about 10 min wall, `nic-models` the longest at 9.1 min), and the attestation job (4.7 min). That is about 95 min of wall time per attempt, plus the Release run (minutes; unmeasured). The 30-60 min figure in the v0.2 draft was wrong for a cold build.
+- **CVE waivers (OD-15).** The first tag builds rc1's 2026-08 tree. Waivers that S03 applied appear in `release-evidence.json` (`cve_waivers`) and in the notes, each with expiry and fix state.
 
 ### Pipeline split (unchanged shape, tighter checks)
 ```text
@@ -49,7 +72,9 @@ workflow_run completed ─▶ publish.yml (P03)  [after release.yml for tags]
   "source_sha": "<40 hex>",
   "run_id": 123, "run_attempt": 1,
   "iso_sha256": "<64 hex>",
-  "build": {"mode": "from-source", "binpkg_cache_hits": 0},
+  "build": {"mode": "from-source", "binpkg_cache_hits": 0, "memo_hit": false,
+            "audit": {"same": 0, "differs": 0, "absent": 0}},
+  "cve_waivers": [{"cve": "CVE-…", "component": "…", "expires": "YYYY-MM-DD", "fix_state": "fixed"}],
   "checks": {
     "boot:bios": {"status": "pass", "iso_sha256": "<64 hex>"},
     "doctrine":  {"status": "pass", "iso_sha256": "<64 hex>"},
@@ -58,7 +83,7 @@ workflow_run completed ─▶ publish.yml (P03)  [after release.yml for tags]
   "attestation": {"overall": "pass"}
 }
 ```
-Each oracle job leaves `oracle-result.json` (`mode`, `status`, `iso_sha256`) as an artifact; the evidence job collects them. That record is O01's output format (defect 2). `binpkg_cache_hits` is B01's counter; it is 0 on a tag run (D-tag-builds-from-source).
+Each oracle job leaves `oracle-result.json` (`mode`, `status`, `iso_sha256`) as an artifact; the evidence job collects them. That record is O01's output format (defect 2). `binpkg_cache_hits` is B01's counter and `memo_hit` and `audit` come from I06 via B06; hits are 0, `memo_hit` is false and `audit` is present on a tag run (D-tag-builds-from-source). `cve_waivers` is copied from S05's summary.
 
 ### Required checks
 `supplychain/policy/release-required.yaml` (protected path, SPEC §8) lists every check id that must be `pass` for the ISO digest:
@@ -77,6 +102,8 @@ checks:
 tag_build:
   mode: from-source
   binpkg_cache_hits: 0
+  memo_hit: false
+  audit: required
 ```
 `release-verify` fails on a check that is missing, not `pass`, or recorded for a different digest. Adding a boot mode without adding it here fails AC-6. Reproducibility (B07) is not a release gate; X01 reports its status in the notes.
 
@@ -133,22 +160,23 @@ Recovery (T-recovery-pattern): Build green, release failed: dispatch `release.ym
 - **P02-AC-4** — `release-plan --event` rejects payloads with a non-success conclusion, `event != push`, a different workflow path, a foreign `head_repository`, a non-tag `head_branch`, a missing tag, or a tag whose commit differs from `head_sha`; it accepts only a valid payload. *Verify:* `tests/fast/release-event-gate.test.sh` with payload fixtures in `tests/fixtures/release/events/`. *Tier:* fast.
 - **P02-AC-5** — `release-verify` exits 10 when any check from `release-required.yaml` is missing, `fail`, or recorded for another digest, parametrised over every listed check. *Verify:* `tests/fast/release-evidence-complete.test.py`. *Tier:* fast.
 - **P02-AC-6** — `release-required.yaml` contains exactly the 17 boot modes of SPEC §7, `doctrine`, and the four gates; adding a mode to the oracle without adding it here fails. *Verify:* `tests/fast/release-required.test.py` (compares to the oracle's mode list). *Tier:* fast.
-- **P02-AC-7** — On a tag, `release-verify` exits 14 when `build.mode != from-source` or `binpkg_cache_hits > 0`; the same evidence passes on a non-tag ref. *Verify:* `tests/fast/release-from-source.test.sh`. *Tier:* fast.
+- **P02-AC-7** — On a tag, `release-verify` exits 14 when `build.mode != from-source`, `binpkg_cache_hits > 0`, `memo_hit` is true, or `build.audit` is absent; the same evidence passes on a non-tag ref. *Verify:* `tests/fast/release-from-source.test.sh`. *Tier:* fast.
 - **P02-AC-8** — `release-verify` exits 12 for each single broken link of the digest chain (ISO vs evidence, vs summary, vs SBOM hash, vs attestation subject). *Verify:* `tests/fast/release-digest-chain.test.py` (five fixtures, one per link). *Tier:* fast.
 - **P02-AC-9** — `release-verify` calls `gh attestation verify` with `--repo`, `--signer-workflow`, `--source-ref refs/tags/<tag>` and `--predicate-type`, never with `--owner`, and exits 13 when the call fails or its subject differs. *Verify:* `tests/fast/release-attest-verify.test.sh` (`GH_BIN` stub records its arguments). *Tier:* fast.
 - **P02-AC-10** — Re-running the publish step against an existing release with identical assets exits 0 and writes nothing; with any differing asset it fails; `--clobber` occurs nowhere in the repository. *Verify:* `tests/fast/release-immutable.test.sh` (stub `gh`, plus `grep -r -- --clobber`). *Tier:* fast.
-- **P02-AC-11** — `release-notes` output equals the golden file for fixed inputs, contains `--repo` and `--signer-workflow` verification, the ISO digest and the dashboard link built from `PUBLIC_BASE_URL`, and contains no `amazonaws`, no `--owner` and no literal owner name. *Verify:* `tests/fast/release-notes.test.sh` against `tests/fixtures/release/notes.golden.md`. *Tier:* fast.
+- **P02-AC-11** — `release-notes` output equals the golden file for fixed inputs, contains `--repo` and `--signer-workflow` verification, the ISO digest and, only when `PUBLIC_BASE_URL` is set, the dashboard link built from it (no placeholder otherwise; P01 and P03 are not on the path to MS2), and contains no `amazonaws`, no `--owner` and no literal owner name. *Verify:* `tests/fast/release-notes.test.sh` against `tests/fixtures/release/notes.golden.md`. *Tier:* fast.
 - **P02-AC-12** — `SHA256SUMS` lists every other asset, `sha256sum -c` passes, and the attestation tar is byte-identical across two runs on the same inputs. *Verify:* `tests/fast/release-assets.test.sh`. *Tier:* fast.
 - **P02-AC-13** — `release.yml` references no `STORE_PUBLIC_*` secret, no `store set`/`store put public`, and its permissions are exactly `contents: write` and `actions: read`; every `uses:` is pinned to a 40-hex SHA. *Verify:* `tests/fast/release-least-privilege.test.py`. *Tier:* fast.
 - **P02-AC-14** — A dispatch with `dry_run: true` on a green master Build run completes: it downloads that run's artifacts, `release-verify` passes including the real `gh attestation verify`, and no release is created. *Verify:* CI run of `release.yml` dispatched manually with a master `build_run_id`, link in the PR. *Tier:* slow.
-- **P02-AC-15** — Pushing `v0.2.0-rc1` produces a GitHub release that is a prerelease and not Latest, with all five assets, a `release-handoff` artifact on the Release run, and `gh attestation verify --repo` on the ISO downloaded from the release passes. This is the MS4 evidence. *Verify:* Build and Release runs for the tag; `gh release view v0.2.0-rc1 --json isPrerelease,assets` and the verify command. *Tier:* slow.
+- **P02-AC-15** — Pushing `v0.2.0-rc1` produces a GitHub release that is a prerelease and not Latest, with all five assets, a `release-handoff` artifact on the Release run, and `gh attestation verify --repo` on the ISO downloaded from the release passes. This is the MS2 evidence. *Verify:* Build and Release runs for the tag; `gh release view v0.2.0-rc1 --json isPrerelease,assets` and the verify command. *Tier:* slow.
 - **P02-AC-16** — In `build.yml` the `evidence` job's `needs` contains every oracle job and the attest job, and has no `if:` that lets it run after a failure. *Verify:* `tests/fast/release-evidence-needs.test.py`. *Tier:* fast.
+- **P02-AC-17** — Waivers are visible in the release. For a summary with `cve_waivers` entries, `release-evidence.json` and the release notes list each waiver with CVE, component, expiry and fix state; with none, the notes say "no CVE waivers". `release-verify` exits 10 if the evidence list differs from the summary's. *Verify:* `tests/fast/release-waivers.test.sh` (golden notes for both cases). *Tier:* fast.
 
 ## RED plan
-The tester writes AC-1, 2, 4, 5, 7, 8, 9, 10 as shell/Python tests over fixtures first. They fail because `factory/bin/release-plan` and `release-verify` do not exist. AC-3 and AC-16 parse the workflows from B06/S05; they are RED only if those workflows lack the shape, so the tester also adds a fixture of the *old* `release.yml` (with `startsWith(head_branch,'v')` and `workflow_call` variants) that the tests must reject. AC-11 and AC-12 need golden files written before the implementation. Slow ACs (14, 15) have no RED; they are the GREEN evidence.
+The tester writes AC-1, 2, 4, 5, 7, 8, 9, 10, 17 as shell/Python tests over fixtures first. They fail because `factory/bin/release-plan` and `release-verify` do not exist. AC-3 and AC-16 parse the workflows from B06/S05; they are RED only if those workflows lack the shape, so the tester also adds a fixture of the *old* `release.yml` (with `startsWith(head_branch,'v')` and `workflow_call` variants) that the tests must reject. AC-11 and AC-12 need golden files written before the implementation. Slow ACs (14, 15) have no RED; they are the GREEN evidence.
 
 ## Risks and open questions
-- The tag run is the only real exercise of the entry-workflow rule (T-attest-entry-workflow). AC-14 reduces risk because a master Build is also attested by `build.yml`, but only AC-15 proves the tag path. Budget one failed rc.
+- The tag run is the only real exercise of the entry-workflow rule (T-attest-entry-workflow). AC-14 reduces risk because a master Build is also attested by `build.yml`, but only AC-15 proves the tag path. Budget one failed rc: each attempt is about 95 min of wall time and the first from-source build in this repo may hit a vanished distfile (I04 records upstream fetches) or an unwaived CVE (S03, OD-15).
 - `workflow_run` workflows execute `release.yml` from the default branch, not the tag. A release workflow change takes effect for the next tag; document in `docs/releasing.md`.
 - Artifact retention: if recovery is attempted after 30 days, the `build` store class fallback is used. If I01 is not yet populated for tags, recovery fails; AC-14 does not cover that path.
 - Workflow changes need the owner's PAT (T-workflow-push-needs-pat). The agent hands over a patch for `release.yml` and for the `evidence` job in `build.yml`.
@@ -156,12 +184,12 @@ The tester writes AC-1, 2, 4, 5, 7, 8, 9, 10 as shell/Python tests over fixtures
 - Does a `gh` version difference change `--format json` output of `gh attestation verify`? Unknown; the pinned `gh` version comes from I05 and the stub test must be refreshed on a bump.
 
 ## Cost
-- Slices: 3 (plan and verify scripts with fixtures; notes, assets, workflow; evidence job and docs). 16 ACs.
-- CI build cycles: 1 full tag build for `v0.2.0-rc1` (30–60 min build plus the oracle), plus 1 contingency for a first-try failure. AC-14 needs one existing green master Build run; it adds no build.
-- Money: none beyond Actions minutes.
+- Slices: 3 (plan and verify scripts with fixtures; notes, assets, waivers, workflow; evidence job and docs). 17 ACs.
+- CI build cycles: 1 from-source tag build for `v0.2.0-rc1`, measured on the predecessor at about 78 min for the build job, about 10 min wall for the oracle and about 5 min for attestation (about 95 min in all), plus 1 contingency for a first-try failure. The slack is in the first from-source build (a distfile that vanished upstream since August, or a CVE needing a waiver). AC-14 needs one existing green master Build run; it adds no build.
+- Money: none beyond Actions minutes (about 190 min for the attempt and its contingency).
 
 ## Spec defects found
 1. **No node owns the terminal evidence job or the `build` class write for tag runs.** B06 says "no publishing", S05 attests, but nothing assembles the evidence or stores tag outputs in `build`. This node owns the script and asks B06 to host the job (`needs:` all oracle jobs and attest).
 2. **O01 defines no result record.** Required evidence needs a per-mode `oracle-result.json` (`mode`, `status`, `iso_sha256`). O01 should own the format.
-3. **S05's digest-chain checker has no named interface.** P02 assumes an importable function (path to be fixed by S05, e.g. `supplychain/lib/digest_chain.py`). If S05 only exposes a CLI, P02 calls that instead.
-4. **SPEC §8 protected paths** should include `supplychain/policy/release-required.yaml` explicitly (it is under `supplychain/policy/`, so already covered) and the publisher workflows (see P01 defect 2).
+3. **S05's digest-chain interface is now named**: `supplychain/digest_chain.py`, subcommands `verify` and `sums` (S05-AC-14). `release-verify` imports it or calls its CLI with every flag; it does not copy the checks. Nothing to fix; stated so the dependency is traceable.
+4. **SPEC §8 owner-review paths** cover `.github/**` and `supplychain/policy/` (so `release.yml` and `release-required.yaml`) but not `factory/bin/release-plan`, `release-verify`, `release-notes` or `release-evidence`. Those scripts decide what is published. Recommend adding `factory/bin/release-*` to the list.

@@ -2,7 +2,7 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| S | B06, S02, S03, S04, O02, O03, O04, O05, O06 | P02 | — (the `attest` job is on the path to MS4 via P02) | L |
+| S | B06, S02, S03, S04, O02, O03, O04, O05, O06 | P02 | — (feeds MS2) | L |
 
 **Owns:**
 - `supplychain/attest.py` (orchestrator).
@@ -17,8 +17,8 @@
 - `tests/fixtures/supplychain/chain/` (a good fixture set and mutation helpers).
 
 **Carries from linux-live-iso-factory@b9f533b:**
-- `scripts/attestation.sh` (orchestration, summary, pillar 6) -> `attest.py`.
-- `scripts/generate-provenance.py` -> `provenance.py`.
+- `scripts/attestation.sh` (880 lines: orchestration, summary, pillar 6) -> `attest.py`. The pillar commands it runs are already ported by S01 to S04; what moves is the sequencing, the summary and the exit logic. Rewritten rather than ported because AC-5 needs per-pillar stub injection and AC-7 needs a summary built by `json.dump` (the shell heredoc at `attestation.sh:744-801` is the verified weakness).
+- `scripts/generate-provenance.py` (291 lines), **ported** as `provenance.py`. Changed only where AC-8 and AC-9 force it: the `unknown/unknown` defaults (`:88-105`), the hard-coded workflow path (`:108`) and the snapshot download.
 - The `attestation` job of `.github/workflows/build.yml` (~L575-822), the signing step in particular.
 - The digest check of `.github/workflows/release.yml:136-164` -> `digest_chain.py`.
 - `Makefile` `attestation`, `attest-builder` (440-480).
@@ -34,6 +34,8 @@
 ## Purpose
 
 After this node, the ISO leaves the build with one verifiable chain: the hash of the ISO bytes is the hash in the summary, the SBOM, the provenance and the signed Sigstore attestation, and a standalone script proves it mechanically. That script runs at attest time to decide whether to sign, and again at release (P02) on the downloaded files. All pillars always run and all artifacts are always written, but nothing is signed unless every gating pillar passed.
+
+The chain checker is developed in the rc1 lane (SPEC §7), against rc1's own ISO, SBOM and `SHA256SUMS` (digests in `oracle/fixtures/rc1.yaml`, fetched by O01), before this repo builds anything. rc1's attestation is bound to the predecessor repository name (`tuckermclean/linux-live-iso-factory`), so it can exercise the checker and the `gh attestation verify` output parser, but it can never stand in for an attestation of our own ISO. The first attestation of our own build is the `v0.2.0-rc1` tag, which is MS2 (S05-AC-16).
 
 ## Scope
 
@@ -54,6 +56,7 @@ After this node, the ISO leaves the build with one verifiable chain: the hash of
 - Boot-test jobs and the `oracle-gate` aggregator job: O02 and B06.
 - ISO assembly and its artifact hand-over: B05, B06.
 - Reproducibility of the ISO: B07.
+- Fetching rc1's ISO, SBOM and `SHA256SUMS` by digest: O01. Memo and cache handling of the ISO and the release-mode audit after the build: I06 and B06; the attest job only sees the ISO bytes it is given.
 
 ## Design
 
@@ -108,7 +111,7 @@ Written by `json.dump` from a dict and validated against the schema before writi
 
 Keys kept from v1, so rc1-era consumers (release, dashboard) keep working: `build_tag`, `timestamp`, `iso_sha256`, `package_count`, `unmapped_cpe_count`, `excluded_cpe_count`, `sbom_check`, `license_check`, `cve_check`, `unowned_check`, `provenance_check`, `overall`, `cve_scanner`, `cve_db`, `cve_policy`, `cve_coverage`, `unowned_count`, `cve_failures`, `license_failures`, `unowned_files`, `builder{…}`. The `cve_db.age_warning` key is kept and is null on any passing run.
 
-Keys added: `schema_version: 2`, `digest_chain_check`, `iso_name`, `cve_canary{found, cve, db_checksum}`, `reports{<file>: <sha256>}` for every report and the SBOM, `inputs{builder_image_digest, stage3_digest, snapshot_sha256, versions_lock_sha256, pins_sha256, source_sha}`, `policies{<file>: <sha256>}` for the four policy files and the allowlist, and `builder.cve_verdict` (the report-only verdict, which can be `fail` without failing `overall`).
+Keys added: `schema_version: 2`, `digest_chain_check`, `iso_name`, `cve_waivers[]` (copied from S03's `waivers_applied[]`, so the release evidence names every waiver, OD-15), `cve_canary{found, cve, db_checksum}`, `reports{<file>: <sha256>}` for every report and the SBOM, `inputs{builder_image_digest, stage3_digest, snapshot_sha256, versions_lock_sha256, pins_sha256, source_sha}`, `policies{<file>: <sha256>}` for the four policy files and the allowlist, and `builder.cve_verdict` (the report-only verdict, which can be `fail` without failing `overall`).
 
 Values `error` and `not_run` join `pass|fail` for the `*_check` keys; P03 must render them. `builds-index.json` is P03's.
 
@@ -134,10 +137,10 @@ provenance.py --iso-sha256 H --iso-name N --build-tag T --pins pins/pins.yaml
 
 ### Digest chain (`digest_chain.py`)
 
-**Decision:** the chain check is a standalone script with no knowledge of CI, used at attest time and at release. Rejected: inline shell in `release.yml` (rc1), which could not be tested and omitted the SLSA subject.
+**Decision:** the chain check is a standalone script with no knowledge of CI, used at attest time and at release, and in the rc1 lane against rc1's artifacts. Every flag except `--iso` and `--sbom` is optional, so a partial artifact set (rc1 has no summary or SLSA statement of this shape) can be checked; absent means `skipped` in `--json`. P02 passes all of them. Rejected: inline shell in `release.yml` (rc1), which could not be tested and omitted the SLSA subject.
 
 ```
-digest_chain.py verify --iso ISO --summary S.json --sbom bom.cdx.json
+digest_chain.py verify --iso ISO --sbom bom.cdx.json [--summary S.json]
                        [--provenance slsa-provenance.json] [--sums SHA256SUMS]
                        [--attested attestation-verify.json] [--reports-dir D]
                        [--policy-dir supplychain/policy] [--json]
@@ -258,10 +261,10 @@ A check whose optional flag is absent is reported `skipped` in `--json`, and P02
 - **S05-AC-1** — `digest_chain.py verify` exits 0 on the good fixture set (ISO, summary, SBOM, provenance, SHA256SUMS, attested JSON, reports, policy dir) and the `--json` output lists checks 1 to 10 each `ok: true`. *Verify:* `tests/fast/test_digest_chain.py::test_good_set`. *Tier:* fast.
 - **S05-AC-2** — Mutation matrix, each exit 1 and naming the failed check: flip one ISO byte; change `summary.iso_sha256`; change the SBOM component hash; change a `distribution` reference hash; change the provenance subject digest; change the provenance subject name; change the attested subject digest; change the SHA256SUMS ISO line; change the SHA256SUMS bom line; change a report file after hashing; change a policy file; set `overall: pass` while a gating `*_check` is `fail`; set `cve_canary.found` false; make the canary DB checksum differ; set `local: true` in the provenance. *Verify:* `tests/fast/test_digest_chain.py::test_mutations` (one parametrised case per mutation). *Tier:* fast.
 - **S05-AC-3** — Missing, empty or unparseable input is exit 2, never pass: absent ISO, summary or SBOM; `iso_sha256` equal to `(not computed)` or empty; SBOM without a SHA-256 hash; a given flag whose file is missing. The SBOM hash is found by `alg` even when `hashes` has another entry first. *Verify:* `tests/fast/test_digest_chain.py::test_missing_inputs`, `::test_hash_by_alg`. *Tier:* fast.
-- **S05-AC-4** — The ISO is hashed once. `sbom.py` and `provenance.py` never open the ISO path; `attest.py` hashes it exactly once and passes the value to both; `digest_chain.py` re-hashes. *Verify:* `tests/fast/test_attest_hash_once.py` (AST search for ISO reads, stub-run of `attest.py` counting `sha256` calls). *Tier:* fast.
+- **S05-AC-4** — The ISO is hashed once. `sbom.py` and `provenance.py` never open the ISO path; `attest.py` hashes it exactly once and passes the value to both; `digest_chain.py` re-hashes. *Verify:* `tests/fast/test_attest_hash_once.py` (AST search for ISO reads, stub-run of `attest.py` counting `sha256` calls). *Tier:* fast. *When:* after MS2.
 - **S05-AC-5** — The orchestrator runs every pillar and writes every artifact even when pillars fail. With stub tools injected to fail each of the eight pillars one at a time, `attest.py` runs all the others, writes `attestation-summary.json` and the reports it could produce, and exits 1. Dependent pillars of a failed SBOM record `error` with reason `no-input`. With all stubs passing the exit is 0. *Verify:* `tests/fast/test_attest_orchestrator.py`. *Tier:* fast.
 - **S05-AC-6** — `pillars.yaml` is the single pillar list: the set of pillar names in `attest.py`, the summary schema and the file are equal. `overall` is `pass` iff every gating pillar is `pass`; `fail`, `error`, `not_run` and absent each fail a gating pillar; a non-gating `fail` does not fail overall; a non-gating `error` does. *Verify:* `tests/fast/test_attest_pillars.py`. *Tier:* fast.
-- **S05-AC-7** — The summary validates against its schema on write. Its key set contains every v1 key from `tests/fixtures/supplychain/summary-v1-keys.txt`. `reports{}` and `policies{}` hashes equal the files. `cve_policy.sha256` equals the sha256 of `cve-policy.yaml`. *Verify:* `tests/fast/test_attest_summary.py`. *Tier:* fast.
+- **S05-AC-7** — The summary validates against its schema on write. Its key set contains every v1 key from `tests/fixtures/supplychain/summary-v1-keys.txt`. `reports{}` and `policies{}` hashes equal the files. `cve_policy.sha256` equals the sha256 of `cve-policy.yaml`. `cve_waivers[]` equals the `waivers_applied[]` of the CVE report. *Verify:* `tests/fast/test_attest_summary.py`. *Tier:* fast.
 - **S05-AC-8** — Provenance in `--ci` mode: `buildType` equals the canonical string; the subject is the ISO name and hash; `resolvedDependencies` contains the commit, stage3, snapshot, kernel, builder and `versions.lock` entries with digests; `started <= finished`; the byproducts list excludes `attestation-summary.json`; `workflow.path` is parsed from `GITHUB_WORKFLOW_REF` and is `.github/workflows/build.yml`. The tool opens no sockets (test runs it with the socket module disabled) and `provenance.py` and `attest.py` contain no `curl` or `urllib`. A missing pin, digest or required environment variable is exit 2. *Verify:* `tests/fast/test_provenance.py`. *Tier:* fast.
 - **S05-AC-9** — Without `--ci` the provenance carries `internalParameters.local: true`. `digest_chain.py` check 10 and `attest.py --ci` reject it. A missing or `(not computed)` ISO hash gives exit 2 and no file. *Verify:* `tests/fast/test_provenance.py::test_local_mode_not_attestable`. *Tier:* fast.
 - **S05-AC-10** — Entry-workflow invariants hold in the workflow files: `build.yml` has `on.push.tags` matching `v*.*.*`, no `workflow_call`, and contains the `attest` job with the `actions/attest` step; no other workflow file contains `actions/attest`; `release*.yml` triggers only on `workflow_run`. *Verify:* `tests/fast/test_workflow_attest_entry.py`. *Tier:* fast.
@@ -270,7 +273,8 @@ A check whose optional flag is absent is reported `skipped` in `--json`, and P02
 - **S05-AC-13** — On a non-tag push to the default branch, the attest job signs, then `gh attestation verify` with the signer workflow `build.yml` succeeds, and `digest_chain.py verify --attested` exits 0. *Verify:* CI run on the default branch; job steps "Sign" and "Verify attestation". *Tier:* slow.
 - **S05-AC-14** — The release interface is frozen: `digest_chain.py sums` output is deterministic, ends with a newline, and passes `sha256sum -c` against the same files; `verify --help` lists every flag in the Design table; `docs/attestation.md` shows the exact `verify` and `sums` invocations P02 and users run, and a user-side `gh attestation verify` command. *Verify:* `tests/fast/test_digest_chain_cli.py`. *Tier:* fast.
 - **S05-AC-15** — In CI, `summary.builder.image_digest` is non-empty, equals the digest in `pins/pins.yaml`, equals the provenance `monolith-builder` digest, and equals the digest `docker inspect` reports for the image the job pulled. *Verify:* `build.yml` attest job step "Builder digest cross-check", then `digest_chain.py` check 10. *Tier:* slow.
-- **S05-AC-16** — On the first real tag build (MS4, executed by P02), the attestation persists, `gh attestation verify` passes, and `digest_chain.py verify` with all flags passes on the files downloaded as P02 downloads them. *Verify:* P02's release run; S05 provides the script and the evidence table. *Tier:* slow.
+- **S05-AC-16** — On the first real tag build, `v0.2.0-rc1` (MS2, executed by P02), the attestation persists, `gh attestation verify` passes, and `digest_chain.py verify` with all flags passes on the files downloaded as P02 downloads them. *Verify:* P02's release run; S05 provides the script and the evidence table. *Tier:* slow.
+- **S05-AC-17** — The rc1 lane. On rc1's ISO, SBOM and `SHA256SUMS` (fetched by O01, digests `a9600659…eb27a` and `3cfc322a…75887`), `digest_chain.py verify --iso … --sbom … --sums …` exits 0: checks 2 and 5 pass and the checks that need other files are `skipped`. `gh attestation verify` of rc1's ISO is run with `--repo tuckermclean/linux-live-iso-factory` and the signer workflow `tuckermclean/linux-live-iso-factory/.github/workflows/build.yml`, because rc1's attestation is bound to that name. Repository and signer workflow are arguments, never literals in the script. The real `--format json` output is saved as the fixture the `--attested` parser reads. If rc1's attestation no longer verifies, the PR records that and the hand-written fixture stays. The test fails, not skips, if the rc1 files are absent. *Verify:* `tests/slow/test_digest_chain_rc1.py`, run by the rc1-lane CI job; no build. *Tier:* slow.
 
 ## RED plan
 
@@ -281,7 +285,7 @@ A check whose optional flag is absent is reported `skipped` in `--json`, and P02
 
 ## Risks and open questions
 
-- **`gh attestation verify --format json` shape** is not in the study and not verified here. The parser is isolated and pinned by a recorded fixture from the first real run (AC-13). Until then AC-1/AC-2 use a hand-written fixture of the documented shape.
+- **`gh attestation verify --format json` shape** is not in the study and not verified here. The parser is isolated and pinned by a recorded fixture. The first real output comes from verifying rc1's attestation in the rc1 lane (AC-17), if it still verifies; otherwise from the first default-branch run (AC-13). Until then AC-1/AC-2 use a hand-written fixture of the documented shape. Whether the output format is the same for a repository other than the predecessor is unverified.
 - **Attestation store propagation delay** after `actions/attest` is unknown; the three-attempt retry is a guess. AC-13 shows whether it is needed.
 - **`actions/attest` input names** (`predicate-path`) and its current major version are assumed from memory of the action's interface and must be confirmed against the SHA pinned by I05/M04.
 - **Sign on every push to the default branch** puts one attestation per master build into GitHub's store. rc1 did the same (`if: verdict == pass`). If the volume matters, restrict signing to tags and run the attested-verify path on tags only; then AC-13 becomes a tag-only slow check and a dry-run path is needed for earlier confidence. Owner's call; not an OD in SPEC section 10.
@@ -297,13 +301,12 @@ A check whose optional flag is absent is reported `skipped` in `--json`, and P02
   3. `attest.py` orchestrator, `pillars.yaml`, summary schema (AC-4, 5, 6, 7).
   4. `attest` job in `build.yml`, static workflow tests (AC-10, 11, 12).
   5. Slow verification and docs (AC-13, 15, 16, `docs/attestation.md`).
-- CI build cycles: 3 after MS2. One for the attest job end to end on the default branch (AC-13), one to fix what that finds (verify JSON shape, action inputs, digest cross-check, AC-15), one on the first tag (AC-16, shared with P02, so counted once there).
-- Money: attest job minutes (SBOM generation for two images, one grype fetch, two scans, one registry pull): unmeasured. Storage: the attestation set per build is small if the SBOM is package-only (S01 guards 4 MiB) plus reports; no large files. No paid services.
+- CI build cycles: 0 for the rc1 lane (AC-17). 2 attest-job runs on B06's pipeline once the first ISO exists (MS1): one end to end on the default branch (AC-13), one to fix what that finds (action inputs, digest cross-check, AC-15). The tag run (AC-16) is P02's from-source build and is counted there.
+- Time: the predecessor's attestation job took 4.7 min on GitHub Actions (measured, run 37292535170); with the builder-image scan by digest this may grow, unmeasured.
+- Money: attest job minutes (SBOM generation for two images, one grype fetch, two scans, one registry pull): unmeasured beyond the 4.7 min above. Storage: the attestation set per build is small if the SBOM is package-only (S01 guards 4 MiB) plus reports; no large files. No paid services.
 
 ## Spec defects found
 
-1. **Missing oracle edge.** Principle 7 and rc1's `needs: boot-test` require the attest job to wait for the full oracle, but the graph gives S05 no dependency on O02-O06. P02 has those edges but P02 is downstream. Either add S05 -> O02..O06, or have B06 define a stub `oracle-gate` aggregate job that O02-O06 later extend, and let S05 depend on that name. This spec assumes the second.
-2. **Pipeline order versus SPEC 4.1.** The diagram feeds the SBOM from the squashfs but the SBOM must carry the ISO hash, so it runs after B05. S01 already notes this; S05 fixes the order in the job.
-3. **Pins edge.** S05 reads `pins/pins.yaml` (I05) for the builder, stage3 and snapshot digests and tool pins. No S05 -> I05 edge exists. Add it, or declare that B06 passes those as arguments (worse: it hides provenance inputs in workflow YAML).
-4. **P02 contract.** P02's graph summary says "digest chain re-verified before publish" but has no dependency on a named script interface. This node freezes the interface (AC-14); P02's spec must call `digest_chain.py verify` with all flags and must not re-implement the checks.
-5. **Store key layout.** SPEC section 5 says `build` keys are `builds/<version>/<file>`. Attestation outputs are about 15 files, so this spec uses `builds/<version>/attestation/<file>`. Confirm that subpaths under `builds/<version>/` are allowed.
+1. **Pipeline order versus SPEC 4.1.** The diagram feeds the SBOM from the squashfs but the SBOM must carry the ISO hash, so it runs after B05. S01 already notes this; S05 fixes the order in the job.
+2. **Oracle aggregate name.** S05 now depends on O02 to O06 directly. AC-12 still assumes B06 names its aggregate job `oracle-gate`; if B06 names it otherwise, AC-12 changes.
+3. **Store key layout.** SPEC section 5 says `build` keys are `builds/<version>/<file>`. Attestation outputs are about 15 files, so this spec uses `builds/<version>/attestation/<file>`. Confirm that subpaths under `builds/<version>/` are allowed.

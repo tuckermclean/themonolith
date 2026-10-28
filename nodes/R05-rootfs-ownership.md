@@ -2,10 +2,10 @@
 
 | Phase | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| R | R01 | B04, S04 | — | M |
+| R | R01, S04 | none | — | M |
 
-**Owns:** `recipes/overlay/app-misc/monolith-base/monolith-base-0.1.0-r7.ebuild` (replaces `-r6`), `recipes/overlay/app-misc/monolith-base/files/install.manifest`, `recipes/overlay/app-misc/monolith-base/files/rootfs/**` (new static rootfs files), `supplychain/policy/unowned-allowlist.yaml`, `factory/bin/ownership-lint`, `factory/bin/ownership-collisions`, the `monolith-base` line of `pins/versions.lock`, `tests/fast/ownership-*.test.sh`, `tests/fast/fixtures/ownership/`.
-**Carries from linux-live-iso-factory@b9f533b:** `configs/overlay/app-misc/monolith-base/monolith-base-0.1.0-r6.ebuild` (rewritten), `configs/attestation/unowned-allowlist.yaml` (reclassified), the `/etc` and `/root` heredocs in `scripts/build-rootfs.sh` (heredocs starting at lines 177, 216, 227, 273, 312, 329, 337, 345, 375, 448, 486, 514, 524, 575, 594, 615, 655; extracted, not copied as a script), `scripts/tests/verify-rootfs-net-wiring.sh` and `verify-router-wiring.sh` (intent, replaced by the manifest lint).
+**Owns:** `recipes/overlay/app-misc/monolith-base/monolith-base-0.1.0-r7.ebuild` (replaces `-r6`), `recipes/overlay/app-misc/monolith-base/files/install.manifest`, `recipes/overlay/app-misc/monolith-base/files/rootfs/**` (new static rootfs files), `supplychain/policy/unowned-allowlist.yaml` (S04 creates it from the predecessor's 103 entries; R05 shrinks it to 61), `factory/bin/ownership-lint`, `factory/bin/ownership-collisions`, the `monolith-base` line of `pins/versions.lock`, `tests/fast/ownership-*.test.sh`, `tests/fast/fixtures/ownership/`.
+**Carries from linux-live-iso-factory@b9f533b:** `configs/overlay/app-misc/monolith-base/monolith-base-0.1.0-r6.ebuild` (rewritten: the ownership change is the node's purpose, forced by R05-AC-1 and R05-AC-4; R01 imports `-r6` verbatim first), `configs/attestation/unowned-allowlist.yaml` (reclassified, starting from S04's migrated copy, not from the raw file), the `/etc` and `/root` heredocs in `scripts/build-rootfs.sh` (heredocs starting at lines 177, 216, 227, 273, 312, 329, 337, 345, 375, 448, 486, 514, 524, 575, 594, 615, 655; extracted, not copied as a script), `scripts/tests/verify-rootfs-net-wiring.sh` and `verify-router-wiring.sh` (intent, replaced by the manifest lint).
 **Study refs:** recipes.yaml `ebuild.app-misc/monolith-base` (+ `contradictions_local`), `rootfs_files`; supplychain.yaml `script.check-unowned`, `cfg.attestation/unowned-allowlist.yaml`; T-unowned-allowlist, T-ntfs-case, T-crosssysroot-missing-accounts, T-acct-user-dnsmasq-race; D-hand-authored-rootfs-files-owned, D-486-minimalism, D-state-and-no-hidden-stderr.
 
 ## Purpose
@@ -16,15 +16,15 @@ In:
 - Table-driven `monolith-base` `-r7` that owns all static hand-authored rootfs files, directories and symlinks.
 - Extraction of the static heredoc bodies into `files/rootfs/**`, byte-identical to what the script writes.
 - The decision that the four release-tag files (`issue`, `os-release`, `monolith-release`, `motd`) stay generated, with the justification recorded in the allowlist.
-- The reclassified allowlist: schema with a reason, a kind and a removal path per entry; shrink-only rule.
+- The reclassified allowlist: S04 creates `unowned-allowlist.yaml` from the predecessor's 103 entries with a reason per entry; R05 starts from that file and shrinks it to 61, adding a kind and a removal path per entry, under the shrink-only rule.
 - Lint for manifest/ebuild/allowlist consistency and a collision check for the built sysroot.
 
 Out:
-- Stopping `build-rootfs.sh` from writing these files, the stamp templates for the four release-tag files (B04 keeps them under `factory/data/stamp/`), deleting the cleanup candidates, running `mksquashfs`: B04.
+- Stopping the ported `build-rootfs` from writing these files (B04, in a change after MS2; until then B04 generates them and the allowlist keeps its 103 entries), the stamp templates for the four release-tag files (B04 keeps them under `factory/data/stamp/`), deleting the cleanup candidates, running `mksquashfs`: B04.
 - The unowned gate itself, its glob semantics, failing on empty or missing input, reporting unused allowlist entries: S04.
 - The initramfs files `rootfs/init` and `rootfs/usr/share/udhcpc/default.script`: B03 (they never enter the squashfs).
 - Whether the disc is fully static, which decides the `ld.so.*` entries: OD-2.
-- Replacing the dead S3 default in `monolith-advisory-check` and the S3 `HOME_URL` in `os-release`: P05 and P01 (B04's stamp template takes `@HOME_URL@` from `MONOLITH_HOME_URL`).
+- Replacing the dead S3 default in `monolith-advisory-check` and the S3 `HOME_URL` in `os-release`: P06 (B04's stamp template takes `@HOME_URL@` from `MONOLITH_HOME_URL`).
 - The `themonolith.ans` asset: R01 placed it at `recipes/overlay/app-misc/monolith-base/assets/`; B04 builds `/etc/motd` from it.
 - Making the account database (`passwd`, `group`, `shadow`) package-owned: see Design; it stays allowlisted.
 
@@ -61,7 +61,7 @@ Manifest total: 25 existing + 41 moved + 1 (`fonts.dir`, which the old glob entr
 `/etc/passwd`, `/etc/group`, `/etc/shadow`, `/etc/gshadow` are mutated by `acct-user`/`acct-group` merges and the shadow tools during sysroot assembly (T-crosssysroot-missing-accounts, T-acct-user-dnsmasq-race), then overwritten by B04 with a fixed content. A package that installs them would race those merges for ownership and content. Decision: allowlist with `kind: mutated`, `reducible_by: null`. Rejected: ship them from `monolith-base` — merge order between `monolith-base` and the acct packages is not controlled and the outcome would depend on it.
 
 ### Allowlist: `supplychain/policy/unowned-allowlist.yaml`
-R05 writes the file in the `schema: 1` shape that S04 defines (S04 owns the schema and the matcher), with three R05 extension keys:
+S04 creates the file in the `schema: 1` shape it defines (S04 owns the schema and the matcher) and migrates the predecessor's 103 entries into it without dropping any (S04's migration test). R05 edits that file: it removes the 41 moved entries, reclassifies the rest and adds three extension keys:
 ```yaml
 schema: 1
 allowlist:
@@ -98,6 +98,9 @@ Shrink-only rule: `ownership-lint allowlist --base-rev B --head-rev H` (run from
 ### `factory/bin/ownership-collisions` (slow)
 Reads a built sysroot `var/db/pkg/**/CONTENTS`: fails if a path `app-misc/monolith-base` owns is also in another package's `CONTENTS`, if the file's md5 in the built tree differs from the md5 recorded in `monolith-base`'s `CONTENTS` (a later step overwrote it), if any `._cfg[0-9]*_*` file exists under `etc/`, or if a manifest destination is missing from the sysroot. This answers the real risk of owning `/etc` files that Gentoo packages (for example `sys-apps/sysvinit`'s `/etc/inittab`) also install: with `CONFIG_PROTECT`, a differing file is shunted into `._cfg0000_*` and silently leaves the old content in place. Not added speculatively: the `CONFIG_PROTECT_MASK` env file and `RDEPEND` ordering are the fix if this check fires.
 
+### Timing
+R05 is off the critical path (`track: parallel`) and B04 no longer depends on it. The first attested build ships with B04's ported `build-rootfs` heredocs and S04's 103-entry allowlist; both are honest because S04 starts from the predecessor's allowlist. R05 lands when a slot is free. It changes `monolith-base` only, so I06 rebuilds that one package (seconds, no compile) and the cache stays hot. When R05 merges, B04's follow-up change deletes the generators for the 41 moved files (B04-AC-14).
+
 ### Provenance
 Extracted bodies are recorded in `recipes/IMPORT.yaml` as `authored` entries with `derived_from: scripts/build-rootfs.sh:<start>-<end>` and `sha256_body` of the old heredoc body; `ownership-lint manifest` verifies the file hash equals the recorded body hash (byte-identical extraction). Edits after that are ordinary changes, gated by R03.
 
@@ -122,7 +125,7 @@ Extracted bodies are recorded in `recipes/IMPORT.yaml` as `authored` entries wit
 - **R05-AC-8** — The shrink-only check fails when a head adds an entry, drops a field, or duplicates a path, and passes when a head narrows a pattern or removes entries. *Verify:* `tests/fast/ownership-shrink.test.sh` (git fixtures built in a temp repo). *Tier:* fast.
 - **R05-AC-9** — The static files under `files/rootfs/` total at most 64 KiB, the ebuild adds no `RDEPEND`/`DEPEND` beyond what `-r6` declared, and no new package appears in `world`. *Verify:* `tests/fast/ownership-manifest.test.sh`. *Tier:* fast.
 - **R05-AC-10** — `monolith-base-0.1.0-r7.ebuild` exists, `-r6` is removed, and `pins/versions.lock` names `-r7`. *Verify:* `tests/fast/ownership-manifest.test.sh` (file listing and lock line); R03's gate covers it from then on. *Tier:* fast.
-- **R05-AC-11** — On the built sysroot and rootfs, `ownership-collisions` reports no double-owned path, no `._cfg*` file and no missing destination, and `check-unowned` (S04) reports zero unowned files with the reclassified allowlist. *Verify:* CI job `ownership` in the B06 pipeline (artifacts `ownership-collisions.txt`, `unowned-report.json`). *Tier:* slow (evidence first available at B06/S04; R05 merges on its fast ACs).
+- **R05-AC-11** — On the built sysroot and rootfs, `ownership-collisions` reports no double-owned path, no `._cfg*` file and no missing destination, and `check-unowned` (S04) reports zero unowned files with the reclassified allowlist. (The first build where R05 and the B04 follow-up are both in is the evidence run.) *Verify:* CI job `ownership` in the B06 pipeline (artifacts `ownership-collisions.txt`, `unowned-report.json`). *Tier:* slow (evidence first available at B06/S04; R05 merges on its fast ACs).
 - **R05-AC-12** — The ISO built with `monolith-base` `-r7` passes the `bios`, `persist`, `nic` and `gui` boot modes unchanged from rc1 behaviour. *Verify:* oracle jobs O02 (`bios`), O04 (`persist`), O03 (`nic`), O05 (`gui`) on the first B06 ISO. *Tier:* slow.
 
 ## RED plan
@@ -138,11 +141,11 @@ The tester first writes `tests/fast/fixtures/ownership/` (minimal `files/` trees
 - No SPEC §10 decision blocks R05; OD-2 gates two entries' removal only.
 
 ## Cost
-Three slices: (1) manifest design, ebuild `-r7`, lint, the 25 existing files (AC-1, 2, 4, 9, 10); (2) extraction of the heredocs, root dotfiles, fonts (AC-3, 5); (3) allowlist reclassification and shrink-only tooling, collision tool (AC-6, 7, 8, plus fixtures for 11). No CI build cycles in R05. B06 spends one `monolith-base` rebuild (seconds, no compile) and the existing full-build cycle; the oracle cost for AC-12 is the four boot modes already in the pipeline. No storage or hosting cost; the files total under 64 KiB.
+Three slices: (1) manifest design, ebuild `-r7`, lint, the 25 existing files (AC-1, 2, 4, 9, 10); (2) extraction of the heredocs, root dotfiles, fonts (AC-3, 5); (3) allowlist reclassification and shrink-only tooling, collision tool (AC-6, 7, 8, plus fixtures for 11). No CI build cycles in R05. I06 rebuilds `monolith-base` only (seconds, no compile) in the next cache-hot build (~25 min wall to a tested ISO, per `docs/first-attested-build.md`); the oracle cost for AC-12 is the four boot modes already in the pipeline. No storage or hosting cost; the files total under 64 KiB.
 
 ## Spec defects found
 - Protected path conflict, also found by S04: SPEC §8 forbids agents from editing `supplychain/policy/`, yet R05's purpose is to author and then shrink `supplychain/policy/unowned-allowlist.yaml`. Needed from the owner: a deletion-only carve-out that F04 can check on the diff (R05's shrink-only check is the rule), or a different home for the file. R05 follows §4.2 and the first PR needs a human-authored commit.
-- Schema ownership: S04 and R05 both write `unowned-allowlist.yaml`. R05 uses S04's `schema: 1` plus `kind`, `reducible_by`, `refs`; S04's JSON schema must allow those keys (S04 rejects unknown keys today).
-- `graph.yaml` gives R05 no edge to S04's matcher semantics. `fnmatch` treats `*` as crossing `/` (`scripts/check-unowned.py:170-179`), so `**` means nothing special; the old header says otherwise. S04's spec makes `*` and `?` segment-local and `**` the only cross-segment glob. R05's 61 patterns are valid under both that rule and the old `fnmatch` behaviour: the wildcard entries are `etc/env.d/binutils/config-*`, `usr/share/binutils-data/*/*/info/dir`, `usr/share/terminfo/?` and the three `**`; none relies on `*` crossing `/`.
-- B04 must stop generating the 41 moved files (its spec says anything R05 has not moved fails its manifest check, which is consistent) and keeps the four stamp templates. The graph summary for B04 does not say so; if B04 still writes `inittab` or `rcS`, R05's ownership claims are overwritten at assembly and the `ownership-collisions` content check (md5 against CONTENTS) would flag it.
+- Schema ownership: S04 creates and R05 edits `unowned-allowlist.yaml`. R05 uses S04's `schema: 1` plus `kind`, `reducible_by`, `refs`; S04's JSON schema must allow those keys (S04-AC-4 rejects unknown keys today). The dependency R05 -> S04 now exists in the graph, so S04 can add the keys.
+- Matcher semantics: `fnmatch` treats `*` as crossing `/` (`scripts/check-unowned.py:170-179`), so `**` means nothing special; the old header says otherwise. S04's spec makes `*` and `?` segment-local and `**` the only cross-segment glob. R05's 61 patterns are valid under both that rule and the old `fnmatch` behaviour: the wildcard entries are `etc/env.d/binutils/config-*`, `usr/share/binutils-data/*/*/info/dir`, `usr/share/terminfo/?` and the three `**`; none relies on `*` crossing `/`.
+- B04 must stop generating the 41 moved files after R05 lands and keeps the four stamp templates. B04 no longer depends on R05, so the stop is a later B04 change (B04-AC-14). If B04 still writes `inittab` or `rcS` after R05 lands, R05's ownership claims are overwritten at assembly and the `ownership-collisions` content check (md5 against CONTENTS) would flag it.
 - `unowned-allowlist.yaml` had a duplicate entry (`etc/group-`) that no check noticed; a fast uniqueness lint is part of R05-AC-7.
