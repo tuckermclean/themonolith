@@ -1,0 +1,1114 @@
+area: build
+repo_head: b9f533b
+notes_on_method:
+  - All files in scope read in full. Ran scripts/tests/{binpkg-store,ghcr-gc,s3-gc,savedconfig-cache,sync-portage,pcf-fontname,verify-resolved-i2c-off}.test.sh - all report ALL PASS (no network used).
+  - No docker run in this repo uses --privileged, --cap-add, --device or --user (grep of Makefile; DOCKER_RUN at Makefile:112-128). Everything runs as container root (default uid 0, default caps incl. MKNOD) so host output/ files are root-owned.
+  - There is NO multi-stage Dockerfile. The Dockerfile has exactly one stage (base-tools). The "final" image monolith-builder is produced by `docker commit` of a crossdev container in the Makefile (build-image), not by Dockerfile.
+
+dataflow:
+  summary: >
+    Docker Hub gentoo/stage3:amd64-openrc-$TOOLCHAIN_EPOCH -> Dockerfile base-tools (emerge-webrsync --revert=$TOOLCHAIN_EPOCH from upstream, host tools,
+    syft/grype, rustup nightly, portage overlay config) -> `docker run` crossdev + `docker commit` = image monolith-builder (label base-tools-hash) ->
+    pushed to ghcr.io/tuckermclean/monolith-builder:{TOOLCHAIN_EPOCH-DOCKERFILE_HASH,TOOLCHAIN_EPOCH,latest} (+ -base-tools twin).
+    Separately: portage snapshot gentoo-$BUILD_EPOCH.tar.xz(+.gpgsig,+.md5sum) fetched on HOST from S3 then upstream into output/portage-mirror/snapshots,
+    served by python http.server inside the builder container, emerge-webrsync --revert=$BUILD_EPOCH -> volume monolith-repos (/var/db/repos).
+    Then build-packages: cross-emerge world (versions.lock pins) with --buildpkg --usepkg --keep-going -> gpkgs in output/packages (PKGDIR=/output/packages),
+    kernel bzImage copied to output/vmlinuz, live sysroot rsynced to output/sysroot, resolved kernel config gunzipped to configs/kernel.config (rw bind mount).
+    build-rootfs: output/sysroot -> /rootfs-build (+generated /etc, init.d) -> mksquashfs -> output/themonolith-$BUILD_VERSION.squashfs.
+    build-initrd: busybox+kmod+rootfs/init+tier-1 modules from sysroot -> cpio newc | gzip -9 -n -> output/themonolith-$BUILD_VERSION.initrd.
+    build-iso: vmlinuz + initrd + squashfs + isolinux + grub-mkstandalone BOOTX64.EFI + efi.img -> xorriso -> python GPT-type patch -> output/themonolith-$BUILD_VERSION.iso.
+  artifacts:
+    - name: gentoo/stage3 base image
+      path_or_ref: docker.io/gentoo/stage3:amd64-openrc-${TOOLCHAIN_EPOCH}
+      produced_by: ext.dockerhub
+      cached_or_published: pulled by docker daemon each fresh build; NOT digest-pinned (tag only; STAGE3_DIGEST env is forwarded to attestation but never set in Makefile/Dockerfile)
+      evidence: Dockerfile:30
+    - name: toolchain portage tree baked in image
+      path_or_ref: /var/db/repos/gentoo inside base-tools layer (emerge-webrsync --revert=$TOOLCHAIN_EPOCH)
+      produced_by: docker.base-tools RUN
+      cached_or_published: docker layer cache (buildx --cache-from/--cache-to type=inline), ghcr base-tools image
+      evidence: Dockerfile:74
+    - name: base-tools image
+      path_or_ref: local tag monolith-builder-base-tools ; ghcr.io/tuckermclean/monolith-builder-base-tools:{REGISTRY_TAG,TOOLCHAIN_EPOCH,latest}
+      produced_by: make.build-image (docker buildx build --target base-tools)
+      cached_or_published: ghcr (push-image)
+      evidence: Makefile:277-283,345-350
+    - name: builder image (monolith-builder)
+      path_or_ref: local tag monolith-builder ; ghcr.io/tuckermclean/monolith-builder:{REGISTRY_TAG,TOOLCHAIN_EPOCH,latest}
+      produced_by: docker commit of container monolith-crossdev-build after crossdev; label base-tools-hash=COMBINED_HASH
+      cached_or_published: ghcr (push-image); skip-rebuild keyed on label equality
+      evidence: Makefile:295-325,339-344
+    - name: portage snapshot tarball + gpgsig + md5sum
+      path_or_ref: output/portage-mirror/snapshots/gentoo-$BUILD_EPOCH.tar.xz{,.gpgsig,.md5sum}
+      produced_by: script.sync-portage fetch-only (host) - from s3://$S3_BUCKET/portage-snapshots/ then https://distfiles.gentoo.org/snapshots
+      cached_or_published: S3 (archived back after upstream fetch); local dir output/portage-mirror (bind-mounted ro-ish at /var/monolith-portage-mirror)
+      evidence: scripts/sync-portage.sh:25-73; Makefile:380-389
+    - name: runtime portage tree
+      path_or_ref: docker volume monolith-repos mounted at /var/db/repos
+      produced_by: script.sync-portage webrsync-local (emerge-webrsync, GPG verified by portage, GENTOO_MIRRORS=http://127.0.0.1:8899 only)
+      cached_or_published: docker volume only (CI behaviour is in workflows area)
+      evidence: scripts/sync-portage.sh:80-99; Makefile:79-81
+    - name: distfiles
+      path_or_ref: docker volume monolith-distfiles at /var/cache/distfiles
+      produced_by: portage fetches during emerge (source tarballs, kernel tarball linux-$KVER.tar.xz)
+      cached_or_published: docker volume only; Dockerfile `rm -rf /var/cache/distfiles/*` after each emerge layer
+      evidence: Makefile:80,101
+    - name: binary packages (gpkg)
+      path_or_ref: output/packages/<CAT>/<PN>/<PN>-<PVR>-<BUILDID>.gpkg.tar (PKGDIR=/output/packages, BINPKG_FORMAT=gpkg, BINPKG_COMPRESS=xz) + Packages index
+      produced_by: script.build-packages (--buildpkg, and quickpkg of preinstalled sysroot pkgs)
+      cached_or_published: GHCR OCI artifact ghcr.io/<owner>/monolith-binpkgs:<BUILD_EPOCH> via script.binpkg-store pull/prune/pack/push (previously S3 packages/<epoch>/); make restore-cache still does aws s3 sync s3://$S3_BUCKET/packages/$BUILD_EPOCH/
+      evidence: configs/portage/make.conf:44,58-62; scripts/binpkg-store.sh; Makefile:368-377
+    - name: savedconfig marker
+      path_or_ref: output/packages/sys-apps/busybox/.savedconfig.sha256
+      produced_by: script.savedconfig-cache mark
+      cached_or_published: travels inside binpkgs tarball
+      evidence: scripts/savedconfig-cache.sh:73,92
+    - name: build logs and failed list
+      path_or_ref: output/logs/emerge-parallel.log, output/logs/*.build.log, output/.failed-packages, output/.built-packages, output/portage-logs/ (LOGS_MOUNT /var/log/portage)
+      produced_by: script.build-packages
+      cached_or_published: local only (workflows upload)
+      evidence: scripts/build-packages.sh:18-22,236,270-280
+    - name: kernel bzImage
+      path_or_ref: output/vmlinuz (unversioned; copied from /usr/i486-linux-musl/boot/vmlinuz via cp -L)
+      produced_by: script.build-packages after emerge (package sys-kernel/monolith-kernel, ebuild in overlay)
+      cached_or_published: build-iso prefers output/themonolith-$BUILD_VERSION.vmlinuz if present (CI renames), else output/vmlinuz
+      evidence: scripts/build-packages.sh:326-338; scripts/build-iso.sh:22-29
+    - name: sysroot export
+      path_or_ref: output/sysroot/ (rsync of /usr/i486-linux-musl/ minus headers/pkgconfig/crt/libc.a etc)
+      produced_by: script.build-packages (inline) OR script.extract-packages (emerge --usepkgonly alt path)
+      cached_or_published: local; consumed by build-rootfs, build-initrd, attestation
+      evidence: scripts/build-packages.sh:340-380; scripts/extract-packages.sh:109-135
+    - name: resolved kernel config
+      path_or_ref: package content /usr/share/monolith-kernel/resolved-kernel.config.gz in sysroot -> gunzipped to configs/kernel.config (REPO working tree via rw CONFIGS_MOUNT)
+      produced_by: script.build-packages (hard-fails if missing)
+      cached_or_published: consumed by script.verify-resolved-i2c-off; excluded from squashfs by rsync --exclude
+      evidence: scripts/build-packages.sh:423-432; scripts/build-rootfs.sh:72
+    - name: rootfs-build tree
+      path_or_ref: /rootfs-build inside container (ephemeral)
+      produced_by: script.build-rootfs
+      cached_or_published: none
+    - name: squashfs
+      path_or_ref: output/themonolith-$BUILD_VERSION.squashfs (gzip, 128K blocks, -no-xattrs, -noappend)
+      produced_by: script.build-rootfs
+      evidence: scripts/build-rootfs.sh:723-729
+    - name: initrd
+      path_or_ref: output/themonolith-$BUILD_VERSION.initrd (cpio newc | gzip -9 -n)
+      produced_by: script.build-initrd
+      evidence: scripts/build-initrd.sh:353
+    - name: ISO
+      path_or_ref: output/themonolith-$BUILD_VERSION.iso (ISO inner names boot/vmlinuz, boot/initrd.img, rootfs.squashfs, isolinux/*, EFI/BOOT/BOOTX64.EFI, boot/efi.img, boot/grub/bootbg.png; volume label MONOLITH)
+      produced_by: script.build-iso
+      evidence: scripts/build-iso.sh:97-100,350-357,397-421
+  run_order_for_make_all: "all: build-image sync-portage build-packages build-rootfs iso (Makefile:445). build-rootfs target runs build-rootfs.sh then build-initrd.sh as two separate docker runs (Makefile:435-437). `extract` is NOT in `all`."
+
+pins:
+  - thing: TOOLCHAIN_EPOCH (stage3 tag + baked toolchain portage tree)
+    value: "20260810"
+    evidence: Dockerfile:28
+    bumped_by: scripts/update-build-pins.sh update-toolchain [YYYYMMDD] (workflow toolchain-bump.yml); NOT exposed as a make target
+  - thing: BUILD_EPOCH (runtime portage snapshot; drives default BUILD_VERSION and SOURCE_DATE_EPOCH)
+    value: "20260811"
+    evidence: Dockerfile:29
+    bumped_by: scripts/update-build-pins.sh update [YYYYMMDD] (make update-build-pins; workflow pin-bump.yml). Makefile reads it with grep '^ARG BUILD_EPOCH=' Dockerfile (Makefile:23)
+  - thing: ENV SOURCE_DATE_EPOCH (= BUILD_EPOCH midnight UTC)
+    value: "1786406400 (verified = 2026-08-11T00:00:00Z)"
+    evidence: Dockerfile:37
+    bumped_by: update-build-pins.sh cmd_update via sed + date_to_epoch (lines 'ENV SOURCE_DATE_EPOCH=')
+  - thing: versions.lock (per world package category/pkg:version:slot)
+    value: "e.g. sys-kernel/monolith-kernel:6.12.80-r8:0 ; sys-devel/binutils:2.46.1:2.46"
+    evidence: configs/portage/versions.lock; consumed scripts/build-packages.sh:160-166 (atom =pkg-VERSION), extract-packages.sh:56-72, Makefile:31,39
+    bumped_by: scripts/update-versions.sh update (make update-versions; depends on sync-portage); workflow regen-pins.yml
+  - thing: crossdev.lock (musl, gcc)
+    value: "sys-libs/musl:1.2.6:0 ; sys-devel/gcc:15.3.1_p20260717:15 (header says regenerated from stage3 20260727, i.e. lags TOOLCHAIN_EPOCH 20260810)"
+    evidence: configs/portage/crossdev.lock:1-9; Makefile:37-38
+    bumped_by: update-build-pins.sh update_crossdev_lock, only called from update-toolchain, queries local monolith-builder image (one epoch behind)
+  - thing: Rust nightly
+    value: nightly-2026-07-15 (rustup, --profile minimal, component rust-src); must match rl144 ebuild RUST_NIGHTLY
+    evidence: Dockerfile:167-170 ; comment Dockerfile:163-164
+    bumped_by: manual edit
+  - thing: syft / grype
+    value: "UNPINNED - installed from https://raw.githubusercontent.com/anchore/<tool>/main/install.sh (main branch, latest release)"
+    evidence: Dockerfile:128-142
+  - thing: host build tools (crossdev, gentoolkit, eix, flex, bison, bc, elfutils, syslinux, grub, libisoburn, mtools, dosfstools, squashfs-tools, xz, rsync, file, git, cpio, cmake, mandoc, ncurses, pyyaml, xcb-proto)
+    value: "no atom pins; implicitly pinned by TOOLCHAIN_EPOCH portage snapshot"
+    evidence: Dockerfile:76-122,128,153
+  - thing: GRUB version
+    value: "NOT pinned in code; build-iso.sh comment claims pinned to GRUB 2.12 but it is whatever sys-boot/grub the TOOLCHAIN_EPOCH tree gives (GRUB_PLATFORMS efi-32 efi-64)"
+    evidence: scripts/build-iso.sh:264-267,503 vs Dockerfile:99
+  - thing: crossdev flags (--stable, binutils from versions.lock, headers = kernel major.minor from versions.lock)
+    value: derived from versions.lock KERNEL_VERSION
+    evidence: Makefile:36-40,305-310
+  - thing: builder image registry tag
+    value: "REGISTRY_TAG = $TOOLCHAIN_EPOCH-<first 12 hex of sha256 of Dockerfile minus 'ARG BUILD_EPOCH=' and 'ENV SOURCE_DATE_EPOCH=' lines>"
+    evidence: Makefile:63-64
+  - thing: base-tools-hash image label (skip-crossdev cache key)
+    value: "sha256( sha256(json RootFS.Layers of base-tools) : sha256(crossdev.lock) : binutils_ver : headers_ver )"
+    evidence: Makefile:284-286
+  - thing: portage snapshot GPG key (verification delegated to emerge-webrsync)
+    value: DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D (documented in comment only)
+    evidence: Dockerfile:68-69
+  - thing: GHCR namespace / registry
+    value: ghcr.io/tuckermclean (REGISTRY ?=) ; binpkg repo name monolith-binpkgs tagged by BUILD_EPOCH
+    evidence: Makefile:47 ; scripts/binpkg-store.sh:87
+  - thing: S3 bucket default
+    value: themonolith
+    evidence: Makefile:67
+  - thing: gpkg binpkg format
+    value: BINPKG_FORMAT=gpkg, BINPKG_COMPRESS=xz
+    evidence: configs/portage/make.conf:59,62
+
+components:
+  # ---------------------------------------------------------------- MAKE
+  - id: make.build-image
+    kind: make-target
+    path: Makefile
+    purpose: Obtain builder image monolith-builder - pull from GHCR if present else build base-tools via buildx, run crossdev in a named container, docker commit.
+    prerequisites: [ensure-dirs]
+    invokes: [docker.base-tools]
+    invoked_by: [make.push-image, make.all, make.bump-pins, wf.build]
+    inputs:
+      - {what: "ghcr image $(REGISTRY_IMAGE):$(REGISTRY_TAG) and -base-tools twin", from: ext.ghcr, evidence: "Makefile:269-272"}
+      - {what: "Dockerfile, configs/portage/crossdev.lock, versions.lock (binutils, kernel major.minor)", from: repo, evidence: "Makefile:28-40,284-286"}
+      - {what: "gentoo/stage3 tag + upstream portage snapshot (emerge-webrsync in Dockerfile)", from: "ext.dockerhub, ext.gentoo-distfiles", evidence: "Dockerfile:30,74"}
+    outputs:
+      - {what: "local images monolith-builder-base-tools and monolith-builder", to: local docker, evidence: "Makefile:282,321"}
+      - {what: "crossdev logs", to: "output/portage-logs/ via LOGS_MOUNT", evidence: "Makefile:296"}
+    docker_flags: "buildx build --target base-tools --cache-from [ghcr base-tools if REGISTRY] --cache-from local base-tools --cache-to type=inline (Makefile:277-283); crossdev step is `docker run --name monolith-crossdev-build` with ONLY the portage-logs mount: no configs/distfiles/portage volumes, no --rm, no --privileged (Makefile:295-297)"
+    secrets: []
+    external: [ext.ghcr, ext.dockerhub, ext.gentoo-distfiles, ext.gentoo-mirrors, ext.rustup, ext.github-api]
+    pins: [{thing: TOOLCHAIN_EPOCH, value: "20260810", evidence: "Makefile:28"}, {thing: crossdev musl/gcc/binutils/headers, value: from lock files, evidence: "Makefile:303-309"}]
+    env: [REGISTRY (default ghcr.io/tuckermclean), TOOLCHAIN_EPOCH, BUILD_EPOCH, CROSS_TARGET (image ENV)]
+    s3_coupling: none
+    notes:
+      - "Registry pull failure is swallowed: `docker pull ... 2>/dev/null` falls through to a LOCAL BUILD with only an echo (Makefile:269,275). Because the TOOLCHAIN_EPOCH snapshot has been pruned upstream, that local build now fails (AGENTS.md time-bomb) - so a GHCR miss turns into a hard failure with a misleading message."
+      - "The -base-tools pull is `|| true` best effort (Makefile:271-272); if it fails the later local-build path uses stale/absent BASE_TOOLS_IMAGE."
+      - "Crossdev script inlines `emerge --update --newuse cross-$CROSS_TARGET/gcc` after crossdev, then rm distfiles and mkdir of /usr/$CROSS_TARGET/etc/portage/{package.use,package.accept_keywords,package.mask,package.env,env} and /build /configs /output /initrd (Makefile:311-315)."
+      - "Mask line `=cross-%s/gcc-14.4.9999` is stale (gcc pin is 15.x) and only blocks a 14.x live ebuild (Makefile:299-301). musl-9999 and binutils-9999 live ebuilds masked; musl $(CROSS_MUSL_VER)* explicitly unmasked."
+      - "Skip-rebuild cache key (base-tools-hash label) does not include the inline bash -c crossdev script text, so editing the crossdev command in the Makefile does not trigger a rebuild (Makefile:284-290)."
+      - "docker commit of a container is not reproducible (timestamps, layer digests) so image identity = label hash, not content."
+      - "Final image sets ENV BUILD_DIR=/build CONFIGS_DIR=/configs OUTPUT_DIR=/output via --change (Makefile:317-319); build-packages.sh later `unset BUILD_DIR` because multilib-minimal.eclass breaks on it."
+      - "After docker commit the committed image has NO ENTRYPOINT/CMD change; helper stages rely on /scripts bind mounts at runtime."
+    rebuild_notes:
+      - "Keep the two-pin split (toolchain vs runtime tree) and the registry tag keyed on everything-but-runtime-pins."
+      - "Replace docker-commit-of-crossdev with a proper multi-stage Dockerfile if possible; the commit trick exists only to capture portage logs on the host."
+      - "Needs a mirrored toolchain snapshot (or a digest-pinned prebuilt builder) - upstream snapshot is gone."
+
+  - id: make.push-image
+    kind: make-target
+    path: Makefile
+    purpose: Tag and push monolith-builder and monolith-builder-base-tools to GHCR as :REGISTRY_TAG, :TOOLCHAIN_EPOCH, :latest.
+    prerequisites: [build-image]
+    invokes: [make.build-image]
+    invoked_by: [wf.build]
+    inputs: [{what: local images, from: make.build-image, evidence: "Makefile:339-347"}]
+    outputs: [{what: 6 tags (3 per image)", to: ext.ghcr, evidence: "Makefile:342-350"}]
+    docker_flags: none (docker tag/push; login done by caller)
+    secrets: []
+    external: [ext.ghcr]
+    s3_coupling: none
+    notes:
+      - "Overwrites floating tags :latest and :TOOLCHAIN_EPOCH every push; only :REGISTRY_TAG is content-addressed by Dockerfile hash. :TOOLCHAIN_EPOCH is mutable if Dockerfile changes within the same toolchain epoch."
+      - "Errors when REGISTRY empty (Makefile:335-338)."
+      - "ghcr-gc.sh only GCs monolith-binpkgs, not monolith-builder tags: builder images accumulate."
+    rebuild_notes: ["Prefer digest references for consumers; keep a human tag for browsing."]
+
+  - id: make.pull-image
+    kind: make-target
+    path: Makefile
+    purpose: Pull builder image by REGISTRY_TAG and retag locally as monolith-builder (+ base-tools best effort).
+    prerequisites: []
+    invoked_by: [make.restore-cache, wf.build, wf.attestation-jobs]
+    outputs: [{what: local tag monolith-builder, to: docker, evidence: "Makefile:359-362"}]
+    external: [ext.ghcr]
+    s3_coupling: none
+    notes: ["Hard failure if image tag missing (this is why REGISTRY_TAG excludes BUILD_EPOCH; Makefile:50-62 comment)."]
+
+  - id: make.print-registry-tag
+    kind: make-target
+    path: Makefile
+    purpose: Echo REGISTRY_TAG so workflows do not re-derive the Dockerfile hash.
+    evidence: Makefile:330-331
+    s3_coupling: none
+
+  - id: make.restore-cache
+    kind: make-target
+    path: Makefile
+    purpose: Local equivalent of CI cache restore - pull image, sync portage, aws s3 sync binpkgs.
+    prerequisites: [ensure-dirs, ensure-volume]
+    invokes: [make.pull-image, make.sync-portage]
+    inputs: [{what: "s3://$S3_BUCKET/packages/$BUILD_EPOCH/", from: ext.aws-s3, evidence: "Makefile:377"}]
+    outputs: [{what: output/packages/, to: local, evidence: "Makefile:377"}]
+    external: [ext.aws-s3, ext.ghcr]
+    s3_coupling: hard
+    notes:
+      - "Dead: binpkg store moved from S3 to GHCR (scripts/binpkg-store.sh) but this target was not updated; it uses --no-sign-request (public-read bucket) so would fail on a disabled account."
+      - "Comment says 'AWS credentials in env' but command is anonymous (Makefile:366 vs 377)."
+    rebuild_notes: ["Replace with binpkg-store.sh pull; drop S3_BUCKET."]
+
+  - id: make.sync-portage
+    kind: make-target
+    path: Makefile
+    purpose: Two-step runtime portage sync - host fetch of the pinned snapshot into output/portage-mirror, then in-container emerge-webrsync from a local http server.
+    prerequisites: [ensure-volume, ensure-dirs]
+    invokes: [script.sync-portage]
+    invoked_by: [make.update-versions, make.restore-cache, make.all, wf.build, wf.pin-bump]
+    inputs:
+      - {what: "gentoo-$BUILD_EPOCH.tar.xz(.gpgsig)", from: "ext.aws-s3 then ext.gentoo-distfiles (via script)", evidence: "Makefile:386"}
+    outputs:
+      - {what: "volume monolith-repos populated", to: docker volume, evidence: "Makefile:388-389"}
+    docker_flags: "DOCKER_RUN (all standard mounts) + -v output/portage-mirror:/var/monolith-portage-mirror (read-write; SNAP_MOUNT Makefile:381) + -e BUILD_EPOCH -e SYNC_MIRROR_DIR. Step 1 runs ON THE HOST with `sh scripts/sync-portage.sh fetch-only` (needs aws cli + wget on host)."
+    env: [BUILD_EPOCH, S3_BUCKET (exported to host script only via environment; NOT passed with -e into the container), SYNC_MIRROR_DIR]
+    secrets: [AWS credentials implicit (secret.AWS_* in workflows area)]
+    external: [ext.aws-s3, ext.gentoo-distfiles]
+    s3_coupling: hard
+    notes:
+      - "Hard-coupled for the pinned epoch in practice: S3 is the only place the pinned snapshot is still available because upstream prunes old snapshots; the upstream fallback only works for a fresh/recent epoch."
+      - "S3_BUCKET=themonolith default comes from Makefile:67 and is exported to child processes only if the Make variable is exported; Make does NOT export it by default, so on a developer host fetch-only sees S3_BUCKET only if it is set in the caller environment (Makefile:386 passes only SYNC_MIRROR_DIR and BUILD_EPOCH explicitly). CI sets it via env."
+    rebuild_notes:
+      - "Keep the idea: pin a snapshot by content (store it where you control), serve over loopback http so emerge-webrsync cannot drift to upstream."
+      - "Mirror target must be something other than S3."
+
+  - id: make.build-packages
+    kind: make-target
+    path: Makefile
+    purpose: Run scripts/build-packages.sh in the builder container.
+    prerequisites: [ensure-volume, ensure-dirs]
+    invokes: [script.build-packages]
+    invoked_by: [make.all, wf.build]
+    docker_flags: "DOCKER_RUN: --rm, -v configs:/configs (rw), -v output:/output (rw), -v scripts:/scripts:ro, -v rootfs:/rootfs:ro, -v output/portage-logs:/var/log/portage, -v monolith-build:/build, -v monolith-repos:/var/db/repos, -v monolith-distfiles:/var/cache/distfiles, -e JOBS -e LOAD_AVG -e MONOLITH_USEPKG (Makefile:93-116,76). No --privileged, no tty."
+    env: [JOBS (default nproc), LOAD_AVG (default nproc), MONOLITH_USEPKG (default y)]
+    s3_coupling: none
+    notes: ["build-packages-resume is identical but passes --resume (Makefile:397-399)."]
+
+  - id: make.build-packages-resume
+    kind: make-target
+    path: Makefile
+    purpose: build-packages.sh --resume (skip entries listed in output/.built-packages).
+    invokes: [script.build-packages]
+    s3_coupling: none
+    evidence: Makefile:397-399
+
+  - id: make.extract
+    kind: make-target
+    path: Makefile
+    purpose: Install binpkgs with emerge --usepkgonly into the sysroot and rsync to output/sysroot (alternative to the inline export done by build-packages).
+    invokes: [script.extract-packages]
+    docker_flags: "DOCKER_RUN + -e BUILD_VERSION"
+    s3_coupling: none
+    notes: ["Not in `all` and not called by build-rootfs; help text says 'Alias for build-rootfs install step only' which is wrong (Makefile:181 vs 402-404)."]
+
+  - id: make.menuconfig-kernel
+    kind: make-target
+    path: Makefile
+    purpose: Interactive kernel menuconfig outside portage; writes configs/kernel.config.
+    docker_flags: "DOCKER_RUN_IT (-it) + -e TERM"
+    inputs: [{what: "/var/cache/distfiles/linux-$KVER.tar.xz + overlay patch linux-<major.minor>-gcc15-std-gnu11.patch", from: "distfiles volume (must already be populated)", evidence: "Makefile:414-418"}]
+    outputs: [{what: configs/kernel.config (overwrites the repo file)", to: repo, evidence: "Makefile:423"}]
+    s3_coupling: none
+    notes:
+      - "Uses ARCH=i386 and no CROSS_COMPILE; the same file configs/kernel.config is ALSO overwritten by every build-packages run (resolved config export) - two writers of one tracked file."
+    rebuild_notes: ["Decide one canonical source for the kernel config: the pinned input vs the resolved output are conflated at configs/kernel.config."]
+
+  - id: make.menuconfig-busybox
+    kind: make-target
+    path: Makefile
+    purpose: i486-linux-musl-emerge --config sys-apps/busybox (saves to savedconfig).
+    docker_flags: DOCKER_RUN_IT
+    s3_coupling: none
+    evidence: Makefile:426-428
+
+  - id: make.build-rootfs
+    kind: make-target
+    path: Makefile
+    purpose: Two sequential docker runs - build-rootfs.sh then build-initrd.sh.
+    prerequisites: [ensure-volume, ensure-dirs]
+    invokes: [script.build-rootfs, script.build-initrd]
+    docker_flags: "DOCKER_RUN + -e BUILD_VERSION (VERSION_ENV) for both runs"
+    env: [BUILD_VERSION (default BUILD_EPOCH)]
+    s3_coupling: none
+    notes: ["Does not depend on build-packages; relies on output/sysroot already existing."]
+    evidence: Makefile:433-437
+
+  - id: make.iso
+    kind: make-target
+    path: Makefile
+    purpose: Run build-iso.sh.
+    prerequisites: [ensure-dirs]
+    invokes: [script.build-iso]
+    docker_flags: "DOCKER_RUN + -e BUILD_VERSION"
+    s3_coupling: none
+    evidence: Makefile:440-442
+
+  - id: make.all
+    kind: make-target
+    path: Makefile
+    purpose: build-image sync-portage build-packages build-rootfs iso
+    s3_coupling: hard
+    notes: ["Hard via sync-portage for the pinned epoch."]
+    evidence: Makefile:445
+
+  - id: make.attestation
+    kind: make-target
+    path: Makefile
+    purpose: Run scripts/attestation.sh (SBOM+license+CVE) in container with Grype DB volume and GITHUB_* env.
+    invokes: [script.attestation]
+    docker_flags: "DOCKER_RUN_ATTEST = DOCKER_RUN + GRYPE_MOUNT (-v monolith-grype-db:/root/.cache/grype, or bind of $GRYPE_CACHE_DIR in CI) + GITHUB_ENV list: GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_REPOSITORY_ID GITHUB_REPOSITORY_OWNER_ID GITHUB_REPOSITORY_VISIBILITY GITHUB_REF GITHUB_SHA GITHUB_RUN_ID GITHUB_RUN_NUMBER GITHUB_RUN_ATTEMPT GITHUB_EVENT_NAME GITHUB_WORKFLOW_REF GITHUB_WORKFLOW_SHA GITHUB_ACTOR GITHUB_ACTOR_ID BUILD_EPOCH BUILD_STARTED_ON STAGE3_DIGEST S3_BUCKET (Makefile:134-153)"
+    env: [GRYPE_CACHE_DIR, ATTEST_INPUT_DIR, BUILD_VERSION, STAGE3_DIGEST, BUILD_STARTED_ON, S3_BUCKET]
+    s3_coupling: soft
+    notes:
+      - "S3_BUCKET is forwarded into attestation container (for SBOM externalReferences/distribution URLs presumably; detail belongs to supplychain area)."
+      - "ISO path hardcoded /output/themonolith-$(BUILD_VERSION).iso."
+    evidence: Makefile:450-459
+
+  - id: make.attest-builder
+    kind: make-target
+    path: Makefile
+    purpose: attestation + --include-builder with --builder-digest from `docker inspect --format={{.Id}} monolith-builder` (local image ID, not registry digest).
+    invokes: [script.attestation]
+    s3_coupling: soft
+    notes: ["`|| echo unknown` silently records builder digest as 'unknown' if inspect fails (Makefile:475)."]
+    evidence: Makefile:464-475
+
+  - id: make.dashboard
+    kind: make-target
+    path: Makefile
+    purpose: generate-dashboard.py builds builds-index.json into output/web; copy web/ static assets.
+    invokes: [script.generate-dashboard]
+    docker_flags: "DOCKER_RUN_ATTEST + -v $ATTEST_INPUT_DIR:/attest-input:ro; runs python3 /scripts/generate-dashboard.py in builder"
+    s3_coupling: soft
+    notes: ["CI pre-populates ATTEST_INPUT_DIR from S3 history (Makefile:478-481 comment) - the history is S3-coupled, the target itself is not."]
+    evidence: Makefile:483-492
+
+  - id: make.grype-db-update
+    kind: make-target
+    path: Makefile
+    purpose: grype db update into monolith-grype-db volume.
+    external: [ext.grype-db]
+    s3_coupling: none
+    evidence: Makefile:495-497
+
+  - id: make.test
+    kind: make-target
+    path: Makefile
+    purpose: Manual host-side QEMU BIOS boot (qemu-system-i386 -cpu 486 -m 64M -nographic serial mon:stdio). Not the CI oracle (scripts/boot-test.py).
+    s3_coupling: none
+    evidence: Makefile:500-511
+
+  - id: make.test-uefi
+    kind: make-target
+    path: Makefile
+    purpose: Manual host QEMU UEFI boot with OVMF_CODE.fd auto-detected from 3 paths, -m 512M.
+    s3_coupling: none
+    evidence: Makefile:517-536
+
+  - id: make.check-updates
+    kind: make-target
+    path: Makefile
+    purpose: update-versions.sh check inside container.
+    invokes: [script.update-versions]
+    docker_flags: DOCKER_RUN
+    s3_coupling: none
+    notes: ["Does not depend on sync-portage (unlike update-versions) so may compare against a stale tree."]
+    evidence: Makefile:539-541
+
+  - id: make.update-versions
+    kind: make-target
+    path: Makefile
+    purpose: Regenerate configs/portage/versions.lock via portageq in the builder image against the BUILD_EPOCH tree.
+    prerequisites: [ensure-volume, ensure-dirs, sync-portage]
+    invokes: [make.sync-portage, script.update-versions]
+    s3_coupling: hard
+    notes: ["Inherits sync-portage's S3 dependence."]
+    evidence: Makefile:551-553
+
+  - id: make.update-build-pins
+    kind: make-target
+    path: Makefile
+    purpose: Host-run scripts/update-build-pins.sh update (bump BUILD_EPOCH + SOURCE_DATE_EPOCH to latest stage3 tag that also has a portage snapshot).
+    invokes: [script.update-build-pins]
+    s3_coupling: none
+    notes: ["No make target for update-toolchain or check; workflows call the script directly."]
+    evidence: Makefile:556-558
+
+  - id: make.update-all
+    kind: make-target
+    path: Makefile
+    purpose: update-build-pins then update-versions.
+    prerequisites: [update-build-pins, update-versions]
+    s3_coupling: hard
+    evidence: Makefile:561
+
+  - id: make.bump-pins
+    kind: make-target
+    path: Makefile
+    purpose: update-build-pins build-image update-versions.
+    prerequisites: [update-build-pins, build-image, update-versions]
+    s3_coupling: hard
+    notes: ["Make evaluates BUILD_EPOCH/TOOLCHAIN_EPOCH via $(shell grep Dockerfile) once at parse time, so after update-build-pins edits the Dockerfile in the same make invocation, later prerequisites (update-versions -> sync-portage) still see the OLD BUILD_EPOCH. The comment claims it regenerates against the new epoch but the variable is not re-read within one run (Makefile:23,579). Needs verification; workflows may invoke targets in separate make calls."]
+    evidence: Makefile:579-582
+
+  - id: make.list-packages
+    kind: make-target
+    path: Makefile
+    purpose: grep world file.
+    s3_coupling: none
+    evidence: Makefile:585-587
+
+  - id: make.show-failed
+    kind: make-target
+    path: Makefile
+    purpose: cat output/.failed-packages.
+    s3_coupling: none
+    evidence: Makefile:590-594
+
+  - id: make.regen-manifest
+    kind: make-target
+    path: Makefile
+    purpose: ebuild ... manifest for monolith-kernel-$(KERNEL_VERSION).ebuild
+    docker_flags: DOCKER_RUN_IT
+    s3_coupling: none
+    notes: ["Only regenerates kernel Manifest; other overlay ebuilds are not handled."]
+    evidence: Makefile:597-599
+
+  - id: make.shell
+    kind: make-target
+    path: Makefile
+    purpose: Interactive bash in builder with all mounts.
+    s3_coupling: none
+    evidence: Makefile:602-604
+
+  - id: make.clean
+    kind: make-target
+    path: Makefile
+    purpose: rm -rf output/* (also clean-build removes volume monolith-build; clean-all removes monolith-repos, -distfiles, -grype-db and image monolith-builder). Errors suppressed with 2>/dev/null || true.
+    s3_coupling: none
+    evidence: Makefile:607-625
+
+  - id: make.ensure-dirs
+    kind: make-target
+    path: Makefile
+    purpose: mkdir output/{packages,logs,sysroot,portage-logs,attestation,dashboard,web}
+    evidence: Makefile:227-229
+    s3_coupling: none
+
+  - id: make.ensure-volume
+    kind: make-target
+    path: Makefile
+    purpose: Create docker volumes monolith-repos, monolith-distfiles, monolith-grype-db (or mkdir $GRYPE_CACHE_DIR). monolith-build volume is NOT created here (docker run creates it implicitly).
+    evidence: Makefile:232-245
+    s3_coupling: none
+
+  - id: make.config-variables
+    kind: config
+    path: Makefile
+    purpose: Variables other components depend on.
+    pins:
+      - {thing: IMAGE_NAME, value: monolith-builder, evidence: "Makefile:16"}
+      - {thing: volumes, value: "monolith-build:/build, monolith-repos:/var/db/repos, monolith-distfiles:/var/cache/distfiles, monolith-grype-db:/root/.cache/grype", evidence: "Makefile:79-103"}
+      - {thing: bind mounts, value: "configs:/configs (rw!), output:/output (rw), scripts:/scripts:ro, rootfs:/rootfs:ro, output/portage-logs:/var/log/portage", evidence: "Makefile:93-109"}
+    env: [REGISTRY, S3_BUCKET, JOBS, LOAD_AVG, MONOLITH_USEPKG, BUILD_VERSION, GRYPE_CACHE_DIR, ATTEST_INPUT_DIR, OVMF_CODE]
+    s3_coupling: soft
+    notes:
+      - "Makefile has no .SECONDEXPANSION and no GNUmake-isms beyond $(shell); SHELL is /bin/bash. PROJECT_DIR := $(shell pwd) - breaks if invoked with make -C from elsewhere? (pwd is the invocation dir, not the Makefile dir) (Makefile:19)."
+      - "The monolith-build volume mounted at /build is not used by any in-scope script except as BUILD_DIR env (build-rootfs defines BUILD_DIR default but never uses it)."
+      - "configs/ is mounted rw because build-packages.sh and menuconfig write back into it (configs/kernel.config)."
+
+  # ---------------------------------------------------------------- DOCKER
+  - id: docker.base-tools
+    kind: dockerfile-stage
+    path: Dockerfile
+    purpose: Only Dockerfile stage - stage3 + host tools + syft/grype + xcb-proto + rustup nightly + portage overlay/policy config. Crossdev is deliberately NOT here (done by `make build-image` via docker run so logs reach the host).
+    base_image: "gentoo/stage3:amd64-openrc-${TOOLCHAIN_EPOCH} (tag, not digest)"
+    inputs:
+      - {what: "stage3 image", from: ext.dockerhub, evidence: "Dockerfile:30"}
+      - {what: "portage snapshot via emerge-webrsync --revert=$TOOLCHAIN_EPOCH (upstream mirrors, GPG verified by portage)", from: "ext.gentoo-mirrors / ext.gentoo-distfiles", evidence: "Dockerfile:74"}
+      - {what: "distfiles for host tool emerges", from: ext.gentoo-mirrors, evidence: "Dockerfile:99-122,128,153"}
+      - {what: "syft + grype install.sh from anchore main branch, and the GitHub release assets it downloads", from: "ext.github-api (raw.githubusercontent.com + release API)", evidence: "Dockerfile:131-132"}
+      - {what: "rustup-init via https://sh.rustup.rs and nightly-2026-07-15 + rust-src", from: ext.rustup, evidence: "Dockerfile:168-170"}
+    outputs:
+      - {what: "image monolith-builder-base-tools (later extended by crossdev+docker commit)", to: "local/ghcr", evidence: "Makefile:282"}
+    network_fetching_runs:
+      - {line: "Dockerfile:74", what: "emerge-webrsync --revert=${TOOLCHAIN_EPOCH} (FAILS NOW: snapshot pruned upstream, not mirrored)"}
+      - {line: "Dockerfile:99-122", what: "emerge host tools (distfiles from gentoo mirrors)"}
+      - {line: "Dockerfile:128-142", what: "emerge dev-python/pyyaml; curl|sh anchore install.sh for syft and grype with 6 retries x 30s sleep"}
+      - {line: "Dockerfile:153", what: "emerge x11-base/xcb-proto"}
+      - {line: "Dockerfile:167-173", what: "curl|sh rustup, nightly-2026-07-15, chmod a+rX /opt/rustup /opt/cargo"}
+    env: [SOURCE_DATE_EPOCH=1786406400 (ENV, line 37), CROSS_TARGET=i486-linux-musl (39), CROSS_COMPILE=i486-linux-musl- (40), RUSTUP_HOME=/opt/rustup + PATH=/opt/cargo/bin:$PATH (165-166), ARG TOOLCHAIN_EPOCH=20260810, ARG BUILD_EPOCH=20260811]
+    pins:
+      - {thing: TOOLCHAIN_EPOCH, value: "20260810", evidence: "Dockerfile:28"}
+      - {thing: BUILD_EPOCH ARG (only used for ENV doc/hash; no layer depends on it)", value: "20260811", evidence: "Dockerfile:29"}
+      - {thing: SOURCE_DATE_EPOCH, value: "1786406400", evidence: "Dockerfile:37"}
+      - {thing: rust nightly, value: "nightly-2026-07-15", evidence: "Dockerfile:170"}
+    s3_coupling: none
+    notes:
+      - "Sanity RUN: gcc -m32 multilib check (needed for nethack DLB host tools via CFLAGS_FOR_BUILD=-m32) - fails build early (Dockerfile:56-64)."
+      - "TIME-BOMB: emerge-webrsync --revert=20260810 needs the dated snapshot from upstream; AGENTS.md says it was pruned and not mirrored, so the image cannot be rebuilt from scratch; pcf-fontname.py and build-rootfs.sh comments repeat this (scripts/pcf-fontname.py:3-5; scripts/build-rootfs.sh:100-103)."
+      - "Overlay/policy config RUN (Dockerfile:176-205): creates /var/db/repos/crossdev overlay (priority 10), repos.conf monolith overlay at /configs/overlay (priority 20), package.accept_keywords '*/* **' (crossdev-all) and 'sys-kernel/linux-live **', FEATURES += -strict, and /etc/portage/env/cross-gcc-static.conf with EXTRA_ECONF='--disable-shared --enable-static' mapped by package.env to cross-i486-linux-musl/gcc."
+      - "LIBATOMIC FIX: cross-gcc-static.conf sets EXTRA_ECONF to force libatomic.a (static) in the cross-gcc build because 'static-libs' is not a real USE flag on sys-devel/gcc (the old package.use line was a silent no-op). It is baked in base-tools so editing it changes Dockerfile hash -> REGISTRY_TAG -> rebuild (Dockerfile:190-205). The package.env line uses ${CROSS_TARGET} expanded at build time."
+      - "'*/* **' accept_keywords accepts live 9999 ebuilds in the host world; update-versions.sh and update-build-pins.sh temporarily rewrite it to '*/* ~*' to avoid pinning live ebuilds (scripts/update-versions.sh:55-62, update-build-pins.sh query_portage_version)."
+      - "Host tools are installed with `emerge --noreplace` of unpinned atoms; accepted hazard: moving target between TOOLCHAIN_EPOCH bumps is zero because tree is frozen, but upstream distfiles may vanish (mirror dependency)."
+      - "syft/grype are fetched from the moving `main` branch install script - not reproducible and the only supply-chain tool in the image not pinned by the snapshot. Retry loop is 6 x 30 s (Dockerfile:134-139)."
+      - "rustup is `curl | sh` without checksum; nightly pinned by date only."
+      - "Comment at Dockerfile:3-9 says 'No sources baked in' - true; but 'make build-image' help says 'includes crossdev toolchain' which only happens at make level."
+      - "No USER directive: image runs as root."
+      - "A stale comment claims host tools are pinned via BUILD_EPOCH in scripts/update-versions.sh:16-18; truth is TOOLCHAIN_EPOCH (see contradictions)."
+    rebuild_notes:
+      - "Preserve: gcc -m32 gate; libatomic EXTRA_ECONF; accept_keywords/overlay config; xcb-proto host tool; rustup nightly pin matching the rl144 ebuild; syft/grype in image."
+      - "Redesign: how the toolchain portage tree is obtained (mirror it yourself); pin syft/grype to version+sha256."
+      - "Drop: BUILD_EPOCH ARG if nothing in image uses it."
+
+  # ---------------------------------------------------------------- SCRIPTS
+  - id: script.sync-portage
+    kind: script
+    path: scripts/sync-portage.sh
+    purpose: Deterministic runtime portage-snapshot sync. fetch-only (host) copies pinned snapshot from S3 else upstream into a local mirror dir (archiving upstream->S3); webrsync-local (container) serves mirror on 127.0.0.1:8899 and runs emerge-webrsync --revert=$BUILD_EPOCH with GENTOO_MIRRORS pointed at it only.
+    triggers: [called by make.sync-portage; wf.pin-bump calls `fetch-only` (pin-bump.yml:200)]
+    invokes: []
+    invoked_by: [make.sync-portage, wf.pin-bump, wf.build]
+    modes: ["fetch-only", "webrsync-local", "default live (fetch + serve + webrsync; builder-image only)", "--source-only/sourced for tests"]
+    inputs:
+      - {what: "gentoo-$BUILD_EPOCH.tar.xz (required), .gpgsig (required), .md5sum (optional)", from: "ext.aws-s3 s3://$S3_BUCKET/portage-snapshots/ (aws s3 cp, signed creds) then ext.gentoo-distfiles https://distfiles.gentoo.org/snapshots", evidence: "scripts/sync-portage.sh:21-22,33,37,65-73"}
+    outputs:
+      - {what: "$SYNC_MIRROR_DIR/snapshots/<file>", to: "output/portage-mirror (host) / /var/monolith-portage-mirror (container)", evidence: "scripts/sync-portage.sh:31,67"}
+      - {what: "archive copy of upstream snapshot", to: "s3://$S3_BUCKET/portage-snapshots/", evidence: "scripts/sync-portage.sh:44"}
+      - {what: "portage tree in monolith-repos volume", to: docker volume, evidence: "scripts/sync-portage.sh:98"}
+    secrets: [AWS credentials (not named in script)]
+    external: [ext.aws-s3, ext.gentoo-distfiles]
+    pins: [{thing: BUILD_EPOCH, value: "required env, no default", evidence: "scripts/sync-portage.sh:66,81"}, {thing: SYNC_HTTP_PORT, value: "8899", evidence: "scripts/sync-portage.sh:23"}]
+    env: [SYNC_MIRROR_DIR (/var/monolith-portage-mirror), SYNC_UPSTREAM (https://distfiles.gentoo.org/snapshots), SYNC_S3_PREFIX (portage-snapshots), SYNC_HTTP_PORT (8899), S3_BUCKET (empty = skip S3), BUILD_EPOCH]
+    s3_coupling: hard
+    s3_coupling_detail: >
+      Code-level it is soft: S3 is skipped if S3_BUCKET is empty and upstream is a fallback (lines 33, 37, 43). In practice it is HARD for the pinned epoch:
+      upstream prunes old gentoo-DATE snapshots, so a build of an epoch that was never archived into S3 (or whose S3 copy is gone) hits FATAL
+      'unrecoverable' (lines 53-56). The archive-back step (lines 39-49) is what created the pruning safety net and it only warns (::warning::) on failure.
+    notes:
+      - "S3 read uses `aws s3 cp ... >/dev/null 2>&1`: ANY S3 error (auth, network, missing key) is silently treated as a miss and falls to upstream (line 33). Auth failures on a disabled account would look like 'not in S3' and then possibly succeed from upstream, quietly NOT archiving. Failed archive is non-fatal (line 47)."
+      - "Why it exists: emerge-webrsync cannot fetch file:// and silently falls back to distfiles.gentoo.org whose gentoo-DATE tarball drifts, making trees non-deterministic and invalidating all binpkgs (header comment lines 8-17). Local http + NO upstream makes a missing pin fail loud."
+      - "Verification trust: relies on emerge-webrsync's own GPG check of .gpgsig; the .md5sum is optional. Nothing in this script verifies the tarball hash against any committed digest, so a poisoned S3 object signed correctly is the only check (it must carry a valid Gentoo-signed gpgsig)."
+      - "python3 -m http.server is started in background with stdout/stderr discarded (line 83); readiness poll 100 x 0.1 s; trap kills it on exit (line 86). Port collision would be silent until the poll fails."
+      - "Header says 'DETERMINISTIC' - yes by construction, given same tarball bytes."
+      - "Runs on the HOST in fetch-only mode: needs aws cli and wget installed on host (CI runner has both)."
+      - "sourced-detection via ${0##*/} basename (lines 106-112), tested by scripts/tests/sync-portage.test.sh (passes)."
+    rebuild_notes:
+      - "Keep: pinned snapshot served over loopback http with no upstream; GPG verify via emerge-webrsync; fail-loud if absent."
+      - "Replace S3 with another object store (GHCR OCI artifact like binpkgs would match existing pattern) or commit the snapshot digest and fetch by digest."
+      - "Tests (sync-portage.test.sh) are the oracle for fetch ordering and webrsync invocation."
+
+  - id: script.build-packages
+    kind: script
+    path: scripts/build-packages.sh
+    purpose: Cross-compile every world package in ONE `i486-linux-musl-emerge --jobs --load-average --keep-going --buildpkg [--usepkg]` call, then quickpkg preinstalled pkgs, export kernel, sysroot and resolved kernel config.
+    invokes: [i486-linux-musl-emerge, emaint, quickpkg, rsync, gunzip]
+    invoked_by: [make.build-packages, make.build-packages-resume]
+    inputs:
+      - {what: "configs/portage/world (package list)", from: repo bind mount /configs, evidence: "scripts/build-packages.sh:16,184"}
+      - {what: "configs/portage/versions.lock (pins -> =cat/pkg-VER atoms)", from: repo, evidence: "scripts/build-packages.sh:160-166,190-195"}
+      - {what: "portage configs make.conf bashrc package.{use,accept_keywords,mask,env} env savedconfig profile", from: "/configs/portage -> copied to /usr/i486-linux-musl/etc/portage", evidence: "scripts/build-packages.sh:56-67"}
+      - {what: "overlay /configs/overlay registered in sysroot repos.conf", from: repo, evidence: "scripts/build-packages.sh:70-72"}
+      - {what: "package.mask mirrored into HOST /etc/portage/package.mask for BDEPEND resolution", from: repo, evidence: "scripts/build-packages.sh:84-91"}
+      - {what: "runtime portage tree + distfiles + existing gpkgs", from: "volumes monolith-repos, monolith-distfiles, output/packages", evidence: "Makefile:99-101"}
+    outputs:
+      - {what: "gpkgs", to: "output/packages (PKGDIR)", evidence: "scripts/build-packages.sh:19,122,323"}
+      - {what: "logs", to: "output/logs/emerge-parallel.log + <cat>_<pkg-ver>.build.log from /var/tmp/portage on failure", evidence: "scripts/build-packages.sh:236,270-280"}
+      - {what: ".failed-packages/.built-packages", to: "output/", evidence: "scripts/build-packages.sh:20-21,286-300"}
+      - {what: vmlinuz, to: "output/vmlinuz", evidence: "scripts/build-packages.sh:326-338"}
+      - {what: sysroot, to: "output/sysroot/ (rm -rf first)", evidence: "scripts/build-packages.sh:340-380"}
+      - {what: "resolved kernel config", to: "configs/kernel.config (repo tree)", evidence: "scripts/build-packages.sh:428-432"}
+    secrets: []
+    external: [ext.gentoo-mirrors, ext.kernel-org, ext.gentoo-distfiles, "plus whatever SRC_URI each ebuild fetches (ext.git-*)"]
+    env: [CROSS_TARGET (i486-linux-musl), CONFIGS_DIR (/configs), OUTPUT_DIR (/output), JOBS, LOAD_AVG, MONOLITH_USEPKG (y; n = source-only release build)]
+    s3_coupling: none
+    notes:
+      - "FAILURE MASKING 1: with --keep-going, emerge exits non-zero if anything failed, but then the script decides success per package by `compgen -G .../<PN>-*.gpkg.tar` (lines 286-300). A package that failed THIS run but has an older gpkg from a previous epoch/cache counts as built (stale binpkg masks a failing rebuild). Dependents dropped by --keep-going and never attempted are only detected if no gpkg exists at all."
+      - "FAILURE MASKING 2: quickpkg is `2>/dev/null || true` (line 323) - errors hidden; it also packages EVERY installed sysroot package ('*/*') including crossdev-installed ones into PKGDIR (these then go into the GHCR binpkg artifact)."
+      - "FAILURE MASKING 3: all config sync cp calls are `2>/dev/null || true` (lines 59-64,90): a missing/failed copy yields an emerge run against stale baked config with no warning. `cp -r dir/*` also does not delete removed files from the sysroot copy, so deleting a package.use file in configs does not remove it in the persistent sysroot (only matters when the sysroot dir persists across runs; with --rm containers + committed image it persists only inside the image)."
+      - "bunzip2 of man pages is `2>/dev/null || true` (line 395)."
+      - "Default behaviour keeps going: the sysroot export, kernel copy, and rootfs prerequisites still run after failures; final exit code is `[ FAIL_COUNT -eq 0 ]` (line 435). In the all-success path FAIL_COUNT is never initialised from emerge, set to 0 (lines ~254-258)."
+      - "Kernel build mode detection greps the emerge log for '>>> Emerging binary (N of M) sys-kernel/monolith-kernel-' vs '>>> Emerging (N of M) ...' (lines 412-417); unknown -> ::warning::. This depends on emerge's English output format."
+      - "MONOLITH_USEPKG=n drops --usepkg but keeps --buildpkg; release workflow sets it and also skips the GHCR cache pull. Note: pre-existing gpkgs in PKGDIR are still on disk."
+      - "Build side-effects on the host (container): appends games/gamestat groups to /etc/group (lines 97-98) and seeds root/portage/games/gamestat in sysroot passwd/group (lines 109-117). portage uid/gid 250."
+      - "Writes resolved kernel config OVER configs/kernel.config in the repo working tree (rw bind mount). In CI this dirties the checkout; for local dev it silently changes a tracked file. verify-resolved-i2c-off.sh then reads that same file."
+      - "rsync exclude list (usr/include, usr/i486-linux-musl, crossdev wrappers, etc/portage, pkgconfig, libc.a & friends, crt*.o, libssp_nonshared.a) is duplicated verbatim in extract-packages.sh (lines 355-380 vs extract 114-135) with a comment 'keep in sync'."
+      - "Replaces dangling musl ld symlink with a copy of /usr/i486-linux-musl/usr/lib/libc.so at /lib/ld-musl-i386.so.1 (lines 383-392); warns (not fatal) if missing."
+      - "unset BUILD_DIR before emerge (multilib-minimal.eclass); also JOBS exported for make.conf MAKEOPTS=-j${JOBS} (configs/portage/make.conf:53)."
+      - "FEATURES include -sandbox -usersandbox (configs/portage/make.conf:44): builds are unsandboxed and run as container root."
+    rebuild_notes:
+      - "Preserve: pinned atoms from versions.lock, single emerge graph with --keep-going but a STRICT post-check that every world atom installed (new build should fail if any world package missing - the current gpkg-glob check is weaker than needed)."
+      - "Preserve: resolved kernel config as package content; kernel build mode (binpkg vs source) reporting."
+      - "Preserve: host-side package.mask mirror for BDEPENDs; baseline passwd/group seeding; ld-musl copy; exclude list (single source of truth)."
+      - "Consider writing the resolved kernel config to output/ not configs/."
+
+  - id: script.extract-packages
+    kind: script
+    path: scripts/extract-packages.sh
+    purpose: Alternative sysroot population - cross-emerge --usepkgonly of the world list from PKGDIR, with dnsmasq recovery, then rsync to output/sysroot.
+    invoked_by: [make.extract]
+    inputs: [{what: "world + versions.lock + gpkgs in output/packages", from: repo/PKGDIR, evidence: "scripts/extract-packages.sh:16-21,56-72"}]
+    outputs: [{what: output/sysroot, to: local, evidence: "scripts/extract-packages.sh:109-135"}]
+    external: []
+    env: [CROSS_TARGET, CONFIGS_DIR, OUTPUT_DIR, JOBS, LOAD_AVG, BUILD_VERSION (passed by Makefile VERSION_ENV, unused)]
+    s3_coupling: none
+    notes:
+      - "Uses --keep-going with --usepkgonly (lines 83-89): comment admits it silently dropped net-dns/dnsmasq due to an acct-user/dnsmasq UID race (nondeterministic), so it force-installs the binary with --nodeps afterwards (lines 91-107). Recovery result is only an echo; script still exits 0 if dnsmasq is absent (line 104 `|| true`, WARNING only)."
+      - "Does NOT export the resolved kernel config or kernel image; so output of `make extract` cannot satisfy verify-resolved-i2c-off or iso without build-packages having run."
+      - "Config sync omits the `profile` dir and the package.mask host mirror that build-packages.sh does (extract:23-37 vs build-packages:56-91): the two scripts can resolve differently."
+      - "Not wired into CI (workflows area to confirm); effectively a dev-only/legacy path since build-packages.sh already exports the sysroot."
+    rebuild_notes: ["Drop unless the rebuild wants a separate 'install from binpkgs only' reproducibility check; if kept, make dnsmasq drop fatal instead of papering over."]
+
+  - id: script.build-rootfs
+    kind: script
+    path: scripts/build-rootfs.sh
+    purpose: Assemble /rootfs-build from output/sysroot + generated /etc, inittab, init.d S-scripts, fonts index, mandoc whatis DB; make squashfs; run static-audit.
+    invokes: [script.pcf-fontname, script.static-audit, mksquashfs, makewhatis]
+    invoked_by: [make.build-rootfs]
+    inputs:
+      - {what: output/sysroot, from: script.build-packages, evidence: "scripts/build-rootfs.sh:65-72"}
+      - {what: /configs/themonolith.ans (SAUCE trimmed 128 bytes), from: repo, evidence: "scripts/build-rootfs.sh:239"}
+      - {what: BUILD_VERSION, from: env (VERSION_ENV), evidence: "scripts/build-rootfs.sh:23,236"}
+    outputs:
+      - {what: "output/themonolith-$BUILD_VERSION.squashfs", to: output, evidence: "scripts/build-rootfs.sh:23,723"}
+      - {what: "output/reports/static-audit.txt", to: output, evidence: "scripts/static-audit.sh:51-52"}
+    env: [OUTPUT_DIR, CONFIGS_DIR, BUILD_DIR (unused), BUILD_VERSION (NO default: set -e but not set -u; empty -> 'themonolith-.squashfs'), SOURCE_DATE_EPOCH (from image ENV; mksquashfs reads it)]
+    s3_coupling: soft
+    s3_coupling_detail: "/etc/os-release HOME_URL hard-codes https://themonolith.s3.us-west-2.amazonaws.com (line 266) - a baked-in link to the dead bucket; the runtime advisory/time scripts shipped by monolith-base are outside scope."
+    notes:
+      - "Generates inline: passwd/group/shadow (root has NO password, root login intentional), fstab, hosts, hostname=monolith, /etc/monolith-release, motd (ANSI art + version), issue, os-release, profile, profile.d/50-dropbear-hint.sh, securetty, shells, inittab (sysvinit; agetty -l /usr/sbin/monolith-console on tty1/tty2/ttyS0), init.d/rcS rcK S20keygen S30gpm S35netprobe S40network S45monolith-time S50advisory, network/interfaces."
+      - "rcS does a modalias coldplug (find /sys -name modalias | modprobe -abq) with `2>/dev/null || true` and setfont with `2>/dev/null || true` (build-rootfs.sh heredoc) - boot-time silent failures by design."
+      - "Fonts: indexes /usr/share/fonts/terminus/*.pcf[.gz] with python3 scripts/pcf-fontname.py (HOST python3), writes fonts.dir, creates fonts/monolith alias dir (fixed, variable, fixed-bold, heading -> Terminus XLFDs) and FAILS the build if aliased XLFDs are absent from fonts.dir (lines ~88-150). pcf-fontname errors per file are `2>/dev/null` swallowed -> only 'skipping' warning, the XLFD verification afterwards is the real guard. If fonts dir or script is missing: warn only (GUI would fail at runtime)."
+      - "Creates lowercase terminfo symlinks for uppercase-only dirs (NTFS case-collision workaround, no-op on Linux)."
+      - "/bin/sh -> dash if present else bash; /usr/bin/more -> less."
+      - "makewhatis (host /usr/sbin/makewhatis from app-text/mandoc) run against $ROOTFS/usr/share/man before squashing; failure only warns."
+      - "mksquashfs -comp gzip -b 131072 -no-xattrs -noappend -quiet; relies on mksquashfs >= 4.5 honouring SOURCE_DATE_EPOCH (line 721-722 comment) - not asserted by script."
+      - "static-audit run is informational and never fails the build (`|| log_warn`)."
+      - "Excludes /usr/share/monolith-kernel/ from the rootfs (line 72)."
+      - "Message at 'No sysroot found' tells users to run 'make build-packages && make extract' - extract is no longer needed (line ~192)."
+      - "Heredoc-heavy: ~500 lines of /etc and init.d content are embedded in the script instead of being files under rootfs/ or the monolith-base ebuild; part of it has already migrated to ebuild app-misc/monolith-base (comments reference it)."
+      - "Does not chown anything: files in /rootfs-build keep rsync -a ownership from the sysroot (container root) - squashfs uid/gid are whatever portage installed."
+      - "Reproducibility inputs: SOURCE_DATE_EPOCH, mksquashfs 4.5+; makewhatis db timestamps (comment says SOURCE_DATE_EPOCH later clamps)."
+    rebuild_notes:
+      - "Carry forward: the exact /etc, inittab and init.d contents (they define boot behaviour tested by boot-test); better as real files in rootfs/ overlay."
+      - "Carry forward the XLFD-verification guard and fonts.dir indexing (or reintroduce mkfontscale if freetype is not required - doctrine says no freetype)."
+      - "Drop: terminfo NTFS hack; stale message about make extract."
+      - "Replace HOME_URL."
+
+  - id: script.build-initrd
+    kind: script
+    path: scripts/build-initrd.sh
+    purpose: Build the gzip'd newc cpio initramfs from busybox + kmod + rootfs/init + Tier-1 storage modules.
+    invokes: [depmod, python3 (inline), cpio, gzip, readelf/file]
+    invoked_by: [make.build-rootfs]
+    inputs:
+      - {what: output/sysroot/bin/busybox, from: script.build-packages, evidence: "scripts/build-initrd.sh:24"}
+      - {what: "output/sysroot/{bin,usr/bin}/kmod (must be static: no PT_INTERP)", from: sysroot, evidence: "scripts/build-initrd.sh:99-139"}
+      - {what: rootfs/init, from: "repo bind mount /rootfs (ro)", evidence: "scripts/build-initrd.sh:19,85-92"}
+      - {what: rootfs/usr/share/udhcpc/default.script, from: /rootfs, evidence: "scripts/build-initrd.sh:197-203"}
+      - {what: configs/initrd-modules.txt (Tier-1 module names), from: repo /configs, evidence: "scripts/build-initrd.sh:229"}
+      - {what: "sysroot/lib/modules/<KVER>/ (modules.dep, modules.builtin*, modules.order, *.ko)", from: sysroot, evidence: "scripts/build-initrd.sh:230-236"}
+    outputs:
+      - {what: "output/themonolith-$BUILD_VERSION.initrd", to: output, evidence: "scripts/build-initrd.sh:28,353"}
+    env: [INITRD_DIR (/initrd), OUTPUT_DIR, CONFIGS_DIR, CROSS_TARGET, BUILD_VERSION (no default), SOURCE_DATE_EPOCH (fallback 0)]
+    s3_coupling: none
+    notes:
+      - "gzip, not xz, on purpose (decompression window RAM on 16MB machines); kernel has CONFIG_RD_GZIP=y (lines 334-346)."
+      - "Gentoo's busybox lacks modprobe/insmod (kmod provides them), so kmod is copied as /bin/kmod and symlinked as modprobe depmod insmod rmmod lsmod modinfo. Static check via readelf INTERP; falls back to `file`; if neither tool exists it only warns and proceeds (line 116)."
+      - "All busybox applets symlinked from `busybox --list` executed on the build host: runs the i486 binary on x86_64 host (works because the container host kernel runs 32-bit x86 ELF - requires CONFIG_IA32_EMULATION on the Docker host kernel!)."
+      - "Module closure: inline Python resolves manifest names (dash->underscore) via modules.dep; missing modules are WARNINGS ('not bundled'), build still succeeds (lines ~295-300). So a typo or a config change silently drops a storage driver and the ISO may not boot on that hardware."
+      - "KVER=$(ls -1 modules | head -1): assumes exactly one kernel version dir (line 232)."
+      - "depmod -b $INITRD_DIR $KVER regenerates modules.* for exactly the bundled set (line 303); depmod here is kmod's depmod from the BUILD HOST (host kmod), not the i486 one."
+      - "mknod of console/null/zero/tty is `2>/dev/null || true` (lines 219-222): relies on root in container; harmless since init mounts devtmpfs."
+      - "REPRODUCIBILITY: touch -d @SOURCE_DATE_EPOCH on non-symlinks; sorted file list; gzip -n. BUT `cpio -o -H newc` is called without --reproducible; GNU cpio writes real inode numbers and nlink for hardlinks, so output may differ between runs/filesystems. Not verified; flag for the rebuild's reproducibility test (line 353)."
+      - "Symlinks keep their build-time mtime (excluded from touch) - cpio newc stores symlink mtime, another potential non-determinism (line 352)."
+      - "Debug listing `find ... | head -50 || true` guarded against SIGPIPE under pipefail (line ~322)."
+      - "rm -rf ${INITRD_DIR}/* before build: INITRD_DIR=/initrd is image-internal (not a volume), so it is fresh per run."
+    rebuild_notes:
+      - "Carry forward behaviours: static kmod gate; module closure + depmod; busybox symlinks; gzip -9 -n; sorted cpio."
+      - "Make missing Tier-1 modules fatal or explicitly allow-listed; use cpio --reproducible and normalise symlink mtimes."
+      - "Avoid executing target (i486) binaries on the build host: derive applet list from busybox config/ebuild output."
+
+  - id: script.build-iso
+    kind: script
+    path: scripts/build-iso.sh
+    purpose: Assemble hybrid BIOS (ISOLINUX) + UEFI x64 (GRUB standalone) ISO with xorriso, then patch the GPT partition 2 type GUID to the EFI System Partition GUID.
+    invokes: [grub-mkstandalone, mkfs.vfat, mmd, mcopy, xorriso, python3 (inline)]
+    invoked_by: [make.iso]
+    inputs:
+      - {what: "kernel: output/themonolith-$BUILD_VERSION.vmlinuz else output/vmlinuz", from: script.build-packages, evidence: "scripts/build-iso.sh:22-29"}
+      - {what: "output/themonolith-$BUILD_VERSION.initrd and .squashfs", from: "script.build-initrd, script.build-rootfs", evidence: "scripts/build-iso.sh:30-31"}
+      - {what: "syslinux files: isolinux.bin ldlinux.c32 libutil.c32 libcom32.c32 isohdpfx.bin (Gentoo /usr/share/syslinux or Debian /usr/lib/ISOLINUX layouts)", from: builder image sys-boot/syslinux, evidence: "scripts/build-iso.sh:37-58"}
+      - {what: /configs/bootbg.png (optional), from: repo, evidence: "scripts/build-iso.sh:271-275"}
+    outputs:
+      - {what: "output/themonolith-$BUILD_VERSION.iso", to: output, evidence: "scripts/build-iso.sh:34,501"}
+    env: [OUTPUT_DIR, BUILD_VERSION (no default), SOURCE_DATE_EPOCH (implicit to xorriso/mkfs.vfat)]
+    s3_coupling: none
+    notes:
+      - "ISOLINUX: TIMEOUT 300 (30 s) to give the boot-test time to type a label; DEFAULT fb800; labels linux fb fb800 fb640 vga serial debug persist rescue; vga=791/788/785. F1 help text embedded. BOOT LABEL SET is a contract with scripts/boot-test.py."
+      - "GRUB cfg: 7 menuentries (plain, framebuffer video=efifb, serial, debug, rescue, toram, persistent), default 0, timeout 5, search --label MONOLITH, gfxterm + serial mirror. Note ISOLINUX has no 'toram' label (documented as appended param) but GRUB does."
+      - "grub-mkstandalone --format=x86_64-efi only - 32-bit UEFI (bootia32.efi) NOT built although GRUB_PLATFORMS includes efi-32 in the Dockerfile (header comment lines 4-6)."
+      - "ESP image efi.img: size computed (>=8 MB), FAT16, label EFIBOOT, populated via mmd/mcopy; used as second El Torito entry with -isohybrid-gpt-basdat; -iso_mbr_part_type 0x00; volume id MONOLITH."
+      - "Python GPT patch rewrites partition entry #2 type GUID to C12A7328-F81F-11D2-BA4B-00A0C93EC93B and recomputes CRCs of primary and backup GPT (requires partition-array offsets: primary LBA 2, backup total-33)."
+      - "`log_error` is called in the syslinux-detection block (line 56) BEFORE log_error is defined (line 74): command-not-found, but set -e exits anyway; message is lost. Error hints reference non-existent make targets ('make build-kernel', 'make initrd', 'make rootfs') (lines 81,87,93)."
+      - "NON-DETERMINISM: no explicit timestamp flags to xorriso (relies on xorriso honouring SOURCE_DATE_EPOCH), mkfs.vfat volume serial/time, grub-mkstandalone embedded timestamps, mcopy mtimes use current time, ISO temp via mktemp. Whether the ISO digest is reproducible across builds is NOT proven here. The attestation 'digest chain' only requires consistency within a build."
+      - "Writes ISO to /tmp first (comment: xorriso/libburn fails on some bind mounts), then mv to /output and chmod 644 (so a host user can read it)."
+      - "Comment says GRUB pinned to 2.12 (Ubuntu 24.04) to dodge a 2.14 Hyper-V regression; nothing pins it (Dockerfile pulls sys-boot/grub from TOOLCHAIN_EPOCH tree)."
+      - "Kernel boots 32-bit bzImage from 64-bit UEFI via EFI handover protocol (comment lines 258-262)."
+      - "No privileged operations: xorriso -as mkisofs, dd to a file, mkfs.vfat on a file, mtools - all file-based, no loop mounts."
+    rebuild_notes:
+      - "Boot-test oracle drives which labels/entries must exist; preserve every ISOLINUX label name and GRUB entry flag exactly (tests type labels)."
+      - "Carry forward the GPT ESP GUID patch (or find a xorriso flag that does it)."
+      - "Decide on reproducibility goal and pass --set_all_file_dates / -volume_date / SOURCE_DATE_EPOCH explicitly."
+
+  - id: script.binpkg-store
+    kind: script
+    path: scripts/binpkg-store.sh
+    purpose: GHCR-backed one-blob-per-epoch store for the binpkg tree. Subcommands pack, push, pull, prune, prune-predicate, pull-is-benign-miss.
+    invokes: [tar, zstd, oras]
+    invoked_by: [wf.build (build.yml:269 pull, 456 prune, 458 pack, 462 push)]
+    inputs:
+      - {what: "PKGDIR (default <repo>/output/packages), versions.lock", from: local, evidence: "scripts/binpkg-store.sh:78-83"}
+      - {what: "ghcr.io/<owner>/monolith-binpkgs:<epoch> OCI artifact (single layer, media type application/vnd.oci.image.layer.v1.tar+zstd)", from: ext.ghcr, evidence: "scripts/binpkg-store.sh:84,325-326"}
+    outputs:
+      - {what: "output/binpkgs.tar.zst (tar --sort=name --numeric-owner --owner=0 --group=0 --mtime=@SOURCE_DATE_EPOCH|0 | zstd -T0)", to: local, evidence: "scripts/binpkg-store.sh:306-310"}
+      - {what: OCI artifact tag = BUILD_EPOCH, to: ext.ghcr, evidence: "scripts/binpkg-store.sh:338"}
+    secrets: [GHCR auth is assumed done by caller (oras/docker login); GITHUB_REPOSITORY_OWNER fallback for owner]
+    external: [ext.ghcr]
+    pins: [{thing: IMAGE_REPO, value: monolith-binpkgs, evidence: "scripts/binpkg-store.sh:87"}]
+    env: [GHCR_OWNER, GITHUB_REPOSITORY_OWNER, BUILD_EPOCH, PKGDIR, VERSIONS_LOCK, BINPKG_TARBALL, SOURCE_DATE_EPOCH]
+    s3_coupling: none
+    notes:
+      - "prune keeps, per <CAT>/<PN>, only the newest PVR (own Gentoo version comparator _bp_version_gt, documented limits: no leading-zero string compare, unknown suffix tokens dropped) PLUS the versions.lock pin; deletes every other gpkg; removes Packages and Packages.gz index (rebuilt by emaint binhost --fix in build-packages.sh)."
+      - "BUILDID dimension: gpkgs of the same PVR with different BUILDIDs (multi-instance) are NOT pruned against each other; a PVR keeps all its build ids."
+      - "pull FAILS OPEN on: missing oras (warn, empty dir, exit 0); and benign-miss text match 'not found|manifest unknown|name unknown|404|unauthorized|denied|401' (function _bp_pull_is_benign_miss). Because GHCR returns 401/denied for a never-pushed repo, the classifier also treats a REAL auth failure as a benign miss => a revoked/wrong token silently yields an empty cache and a full source rebuild with exit 0 (smell; documented in the function comment)."
+      - "Real unexpected errors (other text) and unpack failures exit 1."
+      - "push does `cd $dir && oras push` so the layer title is the basename (oras rejects absolute paths)."
+      - "pack deterministic (sorted, numeric owner, fixed mtime) but compression output of zstd -T0 is deterministic for fixed input and level default."
+      - "Replaced the S3 per-object `aws s3 sync packages/<epoch>/` flow (cost reason: egress)."
+    rebuild_notes:
+      - "Whole design survives (no S3): keep OCI blob per epoch; consider keying by hash of (BUILD_EPOCH + toolchain + configs) instead of epoch alone because savedconfig-cache.sh exists to paper over a key that ignores config content."
+      - "Treat 401 as benign only when the repository is known not to exist, or distinguish via an explicit existence probe."
+      - "scripts/tests/binpkg-store.test.sh (ALL PASS) pins the prune predicate and benign-miss classifier."
+
+  - id: script.savedconfig-cache
+    kind: script
+    path: scripts/savedconfig-cache.sh
+    purpose: Detect savedconfig edits that portage binpkg reuse does not key on; `check` purges stale gpkg dir after pull, `mark` records the sha256 beside the gpkgs before pack/push.
+    invoked_by: [wf.build (build.yml:279 check, 440 mark)]
+    inputs: [{what: configs/portage/savedconfig/sys-apps/busybox, from: repo, evidence: "scripts/savedconfig-cache.sh:58-60"}]
+    outputs: [{what: "output/packages/sys-apps/busybox/.savedconfig.sha256; rm -rf of that dir on mismatch", to: PKGDIR, evidence: "scripts/savedconfig-cache.sh:73-92"}]
+    env: [PKGDIR, positional pkgdir]
+    s3_coupling: none
+    notes:
+      - "Only busybox is tracked; the kernel is exempt because it is revbumped by hand (-rN). Anything else savedconfig-governed must be added to TRACKED."
+      - "Purge failure only warns (`rm -rf ... || echo WARNING`)."
+      - "Missing marker (first run, or marker lost) => purge => rebuild: fail-safe."
+      - "`mark` redirect uses 2>/dev/null inside the if-test; failure is a warning not an error."
+      - "Smell: hand revbump discipline for the kernel is a latent stale-binpkg trap (AGENTS.md mentions it)."
+    rebuild_notes: ["If the new cache key includes config hash (e.g. via a package-specific USE or binpkg key), this script disappears."]
+
+  - id: script.static-audit
+    kind: script
+    path: scripts/static-audit.sh
+    purpose: Report dynamically linked ELF executables in a rootfs/sysroot; informational unless --strict.
+    invoked_by: [script.build-rootfs (informational), possibly wf.build with --strict (check workflows area)]
+    inputs: [{what: "TARGET_DIR (default /rootfs-build else /output/sysroot)", from: build, evidence: "scripts/static-audit.sh:44-50"}]
+    outputs: [{what: output/reports/static-audit.txt, to: output, evidence: "scripts/static-audit.sh:51-53"}]
+    env: [ROOTFS_DIR, OUTPUT_DIR]
+    s3_coupling: none
+    notes:
+      - "Only checks files with u+x permission; shared objects without exec bit (libs) are skipped, so dynamic .so are not reported (find -perm -u+x, line 107)."
+      - "Header documents util-linux (mount, agetty, mountpoint...) as known dynamic offenders, in direct conflict with the 'rootfs is all-static' doctrine and with the dynamic-linker copy hack kept for them in build-packages/extract-packages."
+      - "`date -Iseconds` inside report => report not reproducible (informational only)."
+      - "Uses `file` from the builder image."
+    rebuild_notes: ["Promote to a gate once the known-offender list is empty; make the allow-list explicit rather than a comment."]
+
+  - id: script.update-build-pins
+    kind: script
+    path: scripts/update-build-pins.sh
+    purpose: Bump BUILD_EPOCH+SOURCE_DATE_EPOCH (update) or TOOLCHAIN_EPOCH (+crossdev.lock regeneration) in the Dockerfile; check shows pin vs latest.
+    invoked_by: [make.update-build-pins, wf.pin-bump (check at pin-bump.yml:93, update at :188), wf.toolchain-bump (update-toolchain at :121), wf.regen-pins (path trigger)]
+    inputs:
+      - {what: "gentoo/stage3 tags amd64-openrc-YYYYMMDD (paginated, 'latest' = max date)", from: "ext.dockerhub https://hub.docker.com/v2/repositories/gentoo/stage3/tags", evidence: "scripts/update-build-pins.sh:37,48-85"}
+      - {what: "existence of https://distfiles.gentoo.org/snapshots/gentoo-DATE.tar.xz and .gpgsig (curl --head)", from: ext.gentoo-distfiles, evidence: "scripts/update-build-pins.sh:130-135"}
+      - {what: "portageq best_visible for sys-libs/musl and =sys-devel/gcc-<major>* inside local monolith-builder image (docker run -v configs:/configs; rewrites accept_keywords to '*/* ~*')", from: local docker, evidence: "scripts/update-build-pins.sh:195-215"}
+    outputs:
+      - {what: "sed -i on Dockerfile ARG BUILD_EPOCH / ARG TOOLCHAIN_EPOCH / ENV SOURCE_DATE_EPOCH (each verified after sed, fail closed)", to: Dockerfile, evidence: "scripts/update-build-pins.sh:310-340,370-380"}
+      - {what: configs/portage/crossdev.lock, to: repo, evidence: "scripts/update-build-pins.sh:262-278"}
+    external: [ext.dockerhub, ext.gentoo-distfiles]
+    pins: [{thing: "BUILD_EPOCH and TOOLCHAIN_EPOCH default derivation", value: "latest stage3 tag date; SOURCE_DATE_EPOCH = that date 00:00:00Z via date -d or python3 fallback", evidence: "scripts/update-build-pins.sh:88-105,320"}]
+    s3_coupling: none
+    notes:
+      - "BUILD_EPOCH (a PORTAGE snapshot date) is derived from the latest *stage3 docker tag* date, which is weekly; verify_portage_snapshot only checks upstream distfiles (NOT S3) so the bump can pass while S3 archive has not been laid; the archive happens later (pin-bump.yml:200 sync-portage fetch-only)."
+      - "update-toolchain also requires a portage snapshot for the date to exist upstream even though the toolchain tree comes via emerge-webrsync at image build time (comment lines 437-441)."
+      - "crossdev.lock regeneration queries the PREVIOUS image (one epoch behind by design); query errors fall back to unchanged lock (`2>/dev/null ... || true` in query_portage_version, and WARNING paths)."
+      - "update_crossdev_lock rewrites the lock file with a fixed header (drops the 'Regenerated by regen-pins.yml from stage3 ...' text that regen-pins.yml writes) - two writers of crossdev.lock with different headers."
+      - "gcc_major read from crossdev.lock field 3 (slot) with default 15 (`|| echo 15`)."
+      - "Make target only exposes `update`; `check` and `update-toolchain` are workflow-only entry points."
+      - "set -euo pipefail; python3 and curl required on the host; docker needed only for crossdev.lock."
+    rebuild_notes:
+      - "Two-pin model is sound; keep fail-closed sed verification, snapshot-exists check (move it to the new mirror), SOURCE_DATE_EPOCH derived from BUILD_EPOCH."
+      - "Prefer a single pins file (e.g. pins.env) over sed on a Dockerfile."
+
+  - id: script.update-versions
+    kind: script
+    path: scripts/update-versions.sh
+    purpose: check / update / validate configs/portage/versions.lock via portageq against the CROSS TARGET config (PORTAGE_CONFIGROOT=/usr/i486-linux-musl) with host fallback.
+    invoked_by: [make.check-updates, make.update-versions, wf.regen-pins]
+    inputs: [{what: configs/portage/world, from: repo, evidence: "scripts/update-versions.sh:25,92-98"}, {what: "runtime portage tree (monolith-repos volume)", from: make.sync-portage, evidence: "Makefile:551"}]
+    outputs: [{what: "configs/portage/versions.lock (header + '# Updated: $(date -Iseconds)' + cat/pkg:version:slot lines)", to: repo, evidence: "scripts/update-versions.sh:131-160"}]
+    env: [CONFIGS_DIR, CROSS_TARGET]
+    s3_coupling: none
+    notes:
+      - "Temporarily rewrites /etc/portage/package.accept_keywords/crossdev-all from '*/* **' to '*/* ~*' (inside the container; restored by EXIT trap) so live 9999 ebuilds are not selected (lines 55-62)."
+      - "Silent fallback: get_best_version target query failing falls back to HOST portageq (lines 66-70); host and target have different keywording so a host-only answer can pin a version the cross-emerge cannot install. Error output hidden with 2>/dev/null."
+      - "Packages not found are only WARNING'd and omitted from the lock (`echo WARNING`), which then leaves the package unpinned ('latest') in build-packages.sh (get_pinned_version returns empty) - silent pin loss."
+      - "`# Updated: $(date -Iseconds)` makes versions.lock change on every run (noise / non-deterministic file)."
+      - "BUG: `validate` uses ((LINE_NUM++)) and ((ERRORS++)) under `set -e`; post-increment of 0 returns status 1 so the script aborts on the first line (verified: bash -c 'set -e; L=0; ((L++))' exits 1). The validate subcommand is therefore broken (lines 164-186). Not wired in Makefile."
+      - "Header comment says host tools are pinned indirectly via BUILD_EPOCH; actually TOOLCHAIN_EPOCH (see contradictions)."
+      - "Slot written as major of SLOT without sub-slot; build-packages ignores the slot field entirely."
+    rebuild_notes:
+      - "Preserve: resolve against target config, drop live ebuilds; deterministic lock (no timestamp); fail if a world package cannot be resolved."
+
+  - id: script.agent-git-env
+    kind: script
+    path: scripts/agent-git-env.sh
+    purpose: Sourced helper that repairs an agent workspace's git environment (empty GIT_CONFIG_COUNT, safe.directory, empty identity vars). Not part of the build.
+    inputs: [GIT_CONFIG_COUNT, GIT_CONFIG_KEY_n, GIT_CONFIG_VALUE_n, GIT_AUTHOR_*, GIT_COMMITTER_*]
+    outputs: [exports GIT_CONFIG_COUNT/KEY/VALUE; defines agent_git_clear_empty_identity]
+    s3_coupling: none
+    notes: ["Paperclip/agent harness artefact (DCX-131); referenced by AGENTS.md. No bearing on ISO build."]
+    rebuild_notes: ["Drop from the factory; keep only if the new repo is still driven by the same agent harness."]
+
+  - id: script.verify-resolved-i2c-off
+    kind: script
+    path: scripts/verify-resolved-i2c-off.sh
+    purpose: CI assertion that the resolved post-olddefconfig kernel config does not contain CONFIG_I2C=y (DDC-trap guard). Reads plain or .gz; optional build-mode label; hard FAIL if the file is missing.
+    invoked_by: [wf.build (build.yml:313 `sh scripts/verify-resolved-i2c-off.sh configs/kernel.config`)]
+    inputs: [{what: configs/kernel.config, from: script.build-packages (resolved config export), evidence: "scripts/verify-resolved-i2c-off.sh:33"}]
+    outputs: [exit status + PASS/FAIL line]
+    s3_coupling: none
+    notes:
+      - "Build mode argument is never passed by CI, so message says 'unknown' (header comment lines 17-21)."
+      - "Checks only `^CONFIG_I2C=y$`; =m is accepted."
+      - "Tested by scripts/tests/verify-resolved-i2c-off.test.sh (ALL PASS)."
+    rebuild_notes: ["Part of the acceptance oracle; keep. Feed it the resolved config from the package artifact directly rather than the clobbered repo file."]
+
+  - id: script.ghcr-gc
+    kind: script
+    path: scripts/ghcr-gc.sh
+    purpose: GC of the monolith-binpkgs container package versions - keep the current KEEP_EPOCH tag, delete versions all of whose tags are old 8-digit epochs; dry-run by default, --apply to delete.
+    invoked_by: [wf.gc (gc.yml:33)]
+    inputs: [{what: "gh api --paginate /user/packages/container/monolith-binpkgs/versions", from: ext.github-api, evidence: "scripts/ghcr-gc.sh:68-70"}]
+    outputs: [{what: "gh api --method DELETE .../versions/<id> (only with --apply)", to: ext.ghcr, evidence: "scripts/ghcr-gc.sh:124"}]
+    secrets: [GH_TOKEN/GITHUB_TOKEN with delete:packages (ambient)]
+    env: [KEEP_EPOCH (required), GITHUB_REPOSITORY_OWNER (required)]
+    external: [ext.github-api, ext.ghcr]
+    s3_coupling: none
+    notes:
+      - "Uses /user/packages path (user-owned packages); would need /orgs/<org>/packages for an org-owned repo."
+      - "Safeguards: abort when keep-list matches 0 of N; auth errors fail loud; 404 / 0 versions are benign (NOTE emitted)."
+      - "Untagged versions and non-8-digit tags are always KEEP, so untagged manifests accumulate."
+      - "Exits 0 unconditionally on success path (trailing false test fix)."
+      - "Only manages monolith-binpkgs; not monolith-builder(-base-tools) tags."
+      - "Tests: scripts/tests/ghcr-gc.test.sh ALL PASS."
+    rebuild_notes: ["Keep the classify/verdict pure functions and tests if a GHCR binpkg store is kept."]
+
+  - id: script.s3-gc
+    kind: script
+    path: scripts/s3-gc.sh
+    purpose: S3 bucket garbage collector (KEEP-first classification; dry-run default; --apply to delete).
+    invoked_by: [wf.gc (gc.yml:29)]
+    inputs: [{what: "aws s3 ls s3://$S3_BUCKET --recursive", from: ext.aws-s3, evidence: "scripts/s3-gc.sh:46"}]
+    outputs: [{what: "aws s3 rm per key (only --apply)", to: ext.aws-s3, evidence: "scripts/s3-gc.sh:71"}]
+    secrets: [AWS credentials (ambient)]
+    env: [S3_BUCKET (required), KEEP_EPOCH (required)]
+    external: [ext.aws-s3]
+    s3_coupling: hard
+    notes:
+      - "Key namespace it documents (useful as an inventory of what the old pipeline wrote to S3): themonolith.{iso,squashfs,vmlinuz,initrd} (unversioned, KEEP), themonolith-X.Y.Z.* (semver releases, KEEP), themonolith-<8-digit epoch>-<sha>* (validation builds, DELETE), packages/<epoch>/* (KEEP only current epoch), builds/* (DELETE), attestation/* (KEEP, dashboard history), anything else KEEP."
+      - "Abort guard: refuses when KEEP matches 0 of N."
+      - "Dry-run exits 0. Tests: scripts/tests/s3-gc.test.sh ALL PASS."
+    rebuild_notes: ["Entire script is dead with S3; delete it unless a replacement store needs lifecycle rules. Port the key-class inventory into the new design as the list of published artifacts."]
+
+  - id: script.pcf-fontname
+    kind: script
+    path: scripts/pcf-fontname.py
+    purpose: Print a PCF bitmap font's FONT property (XLFD) by parsing the PCF_PROPERTIES table directly; used because the target sysroot has no mkfontscale.
+    invoked_by: [script.build-rootfs]
+    inputs: [{what: "font.pcf[.gz]", from: sysroot terminus font dir, evidence: "scripts/pcf-fontname.py:73-85"}]
+    outputs: [stdout XLFD or nonzero + message on stderr]
+    s3_coupling: none
+    notes:
+      - "The only Python in scripts/ run inside the build (host python3 only; does not enter the i486 image - consistent with 'Python stays out' doctrine)."
+      - "Docstring repeats the builder-image time-bomb: cannot add mkfontscale host-side because the TOOLCHAIN_EPOCH snapshot was pruned (lines 3-6)."
+      - "Tested by scripts/tests/pcf-fontname.test.sh (ALL PASS)."
+    rebuild_notes: ["Keep if mkfontscale remains unavailable on host; otherwise replace with host mkfontscale if it does not drag freetype into the target."]
+
+  # ---------------------------------------------------------------- CFG (rootfs)
+  - id: cfg.rootfs/init
+    kind: config
+    path: rootfs/init
+    purpose: Initramfs /init (POSIX sh, PID 1). Copied verbatim into the initrd by build-initrd.sh.
+    invoked_by: [script.build-initrd]
+    steps:
+      - "1. set -m; PATH=/sbin:/usr/sbin:/bin:/usr/bin. Define helpers msg/err/dbg, cmdline_get/has, wait_for_device, coldplug_once, load_storage_modules, load_manifest_fallback, rescue_shell."
+      - "2. Verify PID 1. Mount /proc, /sys (failure -> rescue_shell), /dev as devtmpfs (fallback tmpfs + mknod console/null/zero/tty), /dev/pts; run mdev -s if present."
+      - "3. Parse /proc/cmdline: debug, rescue (-> rescue shell immediately), root=, rootfstype= (auto), rootflags= (ro), init= (/sbin/init), toram, persist, nomodules."
+      - "4. Unless nomodules: load_storage_modules - locate /lib/modules/*/modules.dep, resolve module loader (/sbin/modprobe, /bin/modprobe, /usr/bin/kmod, /bin/kmod), coldplug: for every /sys modalias run modprobe -q <modalias>, sleep 1, coldplug again, mdev -s."
+      - "5. If root= given: wait up to 30 s for the device, mount it ro at /newroot (OVERLAY_MODE=0)."
+      - "6. Else overlay mode: search boot media in up to 8 attempts - pass1 /dev/sr0 sr1 cdrom hdc hdd as iso9660; pass2 /dev/disk/by-label/{MONOLITH,LIVECD}; pass3 every /sys/block device and partitions (mount -o ro autodetect) - success = /media/rootfs.squashfs exists; between attempts sleep 2 + recoldplug; after attempt 2 force-load whole /etc/initrd-modules manifest once. No media -> rescue shell."
+      - "7. toram: tmpfs 80% at /ram, cp rootfs.squashfs, umount /media (failure -> continue from media)."
+      - "8. mount -t squashfs -o ro (loop) at /squashfs."
+      - "9. persist: poll up to 8 s for a block device whose raw content contains the string MONOLITH_PERSIST (cat | tr -d NUL | grep -q over /dev/vd* sd* nvme*n* mmcblk* hd*; findfs LABEL=... tried first); fsck if available; mount -t auto -o rw at /overlay; on failure fall back to tmpfs. Otherwise tmpfs size=50% at /overlay."
+      - "10. mount -t overlay lowerdir=/squashfs upperdir=/overlay/upper workdir=/overlay/work at /newroot; move/bind /squashfs /overlay /media (/ram if toram) into /newroot."
+      - "11. Verify /newroot$INIT_PROG executable (else /sbin/init or /bin/sh); mount --move /proc /sys /dev into /newroot."
+      - "12. pivot_root . mnt/initramfs; on failure (overlayfs) exec switch_root /newroot $INIT_PROG; last resort exec chroot . init; else rescue_shell."
+    external: []
+    s3_coupling: none
+    contract_with_other_components:
+      - "ISO must contain rootfs.squashfs at ISO root with volume label MONOLITH (build-iso.sh:100,414)."
+      - "ISOLINUX/GRUB cmdline tokens recognised: debug rescue toram persist root= rootfstype= rootflags= init= nomodules; vga=/console=/quiet are kernel-level."
+      - "initrd must ship /etc/initrd-modules (manifest) and /lib/modules/<KVER>/ built by build-initrd.sh, plus /bin/kmod."
+      - "Persist label is MONOLITH_PERSIST (ext*); detection is a raw-device string scan, NOT blkid/findfs, because the shipped busybox lacks findfs and dd (comment lines 436-450 in init)."
+    notes:
+      - "The persist label scan false-positive risk is acknowledged and avoided by not scanning loop*/sr* (squashfs contains this script)."
+      - "Sleeps are fixed (1 s, 2 s) - latency on slow hardware, race tolerance on fast."
+      - "Many `2>/dev/null || true` around module loading and mdev: failures are intentionally silent; load_manifest_fallback does print modprobe errors."
+      - "rootflags default ro; root= path uses mount -t auto-type 'auto' -o ro with NO overlay (no writable root)."
+      - "No ISO checksum / media verification (no sha check of squashfs)."
+      - "debug mode toggles `DEBUG=1` only via `cmdline_has debug && DEBUG=1`."
+    rebuild_notes: ["Part of the boot oracle: copy verbatim, then verify with boot-test modes (cd, usb/sata/nvme, persist, toram, rescue)."]
+
+  - id: cfg.rootfs/usr/share/udhcpc/default.script
+    kind: config
+    path: rootfs/usr/share/udhcpc/default.script
+    purpose: busybox udhcpc event script copied into the initramfs (/usr/share/udhcpc/default.script). Handles deconfig, bound/renew (addr+prefix from subnet incl. CIDR, default route(s), resolv.conf search/nameserver, hostname) and leasefail/nak.
+    invoked_by: [script.build-initrd]
+    external: []
+    s3_coupling: none
+    notes:
+      - "The initramfs /init in this repo never starts udhcpc (no network step found in rootfs/init), so this script is shipped but apparently unused at initramfs time; the rootfs uses dhcpcd (S40network in build-rootfs.sh) instead. Possible dead file or legacy of an earlier netboot design (roadmap mentions netboot deferred)."
+      - "Uses `local` in POSIX sh (works in busybox ash)."
+      - "Missing-script case in build-initrd is only a warning (build-initrd.sh:197-203)."
+    rebuild_notes: ["Carry forward only if netboot returns; else drop together with the initrd copy step."]
+
+hazards:
+  nondeterminism:
+    - "Portage tree: handled (pinned snapshot over loopback http). Remaining: stage3 pulled by tag, not digest (Dockerfile:30); syft/grype from anchore main (Dockerfile:131); rustup init script unpinned (Dockerfile:168)."
+    - "Host build tools: frozen by snapshot only while upstream distfiles still exist."
+    - "acct-user/dnsmasq UID race => dnsmasq silently dropped (extract-packages.sh:91-107) - nondeterministic; build-packages.sh has no such recovery."
+    - "versions.lock `# Updated: date -Iseconds` line (update-versions.sh:137)."
+    - "initrd cpio without --reproducible; symlink mtimes not clamped (build-initrd.sh:352-353)."
+    - "ISO: no explicit date flags; grub-mkstandalone, mkfs.vfat, mcopy timestamps (build-iso.sh)."
+    - "SQUASHFS reproducibility depends on mksquashfs 4.5+ reading SOURCE_DATE_EPOCH (build-rootfs.sh:721-722)."
+    - "docker commit image: not byte-reproducible."
+    - "Parallel emerge (--jobs=nproc) can change build order and thus PKGDIR build ids / gpkg contents' embedded timestamps."
+  retries_and_keep_going:
+    - "emerge --keep-going in build-packages.sh:245 and extract-packages.sh:85."
+    - "syft/grype install retry 6 x 30 s (Dockerfile:131-141)."
+    - "init boot-media retry loop 8 attempts (rootfs/init)."
+    - "No retry around emerge-webrsync or aws/oras calls."
+  silent_fallbacks:
+    - "make build-image: registry pull failure -> local build (Makefile:269,275)."
+    - "sync-portage.sh: any S3 error -> upstream (line 33); archive failure only warns (47)."
+    - "binpkg-store.sh pull: missing oras, or 401/denied/404/etc -> empty cache, exit 0."
+    - "update-versions.sh: target portageq failure -> host portageq; missing package -> omitted from lock -> unpinned."
+    - "build-packages.sh: stale gpkg counts as built; quickpkg errors hidden; config cp errors hidden."
+    - "build-initrd.sh: missing modules only WARN; no readelf and no file -> kmod static check skipped."
+    - "build-rootfs.sh: missing fonts dir/pcf script -> warn only; makewhatis failure -> warn; static-audit failure -> warn."
+    - "attest-builder: `|| echo unknown` for builder digest."
+  hidden_errors_2_dev_null:
+    - "Makefile:269,271,294,314 (docker pull / rm), 475 (docker inspect)"
+    - "sync-portage.sh:33,44,83,89"
+    - "build-packages.sh:59-64,90,165,173,277-278,295,323,395"
+    - "extract-packages.sh:31-35 equivalents, 65 (get_pinned_version), and bunzip2"
+    - "build-rootfs.sh: pcf-fontname call (line 119), rcS heredoc modprobe/setfont/mount"
+    - "build-initrd.sh:112,135,219-222"
+    - "update-build-pins.sh: query_portage_version 2>/dev/null, date -d 2>/dev/null"
+    - "update-versions.sh:55-70 portageq 2>/dev/null"
+  privileged_or_root_needs:
+    - "No --privileged / --cap-add / --device anywhere in Makefile or scripts. All containers run as root with default Docker capabilities."
+    - "Needs root-in-container: chown/group edits in /etc/group and sysroot, mknod in build-initrd.sh, emerge with FEATURES=-sandbox -usersandbox (make.conf:44), writing /etc/portage inside the container."
+    - "Needs Docker host able to execute i386 ELF binaries (build-initrd.sh runs the i486 busybox --list and portage cross build may run target binaries: CONFIG_IA32_EMULATION)."
+    - "Host-side: aws cli + wget for sync-portage fetch-only; docker with buildx; make; bash; optionally qemu/OVMF for make test*."
+    - "No loop mounts / mount(2) in the build: ISO, ESP and squashfs are built from files (xorriso, mkfs.vfat on a file, mtools, mksquashfs)."
+    - "All output files are root-owned on the host; only the ISO and build logs are chmod 644."
+  s3_touch_points:
+    - {where: "Makefile:67,153,366,376-377", what: "S3_BUCKET default themonolith; restore-cache aws s3 sync; S3_BUCKET forwarded to attestation container", coupling: "restore-cache hard; others soft"}
+    - {where: "scripts/sync-portage.sh:33-49", what: "read pinned snapshot from s3://$S3_BUCKET/portage-snapshots/ ; archive upstream copy back", coupling: "hard in practice for pinned epoch, soft in code"}
+    - {where: "scripts/s3-gc.sh", what: "whole script", coupling: hard}
+    - {where: "scripts/build-rootfs.sh:266", what: "HOME_URL points to the bucket", coupling: soft}
+    - {where: "docs and comments", what: "update-build-pins verify_portage_snapshot only checks upstream, not S3", coupling: "design gap"}
+    - {where: "TOOLCHAIN_EPOCH portage tree", what: "NOT in S3 (AGENTS.md); builder image cannot be rebuilt once ghcr cache is lost", coupling: "the opposite problem: missing mirror"}
+
+contradictions:
+  - claim: "scripts/update-versions.sh header says host-only build tools are pinned indirectly via the Dockerfile's BUILD_EPOCH"
+    where: scripts/update-versions.sh:16-18
+    fact: "Host tools are installed from the TOOLCHAIN_EPOCH-pinned baked tree; BUILD_EPOCH is the runtime tree and is not baked into the image"
+    evidence: Dockerfile:11-21,74,81-90
+  - claim: "scripts/build-iso.sh says GRUB is pinned to 2.12 (and log prints 'GRUB 2.12')"
+    where: scripts/build-iso.sh:264-267,503
+    fact: "No GRUB version pin exists; sys-boot/grub is installed unpinned from the TOOLCHAIN_EPOCH tree"
+    evidence: Dockerfile:99-109
+  - claim: "Makefile build-image comment: 'first tries to pull the BUILD_EPOCH-pinned image from the registry'"
+    where: Makefile:254-255
+    fact: "Tag is TOOLCHAIN_EPOCH-<DOCKERFILE_HASH>; BUILD_EPOCH deliberately excluded"
+    evidence: Makefile:50-64
+  - claim: "Makefile help: extract is 'Alias for build-rootfs install step only'"
+    where: Makefile:181
+    fact: "extract runs extract-packages.sh (emerge --usepkgonly) and is independent of build-rootfs; build-rootfs no longer needs it"
+    evidence: Makefile:402-404,431-432
+  - claim: "Dockerfile says sync-portage injects BUILD_EPOCH tree 'NOT baked into the builder image' and that AGENTS.md/README describe BUILD_EPOCH tree mirrored to S3"
+    where: Dockerfile:11-20
+    fact: "Consistent, but the TOOLCHAIN_EPOCH tree is the one needed to rebuild the image and it is NOT mirrored; AGENTS.md calls this the time-bomb"
+    evidence: AGENTS.md:201-204; scripts/pcf-fontname.py:3-6
+  - claim: "Makefile restore-cache comment: 'AWS credentials in env'"
+    where: Makefile:366
+    fact: "Command uses --no-sign-request (anonymous)"
+    evidence: Makefile:377
+  - claim: "Docs of binpkg store: S3 packages/<epoch>/ tree"
+    where: "Makefile:376 echo 'Restoring binary packages from s3://.../packages/'; scripts/s3-gc.sh classify packages/*"
+    fact: "Binpkgs moved to GHCR OCI artifact (binpkg-store.sh); S3 packages/ path no longer written by CI per script comments"
+    evidence: scripts/binpkg-store.sh:3-17; scripts/savedconfig-cache.sh:36-43
+  - claim: "update-versions.sh validate subcommand validates versions.lock format"
+    where: scripts/update-versions.sh:164-186
+    fact: "With set -e, ((LINE_NUM++)) from 0 returns 1 and aborts at the first line; subcommand is broken (verified in a bash one-liner)"
+    evidence: scripts/update-versions.sh:19,170
+  - claim: "crossdev.lock header says it was regenerated from stage3 20260727"
+    where: configs/portage/crossdev.lock:3-4
+    fact: "Current TOOLCHAIN_EPOCH is 20260810 (documented one-cycle lag, update-build-pins.sh:196-198)"
+    evidence: Dockerfile:28
+  - claim: "Makefile crossdev step masks =cross-<target>/gcc-14.4.9999"
+    where: Makefile:299
+    fact: "gcc pin is 15.3.1_p20260717; the 14.x mask is stale and does not mask a 15.x live ebuild (that relies on crossdev --gcc pin and keyword settings)"
+    evidence: configs/portage/crossdev.lock:8
+  - claim: "build-iso.sh error hints say 'make build-kernel', 'make initrd', 'make rootfs'"
+    where: scripts/build-iso.sh:81,87,93
+    fact: "Those targets do not exist; correct are build-packages / build-rootfs"
+    evidence: Makefile:155-163
+  - claim: "build-rootfs 'No sysroot' hint says run make build-packages && make extract"
+    where: scripts/build-rootfs.sh:~192
+    fact: "build-packages already exports output/sysroot (Makefile:431-432 comment)"
+    evidence: scripts/build-packages.sh:340-380
+  - claim: "static-audit.sh/doctrine: rootfs is all-static, dynamic = fail"
+    where: AGENTS.md doctrines; scripts/static-audit.sh:99-109
+    fact: "Audit header documents util-linux mount/agetty/mountpoint as known dynamic offenders and build-packages/extract-packages keep a musl dynamic-loader copy for them; audit is informational, never a gate"
+    evidence: scripts/static-audit.sh:19-23,85-91; scripts/build-packages.sh:383-392
+  - claim: "verify-resolved-i2c-off.sh header: build-mode label can differentiate source/binpkg"
+    where: scripts/verify-resolved-i2c-off.sh:17-21
+    fact: "Its only caller (build.yml:313) passes one arg; mode always prints 'unknown'; build-packages.sh computes KERNEL_BUILD_MODE but does not hand it on"
+    evidence: scripts/build-packages.sh:412-421
+  - claim: "Makefile build-image header says registry pull falls back 'if pull fails'"
+    where: Makefile:255-257
+    fact: "Fallback requires an un-rebuildable toolchain snapshot; effectively non-functional"
+    evidence: AGENTS.md:201-204
+
+open_questions:
+  - "Is the TOOLCHAIN_EPOCH 20260810 snapshot truly gone upstream (AGENTS.md says pruned) - this study did not (and could not) verify; no network. Is the ghcr builder image the only surviving copy?"
+  - "Does `make bump-pins` really regenerate versions.lock against the NEW BUILD_EPOCH within one make invocation? BUILD_EPOCH is read once with $(shell grep) at parse time (Makefile:23), so later prerequisites likely still see the old value. Workflows (pin-bump.yml) may call targets in separate invocations; not confirmed from this scope."
+  - "Does GNU cpio in the builder image produce identical output across runs for the initrd (inode numbers)? Not tested; no builds allowed."
+  - "Does xorriso/mkfs.vfat/grub-mkstandalone in the builder honour SOURCE_DATE_EPOCH so the ISO is bit-reproducible? Unknown; is reproducibility a required property or only digest-chain consistency within a build?"
+  - "Which workflow (if any) runs scripts/static-audit.sh --strict? In scope, only build-rootfs.sh calls it (non-strict)."
+  - "Is scripts/extract-packages.sh used by any workflow? None found in .github/workflows grep (only build-packages and binpkg-store appear)."
+  - "Is rootfs/usr/share/udhcpc/default.script actually used at runtime (initramfs never starts udhcpc; rootfs uses dhcpcd)? Confirm with boot-test netboot modes."
+  - "Which exact aws/oras/zstd versions are in the builder image? binpkg-store.sh calls oras and zstd, sync-portage.sh calls aws and wget, but the Dockerfile installs none of oras/aws-cli (they run on the CI host, not in the container; confirm in workflows area)."
+  - "The monolith-build volume (/build) has no consumer inside scope; is it used by ebuilds (BUILD_DIR) or dead?"
+  - "Does the builder container need a host kernel with IA32 emulation / binfmt for running i486 binaries during cross-builds (nethack DLB tools use -m32; busybox --list)? Presumably yes on x86_64 hosts; the rebuild's CI runner must provide it."

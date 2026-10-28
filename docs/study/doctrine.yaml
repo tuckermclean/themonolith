@@ -1,0 +1,1045 @@
+area: doctrine
+meta:
+  repo_head: b9f533b
+  master_commits: 230
+  note: >-
+    git log --all shows 524 commits (unmerged PR branches such as dcx-43-legacy-fbdev, feat/*, fix/*).
+    Several traps (persist dd/findfs, nat-router serial starvation, libxml2 testdso) are documented only in
+    branch commit bodies that were squashed into master PR commits; shas below are given where known.
+    Check-tier convention: fast = runs in pr-validate-style job on a git checkout in seconds (config grep,
+    ebuild tree, bash -n, scripts/tests/*.sh); slow = needs the built sysroot/squashfs/ISO/SBOM or QEMU.
+  s3_dependencies_recorded: >-
+    Items in this file that touch S3 (all DEAD while the AWS account is disabled): sync-portage mirror of BUILD_EPOCH
+    snapshots (s3://$S3_BUCKET/portage-snapshots/), release.yml publish (downloads ISO + bom.cdx.json +
+    attestation-summary.json from S3), savedconfig-cache purge hash store, s3-gc.sh, dashboard hosting at
+    themonolith.s3.amazonaws.com, attestation history sync, 'latest' pointer server-side copies, recovery
+    pattern (public-read bucket). The README/dashboard badge URLs and the verify-a-release instructions
+    (attestation/<tag>/ on S3) are all dead links today.
+
+doctrines:
+  - id: D-486-minimalism
+    statement: >-
+      Everything must run on an i486 with a few MB of RAM; do not pull in heavy dependencies. Reflex challenge to any
+      addition: 'we are trying to run this on a 486, remember?'. Corollaries seen in specs: Tier 0 (=y) kernel drivers
+      are a ceiling not a floor; a driver is only =y if a machine with nothing else cannot boot without it; no native
+      gcc on disc; mandoc not man-db; no CPAN client; hint text prints once, no daemons/wizards/menus.
+    source: "AGENTS.md:19-23; docs/kernel-tiers.md:30-51; docs/superpowers/specs/2026-08-14-gui-design.md (section 0); plans/2026-08-19-monolith-ux-pass.md:6-9; RELEASE-READINESS.md:266-269"
+    rationale: "Project brand is one ISO from a 1996 486 to a 2026 UEFI box; every resident byte is paid forever by the smallest machine."
+    existing_check:
+      - {path: "scripts/tests/verify-legacy-fbdev-config.sh:30-55", what: "asserts DDC/I2C sub-options off so CONFIG_I2C is not escalated into bzImage (Tier-0 growth guard)", tier: fast}
+      - {path: "scripts/verify-resolved-i2c-off.sh:45", what: "asserts the RESOLVED (post-olddefconfig) kernel config has no CONFIG_I2C=y; reads gz artifact shipped in the binpkg", tier: slow}
+      - {path: "docs/kernel-tiers.md:130-138", what: "initrd size budget ~6 MB uncompressed triggers human review (policy only, no mechanical check found)", tier: null}
+    proposed_check: >-
+      (1) Kernel: diff the set of '=y' symbols in resolved-kernel.config.gz against a committed Tier-0 allowlist; any new
+      '=y' fails (fast against configs/kernel.config, slow against resolved config). (2) Record bzImage, initrd, squashfs and ISO
+      byte sizes per build and fail if bzImage or initrd grows more than N% vs previous master without an explicit
+      override label. (3) initrd uncompressed size > 6 MB fails (cpio -t sizes of output/initrd).
+    tier: slow
+    contradicted_by:
+      - "README.md:127 and RELEASE-READINESS.md:208-213: util-linux mount/agetty/mountpoint etc. build dynamic PIE; not a design goal but a tracked gap."
+      - "initrd-modules.txt Tier-1 manifest is deliberately 'broad' (docs/kernel-tiers.md:19,72) - a documented, reasoned exception to minimalism, bounded by the 6 MB review budget."
+
+  - id: D-all-static
+    statement: >-
+      rootfs is all-static. Dynamic binaries fail at boot; the build-time warning 'musl libc not found ... dynamically-linked
+      binaries will fail' means static-only, not benign. Global mechanism: USE='-* minimal static static-libs', env/static.conf
+      (-static -no-pie, EXTRA_ECONF=--disable-shared --enable-static), package.use/static '*/* static static-libs' plus ~50
+      per-package overrides; overlay ebuilds readelf-assert no PT_INTERP and EM_386. perl is -Uusedl (no dlopen anywhere); gdb USE=-server
+      (in-process agent is a .so); dnsmasq/nftables/kmod/libxml2 had shared_module/shared_library targets rewritten to static.
+    source: "AGENTS.md:24-25; README.md:127; configs/portage/make.conf:36; configs/portage/env/static.conf:13; specs/2026-08-13-perl-for-the-monolith-design.md:7-12; specs/2026-08-14-gui-design.md section 1 (zero dlopen)"
+    rationale: "No dynamic loader policy on the disc; also enables dwm/st/Xfbdev to be single binaries; musl static is small."
+    existing_check:
+      - {path: "scripts/static-audit.sh (called from scripts/build-rootfs.sh:745-754)", what: "walks rootfs with file(1), writes output/reports/static-audit.txt; REPORT-ONLY (|| log_warn), --strict flag exists but is not used anywhere", tier: slow}
+      - {path: "configs/overlay/x11-base/monolith-xserver/monolith-xserver-1.3_p20241113-r1.ebuild:137-140", what: "readelf: no INTERP and Intel 80386 for Xfbdev in src_install", tier: slow}
+      - {path: "configs/overlay/games-roguelike/rl144/rl144-0.1.0_p20260805.ebuild:110-115", what: "same readelf static+i386 assert for rl144", tier: slow}
+    proposed_check: >-
+      On output/sysroot (or mounted squashfs): for every ELF with 'readelf -lW f | grep -q INTERP' fail, with an explicit
+      allowlist file (initially util-linux mount/agetty/mountpoint and whatever static-audit.txt lists today) that may only shrink;
+      also assert 'readelf -h' Machine is Intel 80386 for every ELF (no x86-64 host leakage) and that no *.so (other than the
+      kernel modules under /lib/modules) exists under /usr/lib /lib. Equivalent to 'static-audit.sh --strict' plus the allowlist.
+      Artifact: squashfs rootfs. Also assert the ld-musl-i386.so.1 copy (extract-packages.sh:155) disappears once the allowlist is empty.
+    tier: slow
+    contradicted_by:
+      - "README.md:127: 'not universally static yet: util-linux, iproute2, dhcpcd, procps, tar, gawk and a few others ... build as dynamically-linked PIE binaries'. (AGENTS.md:24 says dynamic binaries fail at boot - they only work because of the next item.)"
+      - "scripts/extract-packages.sh:147-157 and scripts/build-packages.sh:384-385 copy musl libc.so to /lib/ld-musl-i386.so.1, i.e. a dynamic loader DOES ship on the disc. specs/2026-08-13-perl... line 8 ('no dynamic loader on the disc AT ALL') and specs/2026-08-14-gui... section 1 ('no loader on the disc') are therefore stale."
+      - "RELEASE-READINESS.md:108-118: util-linux mount/agetty/mountpoint known dynamic; /etc/inittab still spawns util-linux agetty; static-audit never gated (RELEASE-READINESS.md:304)."
+      - "Whether the squashfs currently contains zero dynamic ELFs is UNKNOWN from the repo alone; needs a build."
+
+  - id: D-no-python-on-target
+    statement: >-
+      Python stays out of the target rootfs. Nothing in the ISO may depend on dev-lang/python; Python is allowed only as a host (builder) tool
+      and for build/CI scripts. Packages whose REQUIRED_USE or RDEPEND forces target python are rejected or have the chain broken.
+    source: "AGENTS.md:26,131-133; README.md:111; RELEASE-READINESS.md:257-264; configs/portage/profile/package.provided:4-17"
+    rationale: "Python cannot be cross-built lean/static for i486 and costs far too many MB; many packages (systemd-utils[tmpfiles], nmap, man-db, usbutils, xcb-proto) drag it in."
+    existing_check:
+      - {path: "none found (grep of scripts/tests, workflows, scripts/*.sh for python/PYTHON_TARGETS on the rootfs: no assertion)", what: "enforced only indirectly - emerge fails at dep resolution when python is demanded", tier: null}
+    proposed_check: >-
+      Assert the SBOM / portage VDB of the sysroot contains no dev-lang/python, dev-python/*, virtual/tmpfiles real provider, systemd-utils;
+      and squashfs contains no python3* binary, no /usr/lib/python*. Cheap fast variant: parse configs/portage/versions.lock for dev-lang/python|dev-python/.
+      Artifact: configs/portage/versions.lock (fast) + SBOM bom.cdx.json (slow). Host-side python (xcbgen, pcf-fontname.py at image build) must stay OUT of this check.
+    tier: fast
+    contradicted_by:
+      - "scripts/build-rootfs.sh:119 runs host python3 scripts/pcf-fontname.py at rootfs build time (host-only; not a violation but the checker must scope to the target)."
+      - "docs/superpowers/plans/2026-08-14-gui.md G2: xcb-proto needs python codegen; resolved by a data-only overlay (configs/overlay/x11-base/xcb-proto) + HOST python - so host python is legitimate."
+
+  - id: D-bitmap-fonts-no-freetype
+    statement: >-
+      Bitmap-only fonts. NO freetype / fontconfig / Xft anywhere on the disc. Terminus (PCF) is the default X font; builtin libXfont 6x13 'fixed'
+      and cursor only for the server's cursor. Any package dragging freetype (e.g. font.eclass -> x11-apps/mkfontscale -> media-libs/freetype)
+      is rejected or the chain is satisfied with package.provided. suckless clients (st, dwm) are patched off Xft onto core X11 XLoadQueryFont.
+    source: "AGENTS.md:27-30,128-130; README.md:304-310; specs/2026-08-14-gui-design.md:0 and 7; configs/portage/profile/package.provided:19-27; commit 428c5f7 (#52) message 'verified: 0 scalable-font emerges'"
+    rationale: "Brand aesthetic (bitmap) and 486 size/RAM; freetype+fontconfig are a large dependency tree and Xft makes every X client heavier."
+    existing_check:
+      - {path: "configs/portage/profile/package.provided:25-27", what: "provides freetype-2.14.3, mkfontscale-1.2.4, encodings-1.1.0 so they are never merged (version atoms track the pinned tree; drift re-introduces freetype silently per the file comment)", tier: fast}
+      - {path: "scripts/build-rootfs.sh (terminus fonts.dir generation, build-time guard that each aliased XLFD exists in fonts.dir; see commits 010aac6/428c5f7)", what: "build-time guard for XLFD existence", tier: slow}
+    proposed_check: >-
+      On SBOM / VDB: fail if any of media-libs/freetype, media-libs/fontconfig, x11-libs/libXft, x11-apps/mkfontscale, media-fonts/font-misc-misc,
+      font-cursor-misc, x11-libs/libXrender is installed; on squashfs: fail on files matching libfreetype*, libfontconfig*, libXft*, fonts.conf,
+      and on any ELF that has NEEDED/strings 'FT_Init_FreeType'. Also assert versions of package.provided atoms still equal the versions in
+      versions.lock/tree (fast: compare package.provided freetype/mkfontscale/encodings versions to the pinned snapshot) so version drift cannot silently re-merge them.
+    tier: slow
+    contradicted_by:
+      - "none found in code. (The Rust browser www-client/stele carries its own compiled-in 8x8 bitmap font - consistent.)"
+
+  - id: D-no-readding-removed-things
+    statement: "Do not add back things deliberately removed (the maintainer notices). Known removals: w3m, nmap, man-db, gcc on target, usbutils, fortune-mod, thttpd, dashboard g and / shortcuts, /dashboard/ mirror, loadable ppp plugins, dnsmasq TFTP/DNSSEC/script/dbus, nftables inet family/readline, IPv6."
+    source: "AGENTS.md:31,42-43; README.md:111,203; RELEASE-READINESS.md:173-176,257-269; commits a93559a/88db40b (#53), e065a77/3acaee7, 8c7fc1a"
+    rationale: "Each removal was a cost/size/Python/policy decision; re-adding re-opens a closed argument."
+    existing_check:
+      - {path: "configs/portage/package.mask/problematic", what: "man-db, eigen-9999, docutils>=0.23 etc masked", tier: fast}
+      - {path: "web/app/router.js:123", what: "only 't' keyboard shortcut remains (convention, no test)", tier: null}
+    proposed_check: >-
+      Committed 'forbidden-atoms' list (w3m is currently in the README contradiction - see contradictions; nmap, man-db, sys-devel/gcc, dev-lang/python,
+      net-www/thttpd, fortune-mod, usbutils) diffed against configs/portage/world + versions.lock in pr-validate (fast). Plus a grep guard that web/app has no
+      keydown handler for 'g' or '/'.
+    tier: fast
+    contradicted_by:
+      - "configs/portage/world:219 still mentions w3m in a comment; plans/2026-08-19-monolith-ux-pass.md:24 lists w3m among tools on the disc; commit b42f8af/a72723c re-added w3m/bc/jq attempts on branches - README.md:111 says w3m excluded and bc/jq blocked. Real state of w3m/bc/jq in world: not in world (grep world shows only a comment)."
+      - "RELEASE-READINESS.md:173-176 says gdb was dropped (replaced by strace); README.md:87 and configs/portage/world:68 ship dev-debug/gdb (commit 12e8819 #31). RELEASE-READINESS is stale."
+
+  - id: D-no-dynamic-loading-no-dlopen
+    statement: "ZERO dlopen on the disc: no loadable plugins (ppp --disable-plugins), no sqlite load-extension, no perl XS .so (-Uusedl), no X input/driver modules (kdrive built-in drivers), no gdbserver in-process agent. Full Xorg disqualified on this alone."
+    source: "specs/2026-08-13-perl-for-the-monolith-design.md:7-12 (D2,D3); specs/2026-08-14-gui-design.md:1; configs/portage/env/ppp-no-plugins.conf; README.md:93,306; commit 3899e6f"
+    rationale: "Static-only toolchain has no loader policy; a dlopen target would silently break at runtime."
+    existing_check:
+      - {path: "scripts/boot-test.py smoke_perl_* / smoke_sqlite_cli / run_gui", what: "runtime smokes prove perl, sqlite3, Xfbdev, dwm, st actually run", tier: slow}
+    proposed_check: "On squashfs: no ELF contains dlopen@ in dynamic symbol table (static ELFs have none) and 'strings | grep -c libdl' is zero; and no *.so outside /lib/modules. Same artifact as D-all-static."
+    tier: slow
+    contradicted_by:
+      - "ld-musl-i386.so.1 shipped (see D-all-static)."
+
+  - id: D-clock-origin-1970
+    statement: >-
+      The clock-epoch origin sentinel is 1970-01-01 (Unix epoch), NOT Y2K. CLOCK_EPOCH_RTC = '1970-01-01T00:00:00' in boot-test.py. Runtime
+      monolith-time-check treats 1970/1980/2000 (SENTINELS='0 315532800 946684800') as dead-clock 'ignorance' sentinels (detection breadth, not origin).
+      The disc never assumes what year it is: trigger is IGNORANCE not plausibility; a correct 1996 clock must produce no warning and no network call.
+    source: "AGENTS.md:32-39; scripts/boot-test.py:463; configs/overlay/app-misc/monolith-base/files/monolith-time-check:58; plans/2026-08-19-monolith-ux-pass.md:42-80; commits b8d42c4, 3b2f8a7"
+    rationale: "Maintainer's project mythology; 2000 move was a misdiagnosis (hanging long ISOLINUX label, not the RTC) and was reverted."
+    existing_check:
+      - {path: "scripts/boot-test.py:463 (CLOCK_EPOCH_RTC) + modes clock-epoch, clock-1996 (MODE_RUNNERS)", what: "clock-epoch asserts dead RTC at 1970 is detected and left untouched (-nic none, hermetic); clock-1996 asserts no warning/no network call", tier: slow}
+      - {path: "scripts/tests/monolith-time-check.test.sh, scripts/tests/monolith-time.test.sh", what: "unit tests of detection and HTTP-Date setter", tier: fast}
+    proposed_check: "grep -n 'CLOCK_EPOCH_RTC *= *\"1970-01-01T00:00:00\"' scripts/boot-test.py in pr-validate (fast); keep clock-epoch + clock-1996 modes in the rebuilt oracle."
+    tier: fast
+    contradicted_by:
+      - "git history: commit e6fd44b moved the sentinel to 2000-01-01 claiming -rtc base=1970 is a deterministic hang under -cpu 486; b8d42c4 reverted it saying the cause was the long monolith_time_url ISOLINUX label. So the e6fd44b claim is considered wrong by the owner, but the clock-epoch test uses -nic none so a 1970 RTC under -cpu 486 is only exercised when hermetic; if the rebuild changes the QEMU CPU/flags, re-verify."
+
+  - id: D-supply-chain-honesty
+    statement: >-
+      Releases come through the verifiable pipeline. Digest-chain invariant: sha256(ISO) == bom.cdx.json metadata.component.hashes[0].content ==
+      SLSA attestation subject digest == attestation-summary.json iso_sha256; computed ONCE in attestation.sh. SLSA/Sigstore attestation is only
+      issued when the gate verdict (CVE, license, unowned) passes. CVE PASS must be falsifiable (scanner+db+policy identity, scanned/unscanned coverage,
+      daily canary scanning a Heartbleed fixture, canary asserts raw pre-policy findings not exit code). fail_on_unscanned defaults false (documented gap).
+    source: "AGENTS.md:41-43; docs/releasing.md:140-192; docs/cve-gate.md (whole); README.md:171-185; dacdfd1 commit body 'only issue the signed Sigstore attestation when the gate verdict is pass'"
+    rationale: "Project credibility is the attestation; an unfalsifiable PASS or a mismatched digest defeats it."
+    existing_check:
+      - {path: ".github/workflows/release.yml (digest re-verify before gh release create)", what: "re-hashes downloaded ISO against summary and SBOM", tier: slow}
+      - {path: ".github/workflows/cve-gate-canary.yml + scripts/run-cve-canary.sh", what: "scanner liveness canary on scripts/fixtures/canary-sbom.cdx.json (Heartbleed)", tier: fast}
+      - {path: "scripts/attestation.sh (five pillars, all run to completion; verdict aggregated)", what: "gate", tier: slow}
+    proposed_check: "Keep: digest-chain equality assert (3 values) in the attestation job; canary workflow; assertion that actions/attest step is skipped when summary.verdict != pass; assertion that cve-policy.yaml sha256 recorded in attestation-summary equals sha256sum of file (docs/cve-gate.md:321-323)."
+    tier: slow
+    contradicted_by:
+      - "docs/cve-gate.md:57-60 and :190-199 and README.md:185 say nightly-cve-monitor.py is orphaned/not scheduled; .github/workflows/nightly-cve-scan.yml (cron '0 4 * * *') now schedules it (commit dacdfd1 'schedule the previously-orphaned nightly CVE monitor'). Docs stale."
+      - "Hard S3 dependence: the release publish job downloads from S3, so the verify path is dead until redesigned."
+
+  - id: D-tag-builds-from-source
+    statement: "Tag (release) builds compile every package from source: MONOLITH_USEPKG=n drops --usepkg so no cached binary package enters a signed release."
+    source: "AGENTS.md:83-84; .github/workflows/build.yml:264-288; scripts/build-packages.sh:216-224; commit b0e0ca6 (#54)"
+    rationale: "Signed releases must not contain unattested/cached binaries."
+    existing_check:
+      - {path: ".github/workflows/build.yml:285", what: "MONOLITH_USEPKG expression startsWith(github.ref,'refs/tags/') -> 'n'", tier: fast}
+    proposed_check: "In the tag build, assert emerge log contains no 'Emerging binary' lines / assert classification in build-packages.sh reports source for every package (build-packages.sh classifies source-vs-binpkg since 16affed)."
+    tier: slow
+    contradicted_by: []
+
+  - id: D-revbump-on-overlay-change
+    statement: >-
+      Any change to an overlay ebuild, or to a savedconfig-governed package config, or to configs/kernel.config, must revbump (-rN, git mv) AND bump
+      versions.lock, because Portage binpkg reuse keys on version+USE+CHOST, not content. extract-packages.sh enforces versions.lock matches.
+      Cost seen: three identical failed runs of perl (same stale binary), gui startx r5 stale, monolith-base console HOME.
+    source: "AGENTS.md:134-136; docs/version-pinning.md:624-663; specs/2026-08-04-sp1...:3.1; specs/2026-09-17-legacy-fbdev...:'Ebuild revbump'; commits 2fda3a2, 63c5b3b, 5902b70, 0fbbb51"
+    rationale: "Stale S3/GHCR binpkg silently replaces the edited build; failure looks like the fix does nothing."
+    existing_check:
+      - {path: "scripts/savedconfig-cache.sh (+ scripts/tests/savedconfig-cache.test.sh)", what: "stores SHA-256 of each tracked savedconfig beside its binpkg and purges when changed (busybox only; kernel intentionally excluded)", tier: fast}
+      - {path: "scripts/extract-packages.sh (versions.lock pin enforcement)", what: "pinned version must match installed", tier: slow}
+      - {path: "scripts/verify-resolved-i2c-off.sh + build-packages.sh classification", what: "kernel resolved config shipped as package content so a cache hit still proves CONFIG_I2C", tier: slow}
+    proposed_check: >-
+      git-diff gate in pr-validate: if a PR touches configs/overlay/<cat>/<pkg>/(files/*|*.ebuild) or configs/kernel.config or configs/portage/savedconfig/* or
+      configs/initrd-modules.txt, then the same PR must contain a git rename of the ebuild to a higher -rN (or a new PV) and a changed versions.lock line for that atom.
+      Artifact: git diff base...HEAD.
+    tier: fast
+    contradicted_by:
+      - "docs/version-pinning.md:624-663 still tells operators to 'aws s3 rm' the binpkg; superseded by savedconfig-cache.sh (0fbbb51) and, after #46, the binpkg store moved from S3 to GHCR (scripts/binpkg-store.sh). Doc stale."
+
+  - id: D-hand-authored-rootfs-files-owned
+    statement: "Every hand-authored file in the rootfs must be owned by a package (app-misc/monolith-base) or listed in configs/attestation/unowned-allowlist.yaml, else attestation Pillar 4 fails the build. New file => new ownership or allowlist entry (also directories created by install -D)."
+    source: "AGENTS.md:137-139; docs/cve-gate.md:325-330 (table row unowned-allowlist.yaml); commit 89ac9b3 (#41); commit 5b79b9e (cgi-bin dir)"
+    rationale: "Pillar 4 'unowned files' honesty: nothing on disk may be unaccounted for."
+    existing_check:
+      - {path: "scripts/check-unowned.py invoked by scripts/attestation.sh (Pillar 4)", what: "fails on unowned file not matching allowlist", tier: slow}
+    proposed_check: "Same, plus shrink-only rule: allowlist must not grow without a justification line (fast diff check on configs/attestation/unowned-allowlist.yaml)."
+    tier: slow
+    contradicted_by:
+      - "README.md:79 says monolith-base owns 'formerly installed by build-rootfs.sh' files, but scripts/build-rootfs.sh still heredoc-installs /etc/profile.d/50-dropbear-hint.sh, rcK, rcS, inittab etc. (build-rootfs.sh:297-322, 479). Migration partial."
+
+  - id: D-state-and-no-hidden-stderr
+    statement: "Debugging discipline: capture stderr before theorizing (never 2>/dev/null while debugging); instrument both sides of a boundary early; every boot test must mean something and be de-flaked not retried (bounded launch-retry only for a silent QEMU startup that never reached /init)."
+    source: "AGENTS.md:58-63; commits 49cccbd (dd: not found masked), e5ab01c (wrong serial-starvation story corrected), 7a7081e (bounded relaunch)"
+    rationale: "Several multi-run debugging sessions chased wrong causes because of swallowed output."
+    existing_check:
+      - {path: "scripts/tests/boot-test-retry.test.sh", what: "locks the flake-vs-real-failure retry decision matrix (retry only when guest never reached /init)", tier: fast}
+    proposed_check: "lint: no '2>/dev/null' on commands in scripts/boot-test.py guest commands added without a comment (advisory); keep retry decision matrix test."
+    tier: fast
+    contradicted_by:
+      - "rootfs/init:465,483 still uses 2>/dev/null around the persist label cat|tr|grep probe (acceptable there; was the original masking site for dd)."
+
+  - id: D-486-tier-regime
+    statement: >-
+      Three-tier kernel driver regime. Tier 0 =y: boot-critical (ATA/PIIX/PATA southbridges, SR/CDROM, ISO9660/SQUASHFS/OVERLAY/TMPFS/VFAT, INITRD/DEVTMPFS,
+      serial/FB/FB_EFI/FB_VESA, ACPI/EFI, MODULES+UNLOAD). Tier 1: initramfs modules, broad, 'reach the boot media' (configs/initrd-modules.txt), loaded by kmod.
+      Tier 2: rootfs squashfs =m, coldplugged by modalias (NICs, mouse, evdev, legacy fbdev x27, netfilter). No firmware-blob drivers (CONFIG_EXTRA_FIRMWARE must be unset;
+      WiFi deferred). NICs/mouse/graphics belong in Tier 2. A bool symbol with depends on FB=y (FB_ASILIANT, FB_IMSTT) can never be Tier 2 so it is excluded.
+    source: "docs/kernel-tiers.md (all); specs/2026-08-04-sp1...:3,6; specs/2026-09-17-legacy-fbdev-design.md; AGENTS.md:169-170"
+    rationale: "Resolve 486 RAM vs modern-hardware coverage by when a driver is needed."
+    existing_check:
+      - {path: "scripts/tests/verify-nic-zoo-config.sh, verify-netfilter-config.sh, verify-legacy-fbdev-config.sh", what: "per-feature config intent checks incl. EXTRA_FIRMWARE unset (verify-nic-zoo-config.sh:18, verify-legacy-fbdev-config.sh:54)", tier: fast}
+      - {path: ".github/workflows/build.yml (steps 'Assert legacy fbdev kernel modules built and shipped', NIC .ko assertion, modinfo -F firmware empty)", what: ".ko ship + no firmware", tier: slow}
+      - {path: "scripts/boot-test.py modes nicless, nic, vga (cirrus), fbdev-modprobe, ahci, nvme, usb, virtio", what: "mechanism proof: negative NIC-less + 4 storage positive paths + coldplug of cirrusfb + no taint/oops on hand modprobe", tier: slow}
+    proposed_check: >-
+      Keep all of the above. Add: (a) TRIM_UNUSED_KSYMS watch: after any =y->=m flip, boot-test lsmod/modprobe of every changed module must not log 'Unknown symbol' (dmesg grep); (b) CONFIG_ATA_PIIX plus pata_via/sis/ali/legacy =y audit (docs/kernel-tiers.md:53-63 says audit still 'tracked separately' - open); (c) record bzImage before/after size per tier-changing PR.
+    tier: slow
+    contradicted_by:
+      - "docs/kernel-tiers.md:173 says 'Twenty-seven .ko modules' / 'Twenty-seven' while the spec says '24 symbols, 27 modules' and the table lists 27 symbols incl. 3 Geode - consistent count only for modules, not symbols; AGENTS.md:174-175 says '24 =m framebuffer drivers'. Minor count drift."
+      - "RELEASE-READINESS.md:247-255 says no module support (modules_install not run); now false (kernel ebuild runs modules_install since 513574d)."
+      - "README.md:167 lists Tulip/e100/e1000/8139/r8169/virtio as CONFIG_*; after SP1 these are =m, not built-in; text is not wrong but hides that they are modules."
+
+  - id: D-s3-publish-only
+    statement: "S3 is publish-only: nothing produced and consumed within one workflow run touches S3 (inner loop on actions/cache; versioned S3 uploads and 'latest' pointers only from master/tag builds; validation builds leave zero S3 footprint). K3s self-hosted runners deferred. (Binpkg store later moved from S3 to GHCR OCI artifact in #46.)"
+    source: "specs/2026-08-11-ci-transfer-cost-design.md; plans/2026-08-18-ci-efficiency-round2.md; AGENTS.md:198-200; commits 31f4b67 (#22), 49a21e1 (#46)"
+    rationale: "S3 egress was the dominant AWS cost (~17 ISO downloads per build)."
+    existing_check:
+      - {path: ".github/workflows/build.yml (PUBLISH_LATEST gating, actions/cache handoff keyed by run_id)", what: "implementation", tier: slow}
+    proposed_check: "grep boot-test/attestation job logs/steps for 'aws s3 cp|sync' reads (spec success criterion 1) - redesign target moot while S3 is dead: replace with the equivalent for the new object store."
+    tier: slow
+    contradicted_by:
+      - "AGENTS.md:198-200 says spec/plan live on branch feat/ci-transfer-cost - they are merged (#21,#22). AGENTS.md:195-197 says bucket has no lifecycle policy; scripts/s3-gc.sh + gc.yml apply weekly since #59 (1bcb2fe)."
+
+  - id: D-two-epoch-pin-model
+    statement: >-
+      Two independent pins: TOOLCHAIN_EPOCH (Dockerfile ARG; stage3 base + baked toolchain portage tree via emerge-webrsync --revert; bumped rarely, human-gated, drives crossdev.lock)
+      and BUILD_EPOCH (runtime portage snapshot injected by scripts/sync-portage.sh from the self-hosted mirror; drives versions.lock and SOURCE_DATE_EPOCH, bumped routinely).
+      A BUILD_EPOCH bump must NOT rebuild the builder image. Builder-image registry tag = TOOLCHAIN_EPOCH + hash of Dockerfile minus the two runtime-injected lines, and must be pushed on EVERY build (consumers pull by exact tag).
+      SOURCE_DATE_EPOCH == BUILD_EPOCH at midnight UTC.
+    source: "docs/version-pinning.md:7-125; specs/2026-08-12-decouple-portage-epoch-design.md; Dockerfile:28-44; commits abacc23 (#25), e30a034, b35e8fa"
+    rationale: "Snapshot pruning broke every build (20260803 outage); data refresh was forcing 100-min toolchain rebuilds."
+    existing_check:
+      - {path: "scripts/tests/sync-portage.test.sh", what: "S3-first/upstream-fallback/archive logic with stubbed aws+wget", tier: fast}
+      - {path: "scripts/update-build-pins.sh check/update (verify_portage_snapshot)", what: "refuses to bump to a date lacking a published snapshot; fail-closed assertion that Dockerfile changed", tier: fast}
+    proposed_check: >-
+      Fast: assert Dockerfile SOURCE_DATE_EPOCH == date -u -d "$BUILD_EPOCH" +%s (current 1786406400 == 2026-08-11 00:00 UTC: verify) ; assert exactly the two ARGs exist.
+      Slow: with the cached image, a BUILD_EPOCH-only diff leaves build-image reporting 'up to date' (acceptance criterion 1 of the spec).
+    tier: fast
+    contradicted_by:
+      - "docs/version-pinning.md:299-304 and :417-418 say no TOOLCHAIN_EPOCH bump automation exists; .github/workflows/toolchain-bump.yml and 'update-build-pins.sh update-toolchain' exist."
+      - "docs/version-pinning.md:531-534 (and :491-514 flow diagram header) say a bump PR is never auto-merged; .github/workflows/pin-bump.yml:372-396 auto-merges fully-green BUILD_EPOCH bumps (gh pr merge --squash --admin). Spec 2026-08-12 intended auto-merge."
+      - "AGENTS.md:201-204 / docs/version-pinning.md:337-360: the toolchain portage tree (Dockerfile:74 plain emerge-webrsync) and stage3 base are NOT mirrored to S3; a pruned TOOLCHAIN_EPOCH snapshot or GHCR eviction makes the image un-rebuildable. STILL OPEN."
+
+  - id: D-static-musl-cross-all-the-way
+    statement: "Cross-compile to i486-linux-musl via crossdev; CFLAGS -march=i486 -mtune=i486 -Os -fno-exceptions; host-native build tools use CFLAGS_FOR_BUILD='-O2 -m32' so 64-bit longs do not leak into 32-bit data files (nethack dlb); Dockerfile verifies host gcc -m32 multilib; IPv6 off (-ipv6, nft 'ip' family only); every source Manifest-pinned (BLAKE2B+SHA512); overlay ebuilds need '<cat>/<pkg> **' in package.accept_keywords/i486."
+    source: "configs/portage/make.conf:15-36; RELEASE-READINESS.md:41-57; Dockerfile:55-64; specs/2026-08-04-sp2...:3; commit 77ca4b3"
+    rationale: "ABI correctness and size."
+    existing_check:
+      - {path: "Dockerfile:55-64 (m32check)", what: "build fails if host gcc lacks -m32", tier: slow}
+    proposed_check: "Fast: every dir in configs/overlay/*/* with an ebuild has a '<cat>/<pkg> **' line in configs/portage/package.accept_keywords/i486 and a Manifest with BLAKE2B+SHA512 for every SRC_URI. Slow: all ELFs are EM_386."
+    tier: fast
+    contradicted_by:
+      - "RELEASE-READINESS.md:200-202 states CFLAGS_FOR_BUILD; in make.conf it is present (line 25-ish). Consistent."
+
+traps:
+  # ---------------- Agent workspace / git traps (harness, not product) ----------------
+  - id: T-git-dubious-ownership
+    symptom: "git: 'detected dubious ownership'; agent concludes 'there is no checkout here' and redoes work."
+    cause: "/workspace owned by root, runs as uid 1000; env exports GIT_CONFIG_KEY_0/VALUE_0 but GIT_CONFIG_COUNT is empty so git ignores the pair; GIT_CONFIG_GLOBAL/SYSTEM=/dev/null so the suggested git config --global fix also fails."
+    fix_in_repo: "scripts/agent-git-env.sh (export GIT_CONFIG_COUNT=2 / ensure safe.directory)"
+    source: "AGENTS.md:100-110; commit 87e43f5 (#63)"
+    regression_check: null
+    still_relevant_in_rebuild: "no - agent-harness trap, not product."
+    cost_when_hit: "six consecutive implementation passes on DCX-99"
+  - id: T-git-empty-identity
+    symptom: "fatal: empty ident name (for <>) not allowed when committing."
+    cause: "workspace exports GIT_AUTHOR_NAME/EMAIL/GIT_COMMITTER_* as empty strings; empty env identity outranks git -c user.name."
+    fix_in_repo: "scripts/agent-git-env.sh agent_git_clear_empty_identity"
+    source: "AGENTS.md:111-114; commit 87e43f5"
+    regression_check: null
+    still_relevant_in_rebuild: "no - harness trap."
+    cost_when_hit: "not stated"
+  - id: T-shallow-fresh-clone
+    symptom: "Branches/commits from a previous agent run are gone."
+    cause: "Workspace is a fresh shallow single-branch clone each run; shared workspace shares files, not git history."
+    fix_in_repo: "documentation only (AGENTS.md:115-119): git fetch --unshallow origin"
+    source: "AGENTS.md:115-119"
+    regression_check: null
+    still_relevant_in_rebuild: "no - harness trap."
+    cost_when_hit: "not stated"
+  - id: T-handoff-as-patch
+    symptom: "Agent work lost because only a local branch was produced."
+    cause: "Non-Release-Engineer agents have no push path (credential broker broker_transport_unavailable)."
+    fix_in_repo: "process rule (git format-patch origin/master --stdout > /tmp/dcx-NN.patch attached to the issue; replay with git am)"
+    source: "AGENTS.md:120-125"
+    regression_check: null
+    still_relevant_in_rebuild: "no - harness process."
+    cost_when_hit: "not stated"
+  - id: T-workflow-push-needs-pat
+    symptom: "Push of .github/workflows/* rejected."
+    cause: "default gh token scope gist,read:org,repo lacks 'workflow'; PAT from prior chat is exposed and must be rotated."
+    fix_in_repo: "process: use transient workflow-scoped PAT via git -c credential.helper or env-scoped GH_TOKEN; never write to .git/config. Commit 16affed deliberately landed zero workflow changes (DCX-137/138)."
+    source: "AGENTS.md:52-57; commit 16affed body"
+    regression_check: null
+    still_relevant_in_rebuild: "yes (process) - any workflow edit needs workflow scope; rotate the exposed PAT."
+    cost_when_hit: "stale build.yml comment at 'Assert resolved kernel config did not escalate CONFIG_I2C' left as accepted debt"
+
+  # ---------------- Packaging / dependency traps ----------------
+  - id: T-freetype-chain
+    symptom: "Adding any bitmap-font package silently pulls media-libs/freetype into the image."
+    cause: "font.eclass RDEPENDs x11-apps/mkfontscale which RDEPENDs freetype (and media-fonts/encodings)."
+    fix_in_repo: "configs/portage/profile/package.provided:25-27 (freetype-2.14.3, mkfontscale-1.2.4, encodings-1.1.0)"
+    source: "AGENTS.md:128-130; commit 428c5f7 (#52)"
+    regression_check: null
+    proposed_regression_check: "SBOM/VDB contains no freetype/mkfontscale; package.provided versions equal pinned tree versions (drift reintroduces freetype per the file comment)."
+    still_relevant_in_rebuild: "yes - carry package.provided forward; also keep terminus-font with USE pcf,pcf-unicode only."
+    cost_when_hit: "not stated"
+  - id: T-tmpfiles-systemd-utils-python
+    symptom: "emerge aborts at dependency resolution for ppp, mutt (via cyrus-sasl), man-db."
+    cause: "inherit tmpfiles -> virtual/tmpfiles -> only provider systemd-utils[tmpfiles] whose REQUIRED_USE needs python_single_target; other providers (seedfiles live ebuild, opentmpfiles) unusable."
+    fix_in_repo: "configs/portage/profile/package.provided:17 (virtual/tmpfiles-0-r7); configs/portage/package.mask/problematic:15 (man-db); configs/portage/package.use/static:264-268 (mutt uses gsasl not cyrus-sasl)"
+    source: "AGENTS.md:131-133; RELEASE-READINESS.md:257-261; commit a640d82"
+    regression_check: null
+    proposed_regression_check: "versions.lock contains no sys-apps/systemd-utils or dev-lang/python (fast)."
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "not stated"
+  - id: T-binpkg-revbump
+    symptom: "Edited an overlay ebuild/file or config and the fix does nothing; identical failure across runs (perl locale panic x3, startx stale, monolith-console HOME)."
+    cause: "emerge --usepkg reuses cached binpkg keyed on version+USE+CHOST (and deps); content changes are invisible."
+    fix_in_repo: "Convention: monolith-kernel-6.12.80-r8.ebuild, monolith-perl-5.42.0-r5, monolith-base-0.1.0-r6, monolith-xserver-...-r1, libXfont-1.5.4-r1 (each -rN is a past bust); versions.lock mirrors. Automated for busybox: scripts/savedconfig-cache.sh; kernel: resolved-config artifact (16affed)."
+    source: "AGENTS.md:134-136; docs/version-pinning.md:624-663; commits 2fda3a2, 63c5b3b, 5902b70, 0fbbb51, 16affed"
+    regression_check: "scripts/tests/savedconfig-cache.test.sh (busybox only); nothing for overlay ebuild edits"
+    proposed_regression_check: "see D-revbump-on-overlay-change git-diff gate."
+    still_relevant_in_rebuild: "yes - unless the rebuild keys binpkg cache on content hash of ebuild+files+config (then the convention can be replaced by a mechanical key)."
+    cost_when_hit: "perl: three full CI runs showed byte-identical panic; startx: a failed gui test"
+  - id: T-unowned-allowlist
+    symptom: "Attestation Pillar 4 fails: unowned files (e.g. /var/lib/nftables/rules-save, /etc/runlevels/sysinit/kmod-static-nodes, /usr/lib/cgi-bin dir, /etc/passwd-, 10-dropbear-hint.sh)."
+    cause: "pkg_postinst/OpenRC/build-generated or hand-authored files not in any package CONTENTS."
+    fix_in_repo: "configs/attestation/unowned-allowlist.yaml; long-term app-misc/monolith-base ebuild owns hand-authored files"
+    source: "AGENTS.md:137-139; commits bfdbfaf, f6c11df, 5b79b9e, dacdfd1"
+    regression_check: "Pillar 4 itself (scripts/check-unowned.py)"
+    still_relevant_in_rebuild: "yes (policy file is a recipe carried forward)"
+    cost_when_hit: "one extra CI cycle per new file"
+  - id: T-libatomic-static
+    symptom: "Packages needing 8-byte atomics on -march=i486 (iperf3, irssi/glib, w3m) fail to link -static: 'attempted static link of dynamic object libatomic.so'."
+    cause: "static-libs is not a real gcc USE flag (toolchain.eclass IUSE) so the package.use line was a no-op; cross-gcc built libatomic.so only."
+    fix_in_repo: "Dockerfile:191-202 (package.env for cross-i486-linux-musl/gcc with EXTRA_ECONF='--disable-shared --enable-static')"
+    source: "AGENTS.md:140-141; commit ee46601 (#32), 6d88aa1"
+    regression_check: null
+    proposed_regression_check: "cross sysroot has /usr/i486-linux-musl/usr/lib*/gcc/.../libatomic.a (fast in builder image)."
+    still_relevant_in_rebuild: "yes - Dockerfile toolchain recipe"
+    cost_when_hit: "forced a ~2h base-tools rebuild"
+  - id: T-acct-user-dnsmasq-race
+    symptom: "nat-router boot test: 'dnsmasq: not found' (and gawk missing); nondeterministic."
+    cause: "acct-user/dnsmasq auto-UID collision dies at pre-merge; --keep-going silently drops net-dns/dnsmasq (and dependents) from the rootfs."
+    fix_in_repo: "scripts/extract-packages.sh:90-105 (force-install dnsmasq --nodeps --usepkgonly if binary absent; only WARNS if still absent)"
+    source: "AGENTS.md:142-144; commits c877718 (#39), 0897866 (ci: force fresh build, since gh run rerun reuses the immutable run-scoped ISO cache)"
+    regression_check: "boot-test nat mode (needs dnsmasq)"
+    proposed_regression_check: "assert after extract: /usr/i486-linux-musl/usr/sbin/dnsmasq exists and is static; make the WARNING a hard failure."
+    still_relevant_in_rebuild: "yes (as long as --keep-going + acct-user are used); better to fail loudly on any dropped world package."
+    cost_when_hit: "intermittent red master; reruns reuse cached ISO so need a new commit"
+  - id: T-keep-going-hides-drops
+    symptom: "A world package silently missing from the ISO."
+    cause: "emerge --keep-going drops failed packages and their dependents; build still 'green' (build-packages.sh checks Failed: count)."
+    fix_in_repo: "none general; only dnsmasq special case (see T-acct-user-dnsmasq-race)."
+    source: "inferred from AGENTS.md:142-144 and commit 0897866; a43c046 ('Some binpkgs weren't getting created')"
+    regression_check: null
+    proposed_regression_check: "compare 'emerge -p @world' set from configs/portage/world with installed VDB in sysroot; fail if any world atom not installed (or not in explicit waiver list)."
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "not stated"
+  - id: T-overlay-keyword
+    symptom: "overlay package 'masked by: missing keyword' on i486."
+    cause: "overlay ebuilds carry KEYWORDS=~amd64; global '*/* ~x86' does not cover it."
+    fix_in_repo: "configs/portage/package.accept_keywords/i486 ('<cat>/<pkg> **' per overlay pkg)"
+    source: "commit 77ca4b3 / 7926f71 body; plans/2026-08-14-gui.md Global Constraints"
+    regression_check: null
+    proposed_regression_check: "see D-static-musl-cross-all-the-way fast check."
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "one failed CI run"
+  - id: T-use-minus-star-strips-needed-flags
+    symptom: "Features silently absent or REQUIRED_USE aborts: kmod 'tools' stripped (no modprobe/lsmod); dnsmasq NO_DHCP; mutt gsasl needs client; cpio needs app-alternatives/cpio gnu; nftables readline USE breaks static link."
+    cause: "global USE='-* minimal static static-libs ...' strips default-on flags and leaves any-of/exactly-one-of REQUIRED_USE unsatisfied."
+    fix_in_repo: "configs/portage/package.use/static (+dnsmasq, nftables files); commits 42912c2 (kmod tools), d7ae8e6 (dnsmasq dhcp, drop static flag to avoid -lgmp), eccd5c6 (nftables -readline), cf254aa (gsasl client), 0abc770 (cpio gnu)"
+    source: "commit bodies as listed"
+    regression_check: "boot-test smokes (modprobe present, nat-router DHCP)"
+    still_relevant_in_rebuild: "yes - recipe-level; record that USE='-*' is the base."
+    cost_when_hit: "one failed CI cycle each"
+  - id: T-shared-module-with-static-ldflags
+    symptom: "ld: 'crt1.o' in a -shared link / 'ld returned 1' for kmod (libkmod.so), libxml2 testdso, gpm .so under global -static."
+    cause: "meson/libtool targets that are shared_library()/shared_module() ignore default_library=static and get -static in LDFLAGS."
+    fix_in_repo: "configs/portage/bashrc:31-43 (kmod shared_library -> library rewrite); bashrc:103-113 (gpm Makefile patch); libxml2 testdso rewrite exists only on branch commit 22d7bca (not found in master bashrc - UNKNOWN whether merged)"
+    source: "commits f1f1bfc? no: f1ee1af (kmod), 23dbec2/e586958/49c7249 (gpm), 22d7bca (libxml2)"
+    regression_check: null
+    proposed_regression_check: "none practical beyond building them."
+    still_relevant_in_rebuild: "yes (bashrc is a recipe)"
+    cost_when_hit: "gpm: five commits in one day (2026-04-12)"
+  - id: T-glib-docutils-eigen-live
+    symptom: "glib build red post-pin: dev-cpp/eigen-9999 live ebuild patch fails on drifted git source."
+    cause: "glib unconditionally BDEPENDs docutils (rst2man); docutils-0.23 grew pillow -> pybind11 -> eigen-9999; package.mask was synced only to the cross sysroot, but BDEPEND resolves against HOST /etc/portage."
+    fix_in_repo: "scripts/build-packages.sh:61-81 (mirror package.mask to host /etc/portage); configs/portage/package.mask/problematic (eigen-9999, >=docutils-0.23)"
+    source: "commits cc92b3e, 5820a46 (branch commits, squashed in 87225c0 #48)"
+    regression_check: null
+    proposed_regression_check: "no live (-9999) ebuild in the emerge plan: grep build log for '9999'."
+    still_relevant_in_rebuild: "yes - recipe + factory behavior (host-side mask mirroring)"
+    cost_when_hit: "a full red build after the snapshot pin started working"
+  - id: T-live-ebuild-and-host-keyword-skew
+    symptom: "versions.lock pinned a ~amd64-only binutils (or live 9999 gcc) and target build failed 'masked by: missing keyword'."
+    cause: "update-versions.sh and crossdev query resolved best_visible against amd64 HOST config, not the i486 target (PORTAGE_CONFIGROOT=/usr/<target>, keywords ~x86); live 9999 ebuilds appeared under '**'."
+    fix_in_repo: "scripts/update-versions.sh (PORTAGE_CONFIGROOT target query), scripts/update-build-pins.sh (query constrained to '*/* ~*')"
+    source: "commits 1af38d3, 3 'ci(pins)' commits inside dacdfd1"
+    regression_check: null
+    proposed_regression_check: "versions.lock has no '*9999*'."
+    still_relevant_in_rebuild: "yes - versions.lock generator logic"
+    cost_when_hit: "3-month epoch jump broke several packages"
+  - id: T-crosssysroot-missing-accounts
+    symptom: "fowners: invalid group in /usr/i486-linux-musl/etc/group: root:portage (eselect, vim, lua, bsd-games root:gamestat)."
+    cause: "crossdev sysroot has no portage group and not even root in passwd/group until baselayout."
+    fix_in_repo: "scripts/build-packages.sh:95-110 seeds root/portage/games/gamestat accounts idempotently before emerge"
+    source: "dacdfd1 body ('build: add portage user/group', 'build: seed root/portage/games accounts')"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "two CI cycles"
+  - id: T-nethack-abi
+    symptom: "nethack dlb/makedefs built x86_64 (64-bit long) but consumed by i386 nethack: corrupt nhdat; ld: i386 architecture of makedefs.o incompatible with x86-64 output; implicit-decl errors in gnu11 for K&R srand48()."
+    cause: "host-native build tools in the cross build use the wrong ABI / GCC14 default std."
+    fix_in_repo: "configs/portage/make.conf CFLAGS_FOR_BUILD='-O2 -m32'; configs/portage/bashrc:297-304 (CC_FOR_BUILD hook, LFLAGS/LDFLAGS -m32, gnu89); Dockerfile:55-64 (m32 check)"
+    source: "RELEASE-READINESS.md:41-57; commits bfb3a1d, 7168005, baace4f, 32b4e00"
+    regression_check: "Dockerfile m32check; nethack runtime launch not tested in boot-test (RELEASE-READINESS.md:54-57 deferred)"
+    still_relevant_in_rebuild: "yes (nethack =3.6.7-r1 still in world:308)"
+    cost_when_hit: "several commits 2026-03-30"
+  - id: T-nethack-5-from-epoch-bump
+    symptom: "Epoch bump resolves nethack to 5.0.0-r1 (needs lua USE, risky) -> build risk."
+    cause: "unpinned atom; major jump."
+    fix_in_repo: "configs/portage/world:302-308 pins =games-roguelike/nethack-3.6.7-r1"
+    source: "dacdfd1 body 'build: drop nethack from world'"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+
+  # ---------------- Cross / language recipes ----------------
+  - id: T-rust-i486-musl
+    symptom: "rl144/stele link: ld cannot find -lunwind, crtend.o/crtn.o, self-contained linking, wrong panic flags."
+    cause: "crossdev musl toolchain has no libunwind (unwinder is in libgcc_eh); rustc self-contained linking uses empty rustlib dir; build-std panic strategy must be set on the target spec."
+    fix_in_repo: "configs/overlay/games-roguelike/rl144/files/i486-unknown-linux-musl.json (panic-strategy abort); rl144/stele ebuilds (-Clink-self-contained=no, libgcc_eh.a aliased as libunwind.a, RUSTFLAGS); Dockerfile:159-163 pinned rustup nightly (must match rl144 ebuild and rust-toolchain.toml)"
+    source: "AGENTS.md:147-148 ('6 link fixes'); commits 4fb0a02, 8998435, de50dfb, 79c1e1f, caf47e7, bef3007"
+    regression_check: "build + readelf static i386 assert in ebuild"
+    still_relevant_in_rebuild: "yes (RESTRICT=network-sandbox for crates.io; stele needs REPIN each build, license file in upstream)"
+    cost_when_hit: "about 6 CI iterations (2026-08-04)"
+  - id: T-perl-cross-static-musl
+    symptom: "monolith-perl: implicit declaration memrchr/setresuid/eaccess; multiple definition Perl_get_ANYOFHbbm_contents (re ext); boot panic locale.c \"needs an '=' to split name=value\"; CGI fails \"Can't locate File/Spec.pm / Fcntl.pm\"."
+    cause: "musl needs _GNU_SOURCE; re ext recompiles regcomp.c in a -Uusedl static link; perl-cross hardcodes glibc LC_ALL profile (config.h patch reverts on make); perl-cross bakes static-ext XS into libperl.a but never runs per-module pm_to_blib (fake stamp), so no .pm installed."
+    fix_in_repo: "configs/overlay/dev-lang/monolith-perl/monolith-perl-5.42.0-r5.ebuild (-D_GNU_SOURCE, --allow-multiple-definition, -DNO_LOCALE, rm fake pm_to_blib stamps + run real pm_to_blib in src_compile, backfill/verify .pm)"
+    source: "AGENTS.md:149-151; commits cd0dfed, b6e6047, 436e8e9 (and failed fd2301a/1d3fb43), 1e60927..9a658da; spec 2026-08-13 section 5 timebox/pairing rule"
+    regression_check: "boot-test smoke_perl_version/basic/utf8, CGI+guestbook smoke"
+    still_relevant_in_rebuild: "yes (recipe). perl-cross 1.6.4 STRICTLY paired with perl 5.42.0."
+    cost_when_hit: "about 12 CI cycles (SP5)"
+  - id: T-dbd-sqlite-static-ext
+    symptom: "DBI/DBD::SQLite cannot be baked into -Uusedl perl; bake attempt (3867320) reverted."
+    cause: "DBD::SQLite Makefile.PL needs importable DBI at configure time but miniperl cannot load DBI XS (chicken-and-egg)."
+    fix_in_repo: "workaround: guestbook uses sqlite3 CLI (configs/overlay/app-misc/monolith-base/files/guestbook.cgi); ebuild comments at monolith-perl-5.42.0-r5.ebuild:100-118. DBD NOT shipped."
+    source: "AGENTS.md:152-154; README.md:88"
+    regression_check: null
+    still_relevant_in_rebuild: "yes - spec D4 (DBI+DBD baked) remained unmet"
+    cost_when_hit: "one reverted attempt"
+  - id: T-sqlite-autosetup
+    symptom: "sqlite-autoconf 3.53.x configure: Unknown option --dynamic-extensions."
+    cause: "autosetup configure; flag is --disable-load-extension."
+    fix_in_repo: "configs/overlay/dev-db/monolith-sqlite/monolith-sqlite-3.53.4.ebuild"
+    source: "commit a809c49"
+    regression_check: "smoke_sqlite_cli"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "one CI cycle"
+  - id: T-sqlite-cli-box-mode
+    symptom: "boot-test guestbook assertion missed 'Ada|Hello from 1996'."
+    cause: "sqlite 3.53 on a tty defaults to box output; -separator is list-mode only."
+    fix_in_repo: "scripts/boot-test.py (sqlite3 -list)"
+    source: "commit 7240e12"
+    regression_check: "boot-test guestbook smoke"
+    still_relevant_in_rebuild: "yes (test detail)"
+    cost_when_hit: "one cycle"
+  - id: T-tinyx-xfbdev
+    symptom: "Xfbdev build: missing XShm.h/sync.h/XTest.h/Xauth.h/Xdmcp.h; GCC14 hard errors; startup 'could not open default font fixed'; '-fbdev' unrecognized; 'no screens found'."
+    cause: "tinyx (2007 kdrive) reuses CLIENT headers from libXext/libXau/libXdmcp; tinyx shipped dix-config.h.in lacks KDRIVESERVER so builtin-font FPE never registered; Xfbdev flag is -fb; plain 'serial' ISOLINUX label has no vga= so vesafb stays text mode."
+    fix_in_repo: "configs/overlay/x11-base/monolith-xserver/files/{XShm,sync,XTest,Xauth,Xdmcp}.h (5 vendored shims) + ebuild append-flags -Wno-error={...} and append-cppflags -DKDRIVESERVER (ebuild:105-114); libXfont v1 overlay with --enable-builtins; ISOLINUX serial label vga=788 in scripts/build-iso.sh; boot-test run_gui uses -fb and -fp built-ins"
+    source: "AGENTS.md:155-157; commits f13bfa1, ee8d787, 7f07e49, b3e714a, 5d42525"
+    regression_check: "boot-test gui mode"
+    still_relevant_in_rebuild: "yes (recipe). Lesson: enumerate whole header gap before spending another build cycle."
+    cost_when_hit: "3 builds for the server + 5 gui-boot-test builds"
+  - id: T-xcb-proto-python
+    symptom: "libxcb/libX11 build fails: xcb-proto REQUIRED_USE needs PYTHON_TARGET, then drags target dev-lang/python -> masked zstd; libxml2 masked."
+    cause: "::gentoo xcb-proto is python-r1; python-any-r1 BDEPEND of libxcb."
+    fix_in_repo: "configs/overlay/x11-base/xcb-proto/xcb-proto-1.17.0.ebuild (data-only overlay: XML + pure-python xcbgen, no deps; no-op python_targets IUSE); libxcb runs codegen with HOST python"
+    source: "AGENTS.md:158-159; commits 7edaef4, 9ac2133, ab6408e, 467a5b0"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "four fix commits"
+  - id: T-suckless-xft
+    symptom: "dwm built dynamic -> 'dwm: not found' on static rootfs; st built with host c99 ('CPU does not support x86-64'); Manifest DIST name mismatch after SRC_URI rename."
+    cause: "dwm Makefile hard-assigns LDFLAGS shadowing env -static; st config.mk hardcodes CC=c99."
+    fix_in_repo: "configs/overlay/x11-wm/monolith-dwm/monolith-dwm-6.5-r2.ebuild:54-62 (force -static, pkg-config --static); monolith-st-0.9.2-r2 ebuild (CC=$(tc-getCC)); dwm/st core-fonts patches"
+    source: "commits 9ad3cd0, b1de5cc, c8c807c"
+    regression_check: "boot-test gui mode asserts dwm alive"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-terminus-xlfd
+    symptom: "XLFD strings guessed from memory don't match guard."
+    cause: "PCF FONT property is CamelCase -xos4-Terminus-Medium-R-Normal--16-160-72-72-C-80-ISO10646-1."
+    fix_in_repo: "scripts/pcf-fontname.py + fonts.alias generation in scripts/build-rootfs.sh; build-time guard checks each aliased XLFD is in fonts.dir"
+    source: "AGENTS.md:160-162; commit 010aac6; scripts/tests/pcf-fontname.test.sh"
+    regression_check: "scripts/tests/pcf-fontname.test.sh (fast) + build-time guard"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "one cycle"
+  - id: T-gdb-static
+    symptom: "gdb: new-op.cc try/catch error; in-process agent .so breaks -static; CI runner OOM compiling gdb."
+    cause: "global -fno-exceptions; USE=server builds a .so; C++ compile memory."
+    fix_in_repo: "configs/portage/env/fexceptions.conf, env/gdb-lowmem.conf (MAKEOPTS=-j1), package.use gdb -server"
+    source: "commits 6712dd8, 3899e6f, d058f72 (#31)"
+    regression_check: null
+    still_relevant_in_rebuild: "yes (runner RAM-dependent)"
+    cost_when_hit: "three fixes"
+  - id: T-ppp-mutt-tinfo
+    symptom: "mutt UI link fails; ppp plugins break static."
+    cause: "ncurses tinfo-split needs -ltinfo; ppp plugins are dlopen'd."
+    fix_in_repo: "configs/portage/env/mutt-tinfo.conf, env/ppp-no-plugins.conf, world:141-144 (gsasl not cyrus-sasl)"
+    source: "README.md:93; commit c004ca3 (#30), 38edc8c"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-runner-oom
+    symptom: "GitHub runner OOM during cross-gcc, kernel and makewhatis."
+    cause: "free runner memory limits; JOBS parallelism."
+    fix_in_repo: "build.yml invokes 'make build-packages JOBS=2 LOAD_AVG=2' (build.yml:288); env/gdb-lowmem.conf; commits 5513568, 968c214, b424cd2"
+    source: "commits 5513568, 968c214"
+    regression_check: null
+    still_relevant_in_rebuild: "yes - the rebuild must budget RAM per job"
+    cost_when_hit: "n/a"
+  - id: T-github-api-503-installs
+    symptom: "~2h base-tools rebuild killed by transient GitHub 503/000 on syft/grype release download."
+    cause: "one-shot curl in Dockerfile."
+    fix_in_repo: "Dockerfile syft/grype install wrapped in 6x/30s retry loop"
+    source: "commit 9fc7688"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "a ~2h rebuild"
+
+  # ---------------- Boot / runtime traps ----------------
+  - id: T-initrd-busybox-missing-applets
+    symptom: "initramfs: 'modprobe not available', 'uname: not found', 'basename: not found', 'dd: not found', findfs absent, 'find' absent; coldplug loads 0 modules; persist partition never detected; USB boot fails."
+    cause: "Gentoo busybox ebuild drops modutils applets regardless of savedconfig (kmod provides them); initramfs busybox savedconfig lacks CONFIG_DD/AWK; findfs CONFIG set but shipped binpkg stale; kernel-started PID1 has minimal PATH (command -v fails)."
+    fix_in_repo: "scripts/build-initrd.sh:97-101 (install static kmod, symlink modprobe/depmod/insmod/lsmod/rmmod/modinfo); rootfs/init:456-483 (cat|tr -d '\\000'|grep -q MONOLITH_PERSIST), POSIX ${X##*/} instead of basename, explicit /sbin/modprobe paths + exported PATH; CONFIG_FIND/FEATURE_FIND_TYPE enabled in configs/portage/savedconfig/sys-apps/busybox"
+    source: "AGENTS.md:165-166; commits fbb181e, b8aced7, 4f47175, c627319 (#9), 49cccbd, 684473d"
+    regression_check: "boot-test persist, ahci/nvme/usb/virtio modes"
+    still_relevant_in_rebuild: "yes - tiny reasoned init. Note two debugging dead ends (dd bs=1, offset 0) cost 6 commits because stderr was hidden."
+    cost_when_hit: "about 8 commits / multiple full CI runs"
+  - id: T-persist-race
+    symptom: "persist falls back to tmpfs; MONOLITH_PERSIST disk never mounted."
+    cause: "block enumeration races init: CD found via /dev/sr0 at once, virtio_blk probes /dev/vda ~0.2 s later; wait_for_device only ran after a device was found."
+    fix_in_repo: "rootfs/init: bounded detection poll (up to 8x1s)"
+    source: "commit e6fd44b"
+    regression_check: "boot-test persist mode (asserts /overlay fstype contains ext4; no awk on disc - use /proc/mounts read)"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-console-home
+    symptom: "bash history lands in //.bash_history."
+    cause: "agetty -n auto-login skips login(1) so HOME is /."
+    fix_in_repo: "configs/overlay/app-misc/monolith-base/files/monolith-console:21 (export HOME=/root USER=root LOGNAME=root)"
+    source: "commit 5902b70"
+    regression_check: "boot-test persist (history survives reboot)"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-pivot-root-overlay
+    symptom: "boot-test timed out on a milestone a healthy boot never emitted."
+    cause: "pivot_root returns EINVAL on overlayfs root, init falls back to switch_root, which skipped printing '[init] Executing ...'."
+    fix_in_repo: "rootfs/init (milestone printed on both paths; pivot_root at line 586 falls back)"
+    source: "commit 0ae5916"
+    regression_check: "boot-test milestones"
+    still_relevant_in_rebuild: "yes (oracle depends on these exact milestone strings)"
+    cost_when_hit: "fixed bios 64/256 + toram"
+  - id: T-rcK-no-poweroff
+    symptom: "QEMU never powers off; 300 s hang then force-kill; reboot skipped kill script."
+    cause: "rcK did killall5/umount/sync but never triggered final power action; inittab lacked runlevel 6 entry."
+    fix_in_repo: "scripts/build-rootfs.sh:479-480 (reboot -f / poweroff -f based on runlevel captured before /run/utmp unmount); inittab l0/l6 entries; CONFIG_ACPI=y Tier 0"
+    source: "RELEASE-READINESS.md:67-76; commit ad8302a"
+    regression_check: "boot-test termination relies on ACPI S5 (docs/kernel-tiers.md:46)"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "all 4 boot tests red"
+  - id: T-grub-initrd-same-line
+    symptom: "Hyper-V Gen2/UEFI: vanilla, framebuffer and toram GRUB entries freeze; only serial/debug/rescue boot."
+    cause: "'initrd /boot/initrd.img' put on the same line as 'linux' becomes kernel cmdline; initramfs never loaded. CI only tested the serial entry. Also efifb freezes on Hyper-V Gen2; default must be plain (index 0)."
+    fix_in_repo: "scripts/build-iso.sh:307-320 (initrd on own line); set default=0; boot-test GRUB_SERIAL_ENTRY_DOWN_PRESSES updated; ab8705c enabled hyperv_fb/HID/NET/BALLOON =m"
+    source: "commit 259a6af (#11); ab8705c (#10); 329f9ea (older GRUB needed for Hyper-V)"
+    regression_check: "boot-test uefi mode only exercises (serial) entry - gap"
+    proposed_regression_check: "grep build-iso.sh generated grub.cfg: no 'linux ... initrd' on one line; every menuentry has its own initrd line (fast, static parse)."
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "long-standing user-visible freeze report"
+  - id: T-makewhatis-oom
+    symptom: "mandoc makewhatis OOM-killed at boot on 64 MB Gen1/BIOS; 'outdated mandoc.db' warning."
+    cause: "makewhatis ~24 MB RSS; (wrong belief: it stores absolute paths) - real cause of stale db was build-container path/timestamps."
+    fix_in_repo: "scripts/build-rootfs.sh:427-431 and makewhatis run at build time against final rootfs; no boot-time run"
+    source: "commits fa933e0 then 218d432 (supersedes)"
+    regression_check: "boot-test man smoke on 64M"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-isolinux-timeout
+    symptom: "boot-test flake: label typed into the booted shell ('bash: serial: command not found')."
+    cause: "ISOLINUX boot: prompt auto-boots DEFAULT after 5 s; pexpect under CI load delivers keystroke late."
+    fix_in_repo: "scripts/build-iso.sh:173 TIMEOUT 300 (30 s)"
+    source: "commit 673f60e (#15)"
+    regression_check: "boot-test bios/nic modes"
+    still_relevant_in_rebuild: "yes (also: long APPEND labels containing '://' hang ISOLINUX - commit b8d42c4; ISO has no SERIAL directive so QEMU must use -nographic -serial mon:stdio to see the prompt)"
+    cost_when_hit: "coin-flip failure on master"
+  - id: T-nat-router-serial-starvation
+    symptom: "nat-router: client gateway ARP 100% loss / curl exit 7; intermittent."
+    cause: "REAL cause (confirmed by 4 stable runs): parent stops reading the router QEMU's stdout pipe while driving the client; pipe fills; router QEMU blocks and its netdev packet pump freezes. Earlier hypotheses (IPv6 bind, TCP vs UDP socket netdev, warmup race, link-local) were wrong or partial."
+    fix_in_repo: "scripts/boot-test.py:2083 drain_router() called before each cross-guest step"
+    source: "commit 3b653c5 (and e5ab01c which says the 'starvation' story for the monolith-router link-local bug was a different, genuine bug)"
+    regression_check: "boot-test nat mode"
+    still_relevant_in_rebuild: "yes - oracle: any multi-QEMU test must drain every child"
+    cost_when_hit: "about 6 commits (6df073e, de8a4fe, 378ef9f, 4dd8ba6, 3b653c5)"
+  - id: T-router-link-local
+    symptom: "monolith-router reports 'NAT up' but client cannot reach gateway; flaky."
+    cause: "cmd_up skipped assigning LAN CIDR if iface had any inet; a boot-time failed DHCP leaves a 169.254 link-local."
+    fix_in_repo: "configs/overlay/app-misc/monolith-base/files/monolith-router:162-165 (delete 169.254.* then add CIDR idempotently); tests in scripts/tests/monolith-router.test.sh"
+    source: "AGENTS.md:167-168; commit e5ab01c (#18)"
+    regression_check: "scripts/tests/monolith-router.test.sh + boot-test nat"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "flaky master"
+  - id: T-nft-inet-and-readline
+    symptom: "nft 'inet' family fails; nftables configure 'No suitable libreadline'; ip_forward assertion fails on bracketed-paste escape."
+    cause: "kernel has IPv6 off (inet needs IPv6); static -lreadline probe lacks -ltinfo; bash emits \\x1b[?2004l before output."
+    fix_in_repo: "monolith-router uses 'table ip' (lines 170-222); CONFIG_NF_TABLES_IPV4=y; package.use/nftables -readline; boot-test regex tolerant"
+    source: "commits 38f6f24, 67fb061, eccd5c6, 957da6c (#14)"
+    regression_check: "scripts/tests/verify-netfilter-config.sh, verify-nftables-pkg.sh, monolith-router.test.sh"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-dnsmasq-build-and-dhcpcd-hostname
+    symptom: "dnsmasq built DNS-only (-DNO_DHCP); link fails -lgmp; client lease hostname '*', no DNS registration."
+    cause: "USE='-*' strips +dhcp; ebuild 'static' flag adds -DHAVE_DNSSEC_STATIC => -lgmp; boot dhcpcd -b already running so 'dhcpcd --hostname' only sent a control command."
+    fix_in_repo: "configs/portage/package.use/dnsmasq (dhcp on, static flag off); scripts/boot-test.py nat mode stops boot dhcpcd (-x/-k) before fresh lease with --hostname"
+    source: "commits d7ae8e6, ff68c21"
+    regression_check: "boot-test nat mode (lease + home.arpa resolution)"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "about 8 commits"
+  - id: T-isa-ne-needs-irq
+    symptom: "monolith-net probe finds QEMU ne2k_isa at io=0x300 but no interface."
+    cause: "ne driver IRQ autodetect fails; needs explicit irq (9 first)."
+    fix_in_repo: "configs/overlay/app-misc/monolith-base/files/monolith-net (io x irq sweep for ne; wd/lance io-only)"
+    source: "commit 875f3e1 (#13)"
+    regression_check: "boot-test --mode nic --nic-model ne2k_isa; scripts/tests/monolith-net.test.sh"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-ahci-q35-nic
+    symptom: "AHCI storage variant failed on eth0 check."
+    cause: "q35 default NIC e1000e not in kernel."
+    fix_in_repo: "storage-variant smoke suites are network-free (boot-test)"
+    source: "commit 312bdc4; also SDHCI symbols are CONFIG_MMC_SDHCI/_PCI not CONFIG_SDHCI"
+    regression_check: "boot-test ahci"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-toram-ram
+    symptom: "toram OOM at 128M."
+    cause: "copies full squashfs into RAM plus 50% tmpfs overlay."
+    fix_in_repo: "boot-test.py toram default RAM 512M"
+    source: "dacdfd1 body 'fix: address PR review'"
+    regression_check: "boot-test toram"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-boot-test-wrong-cause-clock
+    symptom: "clock-epoch test hangs; blamed on 1970 RTC under -cpu 486; sentinel moved to 2000."
+    cause: "long label 'serial monolith_time_url=http://...' typed at ISOLINUX boot: hangs ISOLINUX; RTC innocent."
+    fix_in_repo: "scripts/boot-test.py:463 (1970 restored), bare 'serial' label, clock-epoch uses -nic none for hermetic detection"
+    source: "AGENTS.md:32-39; commits b8d42c4, 9448681, 3b2f8a7"
+    regression_check: "boot-test clock-epoch"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "several commits"
+  - id: T-gui-boot-labels
+    symptom: "Xfbdev 'no screens found'; screendump is VGA text mode."
+    cause: "plain 'serial' label sets console=ttyS0 but no vga= so no graphical fb; -display none blinds ISOLINUX-over-serial."
+    fix_in_repo: "scripts/build-iso.sh serial label APPEND vga=788; boot-test gui uses -nographic -serial mon:stdio -vga std + separate -qmp socket for screendump"
+    source: "commits b3e714a, 26b780a body"
+    regression_check: "boot-test gui"
+    still_relevant_in_rebuild: "yes (oracle detail)"
+    cost_when_hit: "1 CI cycle"
+  - id: T-startx-lean-fonts
+    symptom: "Xfbdev: 'could not init /usr/share/fonts/misc', 'could not open default cursor font'."
+    cause: "stale cached monolith-base r5 with old startx (see T-binpkg-revbump)."
+    fix_in_repo: "monolith-base-0.1.0-r6 (startx -fp monolith,terminus,built-ins)"
+    source: "commit 63c5b3b"
+    regression_check: "boot-test gui"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+
+  # ---------------- CI / release / attestation traps ----------------
+  - id: T-attest-entry-workflow
+    symptom: "actions/attest@v2: 'Failed to persist attestation: Invalid Argument - values do not match: build.yml != release.yml'."
+    cause: "GitHub binds the Sigstore cert SAN to the workflow that ran (build.yml) but the persist API validates the ENTRY workflow (release.yml) when build.yml is a workflow_call; only manifests on a real tag."
+    fix_in_repo: ".github/workflows/build.yml:18-22 push.tags ['v*.*.*'], no workflow_call; .github/workflows/release.yml:32-60 workflow_run [Build] completed, publish-only, gated on conclusion==success, event==push, head_branch startswith v"
+    source: "AGENTS.md:182-185; docs/releasing.md:75-138; docs/version-pinning.md:548-559; commit dcb7ff4 (#55)"
+    regression_check: null
+    proposed_regression_check: "actionlint + a static check that build.yml has no workflow_call and that attest step is in a job of build.yml (fast); only a real tag exercises it (slow, manual)."
+    still_relevant_in_rebuild: "yes - core constraint on how build/attest/publish are split"
+    cost_when_hit: "release v0.1.0-rc1 failed once; whole build+19 boot tests passed before the failure"
+  - id: T-prerelease-never-latest
+    symptom: "gh release create: HTTP 422 Latest release cannot be draft or prerelease."
+    cause: "GitHub forbids Latest on a prerelease."
+    fix_in_repo: ".github/workflows/release.yml:247-259 (--prerelease --latest=false for -rcN/-betaN)"
+    source: "AGENTS.md:186-187; docs/releasing.md:40-49; commit e20a252 (#56)"
+    regression_check: null
+    proposed_regression_check: "dry-run flag construction function unit test: tag suffix -> flags."
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "release publish failed once"
+  - id: T-dashboard-sort
+    symptom: "Dashboard marks a random week-old build LATEST."
+    cause: "builds sorted by tag assuming YYYYMMDD prefix; BUILD_EPOCH pinned so all share prefix; sha decides; tag 0.1.0-rc1 wouldn't lexsort either."
+    fix_in_repo: "scripts/generate-dashboard.py sort by attestation ISO timestamp (tag tiebreak)"
+    source: "AGENTS.md:88-89; commit f4dc8a3 (#54)"
+    regression_check: null
+    proposed_regression_check: "unit test with two fixtures sharing an epoch prefix."
+    still_relevant_in_rebuild: "yes (if dashboard is rebuilt)"
+    cost_when_hit: "n/a"
+  - id: T-recovery-pattern
+    symptom: "Build green, publish/wrapper failed."
+    cause: "release.yml separate job fails."
+    fix_in_repo: "process: download ISO + bom.cdx.json + attestation-summary.json from public S3; verify sha256(ISO)==summary.iso_sha256==SBOM hashes[0] AND 'gh attestation verify'; then gh release create manually (v0.1.0-rc1 was published this way)"
+    source: "AGENTS.md:64-66,188-192"
+    regression_check: null
+    still_relevant_in_rebuild: "yes (process) but S3 half is dead; attestation lives in GitHub store keyed by ISO sha."
+    cost_when_hit: "avoids 30-60 min rebuild"
+  - id: T-schema-validation-hang
+    symptom: "CycloneDX schema validation step hung for hours."
+    cause: "published SBOM had 16,553 'file' components (7 MB); check-jsonschema resolved relative $refs against cyclonedx.org over network."
+    fix_in_repo: "scripts/enrich-sbom.py drops type=file components, sanitizes license.id via configs/attestation/spdx-license-ids.txt, dedups dependencies; vendored schemas configs/attestation/schemas/ (bom-1.6, bom-1.7 - Syft emits 1.7 - cryptography-defs); build.yml validates offline with timeout, timeout is failure"
+    source: "commits 7ce95c9, 999e511, 1371c6f"
+    regression_check: "build.yml schema step"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "hours of CI"
+  - id: T-syft-quirks
+    symptom: "Syft rejects absolute --exclude; bails on /proc /sys /dev; builder SBOM bloats with file metadata; SLSA buildType rejected."
+    cause: "Syft requires excludes starting ./ */ **/; pseudo-filesystems; GitHub Attestations API only accepts buildType https://actions.github.io/buildtypes/workflow/v1."
+    fix_in_repo: "scripts/attestation.sh:517-520; scripts/generate-provenance.py:113"
+    source: "commits 7afbfb8, 92a545a, 44b4e5b, caec856"
+    regression_check: "Pillar 5 / attest step"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-mksquashfs-sde
+    symptom: "mksquashfs error."
+    cause: "4.5+ reads SOURCE_DATE_EPOCH from env; passing -all-time too is an error."
+    fix_in_repo: "scripts/build-rootfs.sh:721-722"
+    source: "commit aa6a41c, d4bd9ab"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-portage-snapshot-fetch
+    symptom: "Every build 100% binpkg cache miss / tree drift; snapshot 404 outage after Gentoo prunes ~5-day-old dailies."
+    cause: "emerge-webrsync cannot read file:// mirrors, silently falls back to distfiles.gentoo.org where the tarball is re-rolled; pruning breaks pinned epoch."
+    fix_in_repo: "scripts/sync-portage.sh:75 (serve pinned S3 tarball over http on 127.0.0.1, NO upstream fallback in the webrsync step; S3-first then upstream archive-back with ::warning on archive failure)"
+    source: "commits 93a3618, abacc23, e30a034"
+    regression_check: "scripts/tests/sync-portage.test.sh"
+    still_relevant_in_rebuild: "yes - but S3 mirror is dead; needs replacement store. GPG verification (Gentoo release key DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D) must be preserved."
+    cost_when_hit: "total build outage once; cold builds for weeks"
+  - id: T-pin-bump-false-green
+    symptom: "Bot PR #20 'bump 20260803 -> 20260810' never changed the Dockerfile but validated green at old epoch."
+    cause: "cmd_check keyed off stage3 tag only; portage snapshot not yet published; bump step '| tee' masked exit 1."
+    fix_in_repo: "scripts/update-build-pins.sh cmd_check also verify_portage_snapshot; pin-bump.yml bump step set -euo pipefail + post-bump assertion on ARG BUILD_EPOCH"
+    source: "specs/2026-08-11-ci-transfer-cost-design.md 'Related work'; commit 640db74"
+    regression_check: null
+    proposed_regression_check: "pin-bump asserts Dockerfile diff contains the intended epoch (already) plus unit test."
+    still_relevant_in_rebuild: "yes (if bump automation is rebuilt)"
+    cost_when_hit: "a bogus PR and a mis-validated build"
+  - id: T-builder-image-tag-not-pushed
+    symptom: "build job: make pull-image 404 'manifest unknown' for ghcr ...monolith-builder:20260810-<hash>."
+    cause: "push gated on changed==true; fresh runners only obtain image by pulling exact tag; tag keyed on BUILD_EPOCH rotated with each bump."
+    fix_in_repo: "Makefile REGISTRY_TAG = TOOLCHAIN_EPOCH + Dockerfile hash minus injected lines; push-image unconditional after build-image"
+    source: "commits e30a034, b35e8fa"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "3 builds"
+  - id: T-pin-bump-root-owned-locks
+    symptom: "git add: Permission denied on versions.lock after make update-versions."
+    cause: "lock written by root container via bind mount."
+    fix_in_repo: "pin-bump.yml/regen-pins.yml chown step before staging; upload locks as artifact always"
+    source: "commits c9775ff, d591754"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "a 52-min image build had to be repeated risk"
+  - id: T-crossdev-query-empty
+    symptom: "portageq returns empty: stage3 ships no ebuild tree; overlay /configs not mounted; musl best_visible empty vs snapshot."
+    cause: "stock stage3 has no tree; repos.conf points to /configs/overlay; musl barely moves."
+    fix_in_repo: "update-build-pins.sh: mount $CONFIGS_DIR:/configs:ro, emerge-webrsync first, '|| true', fallback to committed pin"
+    source: "commits in dacdfd1 ('mount /configs', 'sync stage3 tree', 'fall back to committed pin')"
+    regression_check: null
+    still_relevant_in_rebuild: "yes (only if lock generation is rebuilt)"
+    cost_when_hit: "n/a"
+  - id: T-nightly-scan-old-sboms
+    symptom: "nightly CVE scan red though 43 builds scanned."
+    cause: "old SBOM format eras undecodable by current grype; exit 1 on any skip."
+    fix_in_repo: "scripts/nightly-cve-monitor.py exits non-zero only if nothing could be scanned"
+    source: "commit 82cc27d (#3)"
+    regression_check: null
+    still_relevant_in_rebuild: "yes (if nightly scan kept)"
+    cost_when_hit: "n/a"
+  - id: T-dashboard-two-publishers
+    symptom: "Stale April dashboard served from /dashboard/."
+    cause: "build.yml published to bucket root; nightly monitor wrote /dashboard/ which SPA never reads."
+    fix_in_repo: "single canonical root; nightly writes builds-index.json at root"
+    source: "commit 3acaee7 (#2)"
+    regression_check: null
+    still_relevant_in_rebuild: "yes (one publish location)"
+    cost_when_hit: "n/a"
+  - id: T-gc-never-applied
+    symptom: "S3 GC printed DELETE lines but nothing deleted; bucket grows forever."
+    cause: "--apply gated on workflow_dispatch only."
+    fix_in_repo: ".github/workflows/gc.yml:22-33 (apply on schedule; guards abort on empty keep-list); scripts/ghcr-gc.sh hard-fails on auth errors, loud NOTE on 0-version listing"
+    source: "commits 1bcb2fe (#59), 49a21e1 sub-commits"
+    regression_check: "scripts/tests/s3-gc.test.sh, ghcr-gc.test.sh"
+    still_relevant_in_rebuild: "yes (concept); S3 half dead"
+    cost_when_hit: "residual AWS bill driver (DCX-36)"
+  - id: T-binpkg-store-fail-open
+    symptom: "oras pull on a missing epoch tag / GHCR 401 on bootstrap broke first build of a new epoch; oras push with absolute path."
+    cause: "GHCR returns 401/denied for nonexistent repo; oras stores the abs path; tree root-owned."
+    fix_in_repo: "scripts/binpkg-store.sh (fail open on 401/denied, cd to tarball dir, chown tree to runner, fail-open cache save); scripts/tests/binpkg-store.test.sh"
+    source: "commits b7a7283, ef4b529 (#46)"
+    regression_check: "scripts/tests/binpkg-store.test.sh"
+    still_relevant_in_rebuild: "yes if GHCR binpkg store kept"
+    cost_when_hit: "n/a"
+  - id: T-run-rerun-reuses-cache
+    symptom: "gh run rerun does not fix a bad ISO."
+    cause: "ISO cache key is run-scoped and immutable (ci-artifacts-<run_id>-...); rerun reuses it; a re-run of a >7-day-old run needs `build` re-run."
+    fix_in_repo: "process: push a new commit; spec Error handling says restore must fail loudly on miss"
+    source: "commit 0897866; specs/2026-08-11-ci-transfer-cost-design.md 'Error handling'"
+    regression_check: null
+    still_relevant_in_rebuild: "yes if run-scoped cache handoff kept"
+    cost_when_hit: "a misattributed failure"
+  - id: T-resolved-kernel-config-vacuous
+    symptom: "verify-resolved-i2c-off.sh always passed vacuously on a binpkg cache hit."
+    cause: "it read configs/kernel.config, which only reflects the resolved config if the kernel ebuild ran src_install (source build)."
+    fix_in_repo: "monolith-kernel-6.12.80-r8 ships /usr/share/monolith-kernel/resolved-kernel.config.gz as package content; build-packages.sh re-derives configs/kernel.config from it every run and hard-fails if missing; excluded from rootfs (build-rootfs.sh)"
+    source: "commits 16affed/982b50d/b9f533b (DCX-99)"
+    regression_check: "scripts/tests/verify-resolved-i2c-off.test.sh"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "assertion was meaningless until DCX-99"
+  - id: T-ddc-i2c-escalation
+    symptom: "Enabling legacy fbdev drivers silently builds CONFIG_I2C=y into bzImage."
+    cause: "FB_DDC is tristate; select raises target to at least the selector's value; default-y bool sub-options (FB_RADEON_I2C, FB_3DFX_I2C, FB_CYBER2000_DDC) force FB_DDC=y which selects I2C=y. Also chip sub-options (MATROX_MILLENIUM/MYSTIQUE/G, ATY_CT/GX, SIS_300/315) default n => empty .ko."
+    fix_in_repo: "configs/kernel.config:2127-2162 explicit '# ... is not set' for FB_CYBER2000_DDC, FB_NVIDIA_I2C, FB_RADEON_I2C, FB_SAVAGE_I2C, FB_3DFX_I2C; CONFIG_I2C not set at :1928"
+    source: "AGENTS.md:171-179; specs/2026-09-17-legacy-fbdev-design.md; commit a53272f (#60)"
+    regression_check: "scripts/tests/verify-legacy-fbdev-config.sh:30-55 (fast, intent) + scripts/verify-resolved-i2c-off.sh (slow, resolved)"
+    still_relevant_in_rebuild: "yes - kernel config is a carried recipe"
+    cost_when_hit: "caught by design before shipping"
+  - id: T-kernel-config-comments-erased
+    symptom: "Hand-written comments in configs/kernel.config vanish."
+    cause: "kernel ebuild copies .config back to ${CONFIGS_DIR}/kernel.config after olddefconfig."
+    fix_in_repo: "policy lives in docs/kernel-tiers.md; kernel.config is machine-managed"
+    source: "docs/kernel-tiers.md:21-26"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-kernel-config-symbol-names
+    symptom: "Config symbols silently dropped by olddefconfig (retired or wrong names: MMC_SDHCI vs SDHCI, NF_TABLES_INET with no IPv6); 'unknown symbol' at modprobe under TRIM_UNUSED_KSYMS."
+    cause: "unmet dependencies; wrong symbol; CONFIG_TRIM_UNUSED_KSYMS=y trims symbols only a now-modular driver kept alive."
+    fix_in_repo: "verify-*-config.sh intent checks + build.yml .ko-ship assertions (catch drop); docs/kernel-tiers.md:263-271 watch-item"
+    source: "commits 312bdc4, 67fb061; docs/kernel-tiers.md"
+    regression_check: "verify-nic-zoo-config.sh, verify-netfilter-config.sh, verify-legacy-fbdev-config.sh; build.yml module assertions"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-cve-gate-unfalsifiable
+    symptom: "Dashboard 'No CVE findings - PASS' for kernel 6.12/openssl 3.5/curl 8.19."
+    cause: "Grype has no Gentoo/GLSA feed (CPE-only via NVD) and NVD (April 2026 policy) leaves non-KEV/non-federal CVEs unenriched; PASS only means 'no NVD-enriched CPE match'."
+    fix_in_repo: "configs/attestation/cve-policy.yaml; scripts/check-cves.sh (coverage json, db status); scripts/run-cve-canary.sh + .github/workflows/cve-gate-canary.yml (Heartbleed fixture, asserts raw findings)"
+    source: "docs/cve-gate.md; dacdfd1"
+    regression_check: "cve-gate-canary.yml"
+    still_relevant_in_rebuild: "yes - core honesty requirement; also fail_on_unscanned=false and DB-age is warning only (documented gaps)"
+    cost_when_hit: "n/a"
+  - id: T-canary-silence
+    symptom: "Canary schedule silently stops."
+    cause: "GitHub disables schedule triggers after ~60 days repo inactivity."
+    fix_in_repo: "none (documented; weekly pin-bump commits keep repo active)"
+    source: "docs/cve-gate.md:136-143"
+    regression_check: null
+    proposed_regression_check: "dashboard 'last canary run' freshness indicator."
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-pr-lint-gaps
+    symptom: "New script not covered by lint gate."
+    cause: "monolith-router was added but not wired into pr-validate bash -n / shellcheck lists."
+    fix_in_repo: ".github/workflows/pr-validate.yml:23-61"
+    source: "commit c6e475d"
+    regression_check: "pr-validate"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-ntfs-case
+    symptom: "Checkout on NTFS/case-insensitive FS collides."
+    cause: "files differing only by case."
+    fix_in_repo: "unknown (commit affe3d6 'Goofy workaround because NTFS is case-insensitive'; not inspected)"
+    source: "commit affe3d6"
+    regression_check: null
+    still_relevant_in_rebuild: "unknown - likely dev-host-only"
+    cost_when_hit: "not stated"
+  - id: T-hyperv-old-grub
+    symptom: "UEFI boot broken on Hyper-V."
+    cause: "Hyper-V bug requires older GRUB (commit 329f9ea); GRUB version otherwise floats with TOOLCHAIN_EPOCH tree (README.md:123)."
+    fix_in_repo: "unknown - not inspected; check Dockerfile package.mask for grub (UNKNOWN)"
+    source: "commit 329f9ea"
+    regression_check: null
+    still_relevant_in_rebuild: "yes - a grub version constraint may exist; inspect Dockerfile and package.mask"
+    cost_when_hit: "not stated"
+  - id: T-efi-esp-size
+    symptom: "El Torito sector-count overflow / 'Disk full' creating ESP."
+    cause: "ESP image too small; FAT16 not FAT32 required."
+    fix_in_repo: "scripts/build-iso.sh (bigger FAT16 ESP; GPT ESP type GUID patched post-build)"
+    source: "commit fea3419; RELEASE-READINESS.md:185-195"
+    regression_check: "boot-test uefi"
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+  - id: T-iso-readability
+    symptom: "Final ISO unreadable/unuploadable."
+    cause: "permissions without read."
+    fix_in_repo: "build-iso.sh chmod (commit 62a7c2f)"
+    source: "commit 62a7c2f"
+    regression_check: null
+    still_relevant_in_rebuild: "yes"
+    cost_when_hit: "n/a"
+
+decisions:
+  - {id: DEC-clock-1970, decision: "Origin sentinel is the Unix epoch 1970-01-01; Y2K rejected; detection sentinels 0/1980/2000 stay.", why: "Owner mythology + misdiagnosis revert; 'Y2K is too late'.", source: "AGENTS.md:32-39; boot-test.py:463"}
+  - {id: DEC-build-yml-owns-tag, decision: "build.yml triggers on v*.*.* tags and is the OIDC entry; release.yml is publish-only via workflow_run; no workflow_call on build.yml.", why: "Sigstore cert SAN binds entry workflow.", source: "docs/releasing.md:75-138; #55"}
+  - {id: DEC-prerelease-never-latest, decision: "-rcN/-betaN tags publish --prerelease --latest=false; only finals become Latest; dashboard LATEST independent (sorted by attestation timestamp).", why: "GitHub API 422.", source: "docs/releasing.md:38-49; #56"}
+  - {id: DEC-no-g-slash-shortcuts, decision: "Dashboard keeps only the 't' (theme) keyboard shortcut; g and / removed.", why: "Owner dislikes UI cruft.", source: "AGENTS.md:42-43; README.md:203; web/app/router.js:123; #53"}
+  - {id: DEC-tag-from-source, decision: "Tag builds skip --usepkg and binpkg cache.", why: "No cached binary in a signed release.", source: "AGENTS.md:83; build.yml:285"}
+  - {id: DEC-fail-closed-attestation, decision: "SLSA signing only when gate verdict pass; failed gate -> no attestation; all pillars run to completion and artifacts always written.", why: "A public attestation for a failing build would verify green.", source: "dacdfd1 body; scripts/attestation.sh:11"}
+  - {id: DEC-releases-immutable-tags, decision: "Never re-push a release tag after a failed gate; fix forward on master, delete tag, re-tag. No rollback automation; supersede with a new patch.", why: "Tag immutability.", source: "docs/releasing.md:256-266"}
+  - {id: DEC-semver-meaning, decision: "Patch = no change to what ships; minor = backward-compatible ISO change; major = breaking (drop i486, init, layout). Not every build gets a tag.", why: "BUILD_EPOCH bumps shouldn't force tags.", source: "docs/releasing.md:8-36"}
+  - {id: DEC-iso-naming, decision: "Tag builds: themonolith-<version>.iso (no epoch/sha); others themonolith-<BUILD_EPOCH>-<sha>.iso; themonolith.iso = latest; attestation prefix attestation/<version>/ or <epoch>-<sha>/.", why: "Traceability.", source: "docs/releasing.md:51-73; scripts/build ... (commit 1282d8e)"}
+  - {id: DEC-s3-public-read, decision: "Bucket themonolith public-read; dashboard at bucket root only.", why: "Verifiability without credentials.", source: "AGENTS.md:90-91; #2"}
+  - {id: DEC-pin-bump-auto-merge, decision: "BUILD_EPOCH bumps auto-merge on fully-green validation (gh pr merge --squash --admin); TOOLCHAIN_EPOCH bumps are manual-dispatch, never auto-merged.", why: "Routine currency vs consequential toolchain change.", source: "specs/2026-08-12...; .github/workflows/pin-bump.yml:372-396; toolchain-bump.yml:1-30 (docs/version-pinning.md says the opposite - stale)"}
+  - {id: DEC-no-s3-for-inner-loop, decision: "ISO/squashfs handoff by actions/cache keyed by run_id; validation builds write nothing to S3; binpkg store on GHCR OCI artifact.", why: "S3 egress cost.", source: "specs/2026-08-11...; #22; #46"}
+  - {id: DEC-ip-family-only, decision: "IPv4 only: nft 'table ip', NF_TABLES_IPV4, -ipv6 USE; no iptables/xtables; no DNSSEC/TFTP/DHCPv6.", why: "Lean; IPv6 off in kernel.", source: "specs/2026-08-04-sp2...; specs/2026-08-06-sp3...; #14"}
+  - {id: DEC-dhcp-opt-in-fail-closed, decision: "monolith-router --dhcp is off by default, requires typed 'yes' on a TTY or --yes; non-interactive without --yes exits non-zero; dnsmasq binds LAN only (bind-interfaces, except-interface WAN, local-service), stop-dns-rebind, domain home.arpa.", why: "A DHCP server on an existing LAN breaks it.", source: "specs/2026-08-06-sp3 sections 4,5"}
+  - {id: DEC-no-firmware-blobs, decision: "No driver requiring runtime firmware in any tier; CONFIG_EXTRA_FIRMWARE unset; WiFi deferred pending an attestation-model decision; modinfo -F firmware must be empty for shipped modules.", why: "Attestation chain.", source: "docs/kernel-tiers.md:116-126; specs/2026-09-17...:'firmware line'"}
+  - {id: DEC-tier1-broad, decision: "Tier-1 initrd manifest is deliberately broad (storage/bus controllers 1996-2026); 6 MB uncompressed triggers human review; two-initrd escape hatch is documented-not-built; CI proves mechanism (nicless negative + ahci/nvme/usb/virtio positives), not each controller.", why: "Module that never loads costs the 486 nothing.", source: "docs/kernel-tiers.md:65-151,240-261"}
+  - {id: DEC-fbdev-tier2, decision: "27 legacy fbdev modules =m (Tier 2) over generic FB_VESA/FB_EFI; FB_GEODE=y is menu-gate only; FB_ASILIANT/FB_IMSTT excluded (bool needs FB=y); DDC/I2C sub-options forced off; CI proves one cirrusfb coldplug + no-taint hand modprobe.", why: "Tier-0 bar.", source: "specs/2026-09-17...; #60,#61,#62"}
+  - {id: DEC-squashfs-gzip-initrd-xz, decision: "SquashFS uses gzip (fast decompression on 486); initrd compression asymmetric; (note: Phase 2 commit says initrd gzip for low-RAM decompression - RELEASE-READINESS says xz).", why: "Runtime decompression cost vs RAM.", source: "RELEASE-READINESS.md:301-303; daee55a message ('gzip initrd (8MB->32KB decompression RAM)')"}
+  - {id: DEC-root-passwordless, decision: "Root has no password by default (intentional); /etc/issue states it; dropbear installed but not started (hint printed in profile.d).", why: "Live/rescue ISO.", source: "RELEASE-READINESS.md:78-92; build-rootfs.sh:297-322"}
+  - {id: DEC-no-native-compiler, decision: "No sys-devel/gcc on the disc; 'developer ISO variant' left open.", why: "200-400 MB.", source: "RELEASE-READINESS.md:266-269; README.md:111"}
+  - {id: DEC-perl-no-target-gentoo-perl, decision: "Perl comes from overlay monolith-perl via perl-cross (5.42.0 + perl-cross 1.6.4 strictly paired), -Uusedl -Uusethreads, no CPAN client, no irssi perl; sqlite from amalgamation (monolith-sqlite), THREADSAFE=0, OMIT_LOAD_EXTENSION; CGI.pm pure-perl rider; busybox httpd (CGI) not thttpd.", why: "Cross-hostile Configure tarpit.", source: "specs/2026-08-13...; #38; #28"}
+  - {id: DEC-gui-doctrine, decision: "One GUI stack: TinyX Xfbdev (tinycorelinux/tinyx@feab72c) + minimal client libs (xorg-proto, libxcb, libX11, libXext only) + st + dwm; no Xorg, no display manager, no compositor, no autostart X, no second GUI for the 486; server built lean with 5 vendored header shims instead of client libs.", why: "Zero-dlopen, 8 MB with swap.", source: "specs/2026-08-14-gui-design.md; plans/2026-08-14-gui.md G1"}
+  - {id: DEC-lazy-console, decision: "Idle gettys run a dash stub (monolith-console) that execs bash only on first keypress; boot-test wait_for_shell sends a waking newline.", why: "RAM on idle consoles.", source: "commit 1d9a3f4 (#23)"}
+  - {id: DEC-lean-boot-ux, decision: "UX pass: no wizards/daemons/menus; hints print once; monolith front door lists curated tools; clock fix only on demonstrated ignorance (HTTP Date over plain http).", why: "Solid, not Red Hat.", source: "plans/2026-08-19-monolith-ux-pass.md"}
+  - {id: DEC-recovery-from-artifact, decision: "When build is green but publish failed, recover from verified artifact instead of rebuilding (30-60 min).", why: "Cost.", source: "AGENTS.md:64-66"}
+  - {id: DEC-stele-repin, decision: "www-client/stele is a moving upstream: REPIN each build (per-commit GitHub archive, Manifest-pinned); LICENSE=GPL-3; stele tracked at _p20260821 in world/versions.lock.", why: "Owner's own project under active development.", source: "AGENTS.md:211-212; configs/portage/versions.lock:88"}
+  - {id: DEC-no-live-ebuilds, decision: "No live (-9999) ebuild may be in the build; mask eigen-9999 and anything pulled that way.", why: "Reproducibility.", source: "commit cc92b3e"}
+
+design_history:
+  - topic: "SP1 NIC zoo + monolith-net (ISA probe helper)"
+    spec: docs/superpowers/specs/2026-08-04-sp1-nic-zoo-design.md
+    plan: docs/superpowers/plans/2026-08-04-sp1-nic-zoo.md
+    shipped: "yes - PR #12 (671b9f9) + #13 (875f3e1, irq fix); configs/overlay/app-misc/monolith-base/files/monolith-net exists; tests verify-nic-zoo-config.sh, monolith-net.test.sh; boot-test --mode nic / nicless"
+    still_open_items: ["plan checkboxes never ticked (all '- [ ]'); spec says kernel ebuild -r4->-r5, now -r8 (later bumps)", "PCMCIA/WiFi/netboot explicitly out of scope"]
+  - topic: "SP2 netfilter + nftables + monolith-router NAT"
+    spec: docs/superpowers/specs/2026-08-04-sp2-netfilter-nftables-design.md
+    plan: docs/superpowers/plans/2026-08-04-sp2-netfilter-nftables.md
+    shipped: "yes - PR #14 (192e206) + #18 (e5ab01c); spec states table inet, shipped as table ip (design pivot documented in commit 38f6f24); boot-test nat mode"
+    still_open_items: ["spec text still says inet / NF_TABLES_INET in places? (plan synced per docs commit)", "IPv6 NAT, DNAT, shaping future"]
+  - topic: "SP3 dnsmasq LAN DHCP+DNS folded into monolith-router"
+    spec: docs/superpowers/specs/2026-08-06-sp3-dnsmasq-dhcp-dns-design.md
+    plan: docs/superpowers/plans/2026-08-06-sp3-dnsmasq-dhcp-dns.md
+    shipped: "yes - PR #19 (e2d35a0), plus #39 (c877718) dnsmasq force-install guard"
+    still_open_items: ["netboot/PXE deferred behind persistence -> initrd-mod UI (AGENTS.md:210)", "DNSSEC, IPv6, non-/24 DHCP deferred", "acct-user/dnsmasq nondeterminism still papered over"]
+  - topic: "CI S3 transfer-cost reduction"
+    spec: docs/superpowers/specs/2026-08-11-ci-transfer-cost-design.md
+    plan: docs/superpowers/plans/2026-08-11-ci-transfer-cost.md
+    shipped: "yes - PR #21 (design+plan) and #22 (31f4b67, impl: actions/cache handoff, S3 publish-only, GC, pin-bump fail-closed); GC apply fix #59"
+    still_open_items: ["Task 3 binpkg -> actions/cache deferred then superseded by GHCR store in #46", "K3s self-hosted runners deferred", "AGENTS.md still cites branch feat/ci-transfer-cost as the home (stale)"]
+  - topic: "CI efficiency round 2 (no spec file)"
+    spec: null
+    plan: docs/superpowers/plans/2026-08-18-ci-efficiency-round2.md
+    shipped: "yes - PR #46 (49a21e1): binpkg-store.sh GHCR, server-side S3 copy for latest pointers, build-image manifest-inspect gate, grype DB + schema caching, NIC-model matrix collapsed to one loop job"
+    still_open_items: ["Task 6 optional boot-test consolidation partly done (NIC matrix only)"]
+  - topic: "Decouple portage epoch (TOOLCHAIN_EPOCH vs BUILD_EPOCH)"
+    spec: docs/superpowers/specs/2026-08-12-decouple-portage-epoch-design.md
+    plan: docs/superpowers/plans/2026-08-12-decouple-portage-epoch.md
+    shipped: "yes - PR #25 (abacc23); Dockerfile ARGs 20260810 / 20260811; sync-portage.sh; toolchain-bump.yml; pin-bump.yml auto-merge"
+    still_open_items: ["toolchain tree + stage3 not self-hosted: Dockerfile:74 plain emerge-webrsync (builder image un-rebuildable if TOOLCHAIN_EPOCH snapshot pruned) - AGENTS.md time-bomb STILL OPEN", "scheduled TOOLCHAIN_EPOCH cadence not implemented (toolchain-bump.yml is dispatch-only)", "docs/version-pinning.md contradicts code (see contradictions)"]
+  - topic: "Perl for the Monolith (SP5)"
+    spec: docs/superpowers/specs/2026-08-13-perl-for-the-monolith-design.md
+    plan: docs/superpowers/plans/2026-08-13-perl-for-the-monolith.md
+    shipped: "partial - PR #38 (7926f71): monolith-sqlite 3.53.4, monolith-perl 5.42.0-r5 (core, CGI.pm, prune), guestbook CGI + boot-test; DBI+DBD::SQLite static_ext bake attempted and reverted (spec D4 unmet)"
+    still_open_items: ["DBD::SQLite not shipped (guestbook uses sqlite3 CLI)", "Report .batteries/reports/perl.md referenced but .batteries not in repo", "perl start on -cpu 486 timing not gated"]
+  - topic: "GUI (SP-GUI: bitmap-only X on everything)"
+    spec: docs/superpowers/specs/2026-08-14-gui-design.md
+    plan: docs/superpowers/plans/2026-08-14-gui.md
+    shipped: "partial - G1 #42 (Xfbdev), G2 #44 (client libs + st + startx), G3 #45 (dwm), Terminus default font #52, Stele #43/#47/#49/#50 (+ stele-acid2 boot mode). NOT in world: dmenu, inputattach; no golden-image compare; no xdpyinfo check; G5 report absent"
+    still_open_items: ["G4 serial mouse (inputattach) not in world", "dmenu (spec section 2) not shipped", "golden screendump compare (spec section 5) not implemented: run_gui asserts non-black only (verify in boot-test.py run_gui)", "plan body is the only plan with [x] ticks; later milestones are prose only", "xterm/Worker/WindowMaker follow-ups"]
+  - topic: "Monolith UX pass (no spec file)"
+    spec: null
+    plan: docs/superpowers/plans/2026-08-19-monolith-ux-pass.md
+    shipped: "yes (mostly) - PR #48 (87225c0): monolith front door, monolith-time/time-check, persist continuity, monolith-persist, boot-menu literacy, console comfort. All checkboxes in the plan remain '- [ ]' (never ticked) so per-item status is UNKNOWN from the plan; evidence is files under configs/overlay/app-misc/monolith-base/files and scripts/tests/monolith*.test.sh"
+    still_open_items: ["non-US keyboards doc item (plan line 119) unknown", "Task 7 verify docs land + report unknown"]
+  - topic: "Legacy fbdev drivers as Tier 2 (DCX-43)"
+    spec: docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md
+    plan: docs/superpowers/plans/2026-09-17-legacy-fbdev.md
+    shipped: "yes - PR #60 (a53272f) enable 27 modules, #61 (b13fbe4) fbdev-modprobe boot mode, #62 (e960e35) hardened assertions, DCX-99 follow-up (982b50d/16affed/b9f533b) resolved-config artifact, kernel -r8"
+    still_open_items: ["vga16fb/hgafb have no modalias: no probe verb yet", "size delta (bzImage/ISO) measurement is a plan step; recording location unknown", "stale comment in build.yml above 'Assert resolved kernel config did not escalate CONFIG_I2C' (accepted debt, needs workflow-scoped push)"]
+
+contradictions:
+  - {claim: "Nightly CVE monitor is not wired into any scheduled job (orphaned dead code).", where: "README.md:185; docs/cve-gate.md:57-60,190-199", fact: ".github/workflows/nightly-cve-scan.yml has cron '0 4 * * *' and runs scripts/nightly-cve-monitor.py (added in dacdfd1, fixed in #3).", evidence: ".github/workflows/nightly-cve-scan.yml:8,17-19; commit dacdfd1 body 'schedule the previously-orphaned nightly CVE monitor'"}
+  - {claim: "TOOLCHAIN_EPOCH has no bump automation; manual Dockerfile edit only.", where: "docs/version-pinning.md:299-304,417-418,361-367", fact: "scripts/update-build-pins.sh has update-toolchain and .github/workflows/toolchain-bump.yml (workflow_dispatch) exist.", evidence: "scripts/update-build-pins.sh:16-26; .github/workflows/toolchain-bump.yml:1-30"}
+  - {claim: "A pin bump PR is never auto-merged.", where: "docs/version-pinning.md:531-534", fact: "pin-bump.yml auto-merges fully-green BUILD_EPOCH bumps with gh pr merge --squash --admin.", evidence: ".github/workflows/pin-bump.yml:32-37,372-396"}
+  - {claim: "README: world file lists 99 atoms; version-pinning.md: 71 world packages; RELEASE-READINESS: ~65.", where: "README.md:71; docs/version-pinning.md:428,670; RELEASE-READINESS.md:25", fact: "configs/portage/world has 99 non-comment lines; versions.lock has 107 lines (incl. comments).", evidence: "grep -vE '^\\s*(#|$)' configs/portage/world | wc -l = 99"}
+  - {claim: "rootfs is all-static; dynamic binaries fail at boot.", where: "AGENTS.md:24-25", fact: "README admits util-linux/iproute2/dhcpcd/procps/tar/gawk are dynamic PIE; extract-packages.sh ships /lib/ld-musl-i386.so.1 so they run. Perl and GUI specs assert no loader on disc.", evidence: "README.md:127; scripts/extract-packages.sh:147-157; specs/2026-08-13...:8"}
+  - {claim: "RELEASE-READINESS: gdb dropped (replaced by strace); no graphical environment; no kernel modules shipped; dropbear never started; 32-bit UEFI not built; dead package.use entries for mutt/irssi/w3m.", where: "RELEASE-READINESS.md:173-176,247-255,271-273,215-228,282-288", fact: "gdb is in world; GUI stack (Xfbdev, st, dwm) shipped; kernel ebuild runs modules_install; mutt and irssi are in world; dropbear hint printed but not started (still true); 32-bit UEFI still not built (still true).", evidence: "configs/portage/world:68,117,144,148,257-300; docs/kernel-tiers.md; commit 513574d. RELEASE-READINESS is stale in these items (audit date 2026-08-02)."}
+  - {claim: "releasing.md: current tag is v0.0.1; v0.1.0 will be first real release.", where: "docs/releasing.md:10-14", fact: "v0.1.0-rc1 published (AGENTS.md:223); README.md:12 says first tagged release is v0.1.0-rc1.", evidence: "AGENTS.md:223-225; README.md:12"}
+  - {claim: "AGENTS.md current status: master = e20a252.", where: "AGENTS.md:220", fact: "HEAD is b9f533b; commits #57-#63 and DCX-99 landed since.", evidence: "git log"}
+  - {claim: "S3 bucket has no lifecycle policy / unbounded growth; ci-transfer-cost work lives on branch feat/ci-transfer-cost.", where: "AGENTS.md:195-200", fact: "scripts/s3-gc.sh + gc.yml run weekly with --apply (since #59); ci-transfer-cost merged as #21/#22.", evidence: ".github/workflows/gc.yml:22-33; git log"}
+  - {claim: "docs/version-pinning.md tells operators to purge savedconfig binpkgs with aws s3 rm.", where: "docs/version-pinning.md:645-650", fact: "savedconfig-cache.sh automates the purge (0fbbb51); binpkg store moved to GHCR (#46).", evidence: "scripts/savedconfig-cache.sh; scripts/binpkg-store.sh"}
+  - {claim: "monolith-base owns hand-authored rootfs files formerly installed by build-rootfs.sh.", where: "README.md:79", fact: "scripts/build-rootfs.sh still heredoc-installs /etc/profile.d/50-dropbear-hint.sh, rcK/rcS, inittab, issue.", evidence: "scripts/build-rootfs.sh:297-322,479"}
+  - {claim: "Perl spec D4: DBI + DBD::SQLite baked into perl via static_ext.", where: "specs/2026-08-13-perl...:D4", fact: "attempt reverted; ebuild ships CGI.pm only; guestbook uses sqlite3 CLI.", evidence: "AGENTS.md:152-154; monolith-perl-5.42.0-r5.ebuild:100-118"}
+  - {claim: "GUI spec: dmenu, inputattach, golden-image compare, xdpyinfo in-guest probe.", where: "specs/2026-08-14-gui-design.md:2,3,5", fact: "none present in world or boot-test (only non-black screendump and process-alive checks).", evidence: "configs/portage/world:255-300; scripts/boot-test.py MODE_RUNNERS gui"}
+  - {claim: "cve-gate.md says build.yml's attestation runs 'make grype-db-update' before 'make attestation'; also README Makefile 'grype-db-update' target.", where: "docs/cve-gate.md:34-36", fact: "round 2 (#46) changed to cached Grype DB; unverified whether the make target is still called.", evidence: "commit d66faf4; not inspected"}
+  - {claim: "AGENTS.md says the dashboard LATEST is sorted by timestamp and prerelease can show LATEST on dashboard; README Boot demo claims ISO ~131 MB.", where: "AGENTS.md:88-89; README.md:22", fact: "size figure unverifiable without a build (ISO size UNKNOWN).", evidence: "n/a"}
+  - {claim: "The earlier 'serial starvation' explanation for the nat-router link-local flake was wrong; the later 'serial starvation' explanation for the L2 flake was right.", where: "commit e5ab01c vs commit 3b653c5", fact: "Two different bugs (monolith-router link-local; QEMU stdout pipe not drained). boot-test.py comments must say which is which.", evidence: "commits e5ab01c, 3b653c5"}
+
+open_questions:
+  - "Does the current squashfs contain any dynamic ELF? (static-audit.txt is not in the repo.) Needs one build to answer; the D-all-static check should be run once to seed its allowlist."
+  - "Is the libxml2 testdso static rewrite (commit 22d7bca, branch only) in master? grep of configs/portage/bashrc found no 'testdso'; w3m/bc/jq re-add attempts are not in world either."
+  - "Hyper-V GRUB constraint (commit 329f9ea 'older GRUB'): where is the constraint encoded (Dockerfile package.mask?) - not inspected."
+  - "Affe3d6 NTFS case-insensitivity workaround: where is it in the tree? - not inspected."
+  - "Whether gui boot test does any golden compare today (inspect scripts/boot-test.py run_gui) - plan says planned only."
+  - "Which UX-pass tasks shipped item by item (plan checkboxes never ticked)."
+  - "What replaces the S3 snapshot mirror (portage-snapshots), binpkg/attestation store, release-publish source, and dashboard hosting in the rebuild? All four are hard S3 dependencies recorded under meta.s3_dependencies_recorded."
+  - "Is 'monolith-time' default URL http://example.com/ still reachable/appropriate? (clock-1996 uses the real internet path per commit b8d42c4.)"
+  - "RESOLVED: initrd is compressed with GZIP (scripts/build-initrd.sh:334); the build-initrd.sh header comment line 11 and RELEASE-READINESS.md:302 still say XZ (stale)."
+  - "RESOLVED: no golden-image compare in boot-test.py (gui mode asserts non-black screendump via QMP only); make grype-db-update is still called (build.yml:662, now with GRYPE_CACHE_DIR cache)."
