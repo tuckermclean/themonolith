@@ -2,14 +2,14 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | B01, B02, R01, O01, O02, S01 | G01, P01, R03 | MS1 | M |
+| critical | B01, B02, R01, O01, O02, S01 | G01, P02, R03, R05 | MS1 | M |
 
 **Owns:** `.github/workflows/build.yml`, `scripts/tests/build-workflow.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/build.yml` (jobs `changes`, `build-image`, `build`, `boot-test`, `attestation`), `scripts/build-rootfs.sh`, `scripts/build-initrd.sh`, `scripts/build-iso.sh`, the `Makefile` targets `build-rootfs`, `iso`, `all`, `attestation`. The three scripts are carried byte for byte.
 **Study refs:** T-run-rerun-reuses-cache, T-attest-entry-workflow, D-supply-chain-honesty, D-tag-builds-from-source; workflows.yaml `wf.build`; contradiction "latest pointers copied before boot-test" (`build.yml:495-546` vs `:559`).
 
 ## Purpose
-After this node, a push or a labelled PR on this repository builds the ISO from pinned inputs and runs the ported oracle and gates on it, with no AWS step anywhere. This is MS1. Binary packages are allowed here. P01 adds the tag-only steps on top.
+After this node, a push or a labelled PR on this repository builds the ISO from pinned inputs and runs the ported oracle and gates on it, with no AWS step anywhere. This is MS1, the first goal: a working, testable ISO for iteration. It is not published and is not a release. Binary packages are allowed here, and `rl144` and `stele` are left out until R05. P02 and P01 add the tag-only steps on top.
 
 ## Standard mechanism
 GitHub Actions, `actions/upload-artifact` and `download-artifact` for files that move between jobs of one run, and reusable workflows (`workflow_call`) for the boot tests. The Makefile stays the single definition of the steps, so a developer's `make all` runs what CI runs. Custom code: none. The one new test only reads the workflow file.
@@ -22,7 +22,7 @@ Everything else in `build.yml` and the three scripts is carried unchanged, inclu
 3. **Builder pulled by digest.** `build-image` and the `Warm docker layer cache from :latest` steps are replaced by `make pull-image` on `BUILDER_DIGEST` (I03 owns the Makefile change). The `build-image` job is removed; rebuilding the image is M02's. *AC-4.*
 4. **Boot tests call O01's reusable workflow** with the ISO artifact from item 1 instead of `build-version` plus the cache. O01 owns the interface. The call passes every mode except `stele-acid2`, because Stele is out of `world` until R05 (B01 change 11); R05 puts it back. *AC-2, AC-7.*
 5. **Artifact checks (O02) and gates (S01) run on the same ISO,** in or before `attestation`. Their order in the job follows S01. They are `needs` of the signing step, so a red check blocks it. *AC-5.*
-6. **Binary-package restore and push stay as ported** (`build.yml:267` pull, `:448` push) with the registry variable from B01. Tags do not use this development path. P01's tag path runs the build job in its offline release mode (B01 release mode, no binpkg pull).
+6. **Binary-package restore and push stay as ported** (`build.yml:267` pull, `:448` push) with the registry variable from B01. Tags do not use this development path. P02's tag pipeline runs the build job in its offline release mode (B01 release mode, no binpkg pull).
 
 **ISO size gates.** The brief expects gates in `build-iso.sh`. There are none. The script only logs kernel, initrd and ISO sizes (`build-iso.sh:379-385,490-499`), and `build-rootfs.sh:731-734` and `build-initrd.sh:356-359` only log too. B03 ports the logging as it is. The budget gate is new and belongs to P01 (SPEC §1).
 

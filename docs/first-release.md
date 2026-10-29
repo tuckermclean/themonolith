@@ -1,30 +1,44 @@
-# Path to the first release
+# Plan: a working ISO, then the first release
 
-Status: plan, 2026-10-28. This is milestone MS2 in `docs/graph.yaml`. SPEC.md v0.4 is the authority;
-this document gives the order of work and the reasons for it.
+Status: plan, 2026-10-28. SPEC.md v0.4 is the authority; this document gives the order of work and the
+reasons for it. There are two goals, in this order.
 
-## Definition of done
+## First goal: a working ISO for iteration (MS1)
 
-A tag `v0.2.0-rc1` on `tuckermclean/themonolith` (OD-8) that meets all of these:
-- Its distfiles are fetched once into an archive. It is then built from source in a clean build with the
-  network off, reading only the source commit, `release-inputs.json` and that archive (P01).
+As soon as possible, CI on this repository builds a working, testable ISO (B03):
+- from pinned inputs: the recovered tree and the builder image by digest, and every world atom locked
+  in `versions.lock`, so any run of a commit builds from the same inputs;
+- with no S3 or AWS anywhere;
+- with binary packages restored from GHCR, for fast iteration;
+- passing the ported oracle and gates: 16 of the 17 boot modes, the artifact doctrine checks, the SBOM
+  and the licence, CVE and unowned gates.
+
+It leaves out the two Rust packages, `rl144` and `stele`, and so the `stele-acid2` boot mode. Their
+crates are fetched over the network at build time, and fixing that (R05) is not needed to start
+iterating. **The MS1 ISO is not a release.** It is never published, attested or tagged.
+
+## Definition of done for the first release (MS2)
+
+Nothing is called a release before this. A tag `v0.2.0-rc1` on `tuckermclean/themonolith` (OD-8) that
+meets all of these:
+- It is built twice, from source, in two clean builds on separate runners with the network off. Both read
+  only the source commit, `release-inputs.json` and one distfiles archive. **The two ISOs have the same
+  SHA-256.** A mismatch fails the tag, with no exceptions and no allowlist (P02).
+- It ships all 99 of the predecessor's world packages, `rl144` and `stele` included (R05, P01-AC-11).
 - Every shipped file comes from a package compiled in that run, or from a declared toolchain file of the
   pinned builder image. The build starts with no binary packages, re-merges whatever the builder image
   preinstalled in the target root, and never runs `quickpkg`. `source-audit.tsv` proves it (B01).
-- That ISO passes 16 of the 17 inherited boot modes, the artifact doctrine checks, the SBOM and the
-  licence, CVE and unowned gates. The 17th, `stele-acid2`, needs Stele, which leaves the disc with `rl144`
-  until R05.
+- That ISO passes all 17 inherited boot modes, the artifact doctrine checks, the SBOM and the licence,
+  CVE and unowned gates.
 - It carries a Sigstore SLSA provenance attestation from `actions/attest-build-provenance` whose subject
   is the ISO digest. It is created only after everything above has passed. The digest chain is
   re-verified before publishing.
 - It is then published as a GitHub prerelease with these assets: the ISO, the SBOM, SHA256SUMS,
   `release-inputs.json`, `source-audit.tsv`, the SBOM diff against rc1 and the size report.
-- The distfiles archive the build used, the tree and the builder image are on GHCR by digest.
+- The distfiles archive both builds used, the tree and the builder image are on GHCR by digest.
 
-Nothing is pushed or published before the gates pass.
-
-Not part of this milestone: a second build with an equal ISO SHA-256 (P02), and the two Rust packages
-(R05). Both come after it and before cutover.
+Nothing is pushed or published before the gate passes. If the ISO cannot be rebuilt byte for byte from
+archived inputs, or a world package is missing, it is not released.
 
 No S3, no AWS credential, nothing unpinned.
 
@@ -72,12 +86,15 @@ These come from the predecessor's GitHub Actions runs: run 37292535170 (cache-ho
 | An overlay ebuild (with its revbump) or a `package.use` line | That package, and its static dependents (`--rebuild-if-unbuilt`) | ~25–60 min |
 | A savedconfig, such as the kernel or busybox | That package (ported savedconfig marker) | ~25–35 min |
 | `make.conf`, `bashrc`, `env/`, `package.env`, the profile, the builder or the tree | Everything: a new cache tag | ~90 min once, then hot again |
-| A release tag | Fetch, then one from-source build, then the oracle on that ISO | ~100–110 min wall (the build ~78 min on the predecessor) |
-| After P02: a release tag, or a determinism check without publishing (dispatch) | Fetch, then two from-source builds in parallel, then the oracle | about the same wall time; twice the runner minutes |
+| A release tag | Fetch, then two from-source builds in parallel, then the oracle on that ISO | ~100–110 min wall (each build ~78 min on the predecessor) |
+| A reproducibility check without publishing (P02 dispatch) | The same, with no attestation or publication | the same |
 
-## Step 0: owner actions (before any node)
+## Step 0: owner actions
 
-1. **Stop the predecessor's schedules,** so nothing prunes or rewrites the rc1 assets. `S3 GC` also runs
+Porting can start now. F01 needs only item 1, which takes a minute; the others are needed later, as
+marked.
+
+1. **Stop the predecessor's schedules** (before F01), so nothing prunes or rewrites the rc1 assets. `S3 GC` also runs
    the GHCR GC, which deletes binpkg epochs other than the current one. `Pin Bump` merges with `--admin`.
    ```sh
    R=tuckermclean/linux-live-iso-factory
@@ -85,7 +102,7 @@ These come from the predecessor's GitHub Actions runs: run 37292535170 (cache-ho
      gh workflow disable "$w" -R "$R"
    done
    ```
-2. **Copy the two GHCR objects into the new namespace by digest.** This needs a token with
+2. **Copy the two GHCR objects into the new namespace by digest** (before I03). This needs a token with
    `write:packages`. Use it transiently, as AGENTS.md requires.
    ```sh
    oras cp ghcr.io/tuckermclean/monolith-builder@sha256:ab04002a13794c2ad90d821b5de535a4e4df2945346bb04d8073883ea8aab3fa \
@@ -95,7 +112,7 @@ These come from the predecessor's GitHub Actions runs: run 37292535170 (cache-ho
    ```
    A copy keeps the digest. Then set both packages, and every later one, to public in the package
    settings. GHCR creates packages private.
-3. **Settle the decisions on the path, or accept the defaults:**
+3. **Settle the decisions on the path, or accept the defaults** (each before the node that names it):
    - OD-1: the advisory URL baked into the disc; default `https://monolith.technomantics.com/`.
    - OD-2: whether a prerelease may ship dynamic binaries; default yes, with a shrinking list.
    - OD-6: the first tree; default rc1's.
@@ -104,18 +121,24 @@ These come from the predecessor's GitHub Actions runs: run 37292535170 (cache-ho
    - OD-16: the CD budget; default the whole 74-minute CD-R.
 
    OD-9 and OD-13 have defaults that need no action.
-4. **Protect `main`:** require the fast-tier check and owner review, and add CODEOWNERS (SPEC §8).
+4. **Protect `main`** (before the first merge): require the fast-tier check and owner review, and add CODEOWNERS (SPEC §8).
 
 ## Order of work
 
-Thirteen nodes are on the critical path. The longest chain has six:
+MS1 comes first. Twelve nodes lead to it, and the longest chain has five:
 
 ```text
-F01 ─▶ I01 ─▶ I02 ─▶ B01 ─▶ B03 ─▶ P01
+F01 ─▶ I01 ─▶ I02 ─▶ B01 ─▶ B03          MS1: working ISO for iteration
 ```
 
-P01 builds the tag offline from archived inputs, runs the oracle and gates, and only then attests and
-publishes.
+Then two nodes run side by side, and both are mandatory before the first release:
+
+```text
+B03 ─▶ P02 (two builds, equal SHA-256) ─┐
+B03 ─▶ R05 (rl144 and stele, offline) ──┴─▶ P01          MS2: first release
+```
+
+Fifteen nodes are on the critical path to MS2. P02 is the gate and P01 attests and publishes.
 
 Once F01 lands, the rest run beside that chain:
 
@@ -123,6 +146,7 @@ Once F01 lands, the rest run beside that chain:
 |---|---|---|---|
 | Inputs | I01, then I02 and I03 | GHCR, gentoo-mirror | B01 |
 | Recipes | R04 (revbump check), B02 (kernel savedconfig and bugs), R01 (advisory URL) | the ported tree | B01 (R04), B03 |
+| After MS1 | P02 (reproducibility gate), R05 (Rust crates as distfiles) | MS1's build | P01 |
 | Oracle | O01 (17 modes), O02 (artifact checks) | the rc1 ISO and squashfs | B03 |
 | Supply chain | S01 (SBOM and gates; must reproduce rc1's SBOM) | rc1's rootfs and SBOM | B03 |
 
@@ -132,28 +156,26 @@ A rough calendar for one owner with agent help. This is a planning guess, not a 
 |---|---|
 | 1 | Step 0; F01; I01; I03; B02 and R01; O01 passing on rc1 |
 | 2 | I02 tree recovered; B01 with the first cold build (~78 min); O02 and S01 passing on rc1 |
-| 3 | B03 → **MS1** (first ISO, oracle green); P01's fetch job and offline build on a dispatch |
-| 4 | P01; tag `v0.2.0-rc1` → **MS2** |
+| 3 | B03 → **MS1** (working ISO for iteration, oracle green) |
+| ? | P02: first dispatch of two offline builds, then nondeterminism fixed at its source until the digests match. R05 in parallel. Then P01; tag `v0.2.0-rc1` → **MS2** |
 
-Two things could slip week 4: a distfile that has vanished upstream since August, which the fetch job
-finds first, and the CVE gate on the August tree (OD-15).
+The last row has no estimate. The predecessor never built twice, so the amount of nondeterminism is
+unknown until the first P02 dispatch runs. P02 lists the known suspects: the initrd cpio, symlink mtimes,
+ISO and ESP dates, the grub memdisk, the Portage VDB and parallel emerge order. Unknown ones may sit in
+individual packages. Other things could block this row: offline `-Z build-std` for the two Rust packages
+(R05), a distfile that has vanished upstream since August, which the fetch job finds first, and the CVE
+gate on the August tree (OD-15). None of them blocks MS1.
 
 ## After MS2
 
 These nodes are in the `later` track:
-- P02: strict determinism. Every tag is built twice and the ISO digests must match. The predecessor never
-  built twice, so the amount of nondeterminism is unknown until P02's first dispatch. P02 lists the
-  known suspects: the initrd cpio, symlink mtimes, ISO and ESP dates, the grub memdisk, the Portage VDB
-  and parallel emerge order. Unknown ones may sit in individual packages. It has no estimate.
-- R05: `rl144` and `stele` back on the disc, their crates (and the standard library's, for
-  `-Z build-std`) as ordinary distfiles; `stele-acid2` runs again.
 - R02: full overlay QA with `pkgcheck` (the minimal revbump check is R04, on the critical path).
 - R03: an empty dynamic allowlist.
 - M01: tree bumps, the first one off rc1's tree.
 - M02: rebuilding the builder from a stage3.
 - P03: the advisory feed behind the OD-1 URL.
 - G01: README claims tested or removed.
-- X01: cutover, the first non-prerelease. It needs P02 and R05.
+- X01: cutover, the first non-prerelease.
 
 ## Risks
 
@@ -166,10 +188,11 @@ These nodes are in the `later` track:
   cache, so a wrong answer only affects development ISOs.
 - **The CVE gate** may block a 2026-08 tree on fixable criticals (OD-15).
 - **The adopted builder image** is pinned by digest but not yet reproduced. M02 rebuilds it.
-- **Determinism is the largest unknown after MS2.** Cutover needs equal ISO digests (P02), and a listed
-  difference does not count.
+- **Reproducibility is a hard gate and the largest unknown.** MS2 needs equal ISO digests. A listed
+  difference does not count. See the open row in the calendar.
 - **Offline `-Z build-std`** (R05) is unverified. If it cannot work with the pinned nightly, the owner
-  chooses among R05's options before cutover. The offline requirement stays.
+  chooses between R05's two options before MS2. Neither the offline rule nor the 99-package set
+  weakens.
 - **The builder image's preinstalled target packages** (B01) are unknown. Each is re-merged from source
   in a release build; one that cannot be is fixed or declared with its toolchain owner, never silently
   reused.
