@@ -48,6 +48,10 @@ Also out of scope:
 
 ### 0.1 The myth (and why it is load-bearing)
 
+The story is in [`MYTH.md`](MYTH.md): a disc handed to a ten-year-old at a 486 in 1996, a portal to
+the future that is a full modern userland, and is built so that the whole system can be understood
+and explained.
+
 The Monolith is an object that arrives in a world whose clock never started. Its origin is
 1970-01-01, the Unix epoch. Its constituency is the kid's machine: a Socket-7 486-class board with a
 VIA, SiS or ALi southbridge, which is Tier 0 by definition. The prompt carries a black square. These

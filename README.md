@@ -1,8 +1,11 @@
 # The Monolith
 
-A small, specialized Gentoo-derived Linux distribution: one live ISO with a complete GNU/Linux
-userland that runs on a 486 with 64 MB of RAM or on a modern UEFI machine. It is cross-compiled from
-source against musl, statically linked, and attested end to end.
+An artifact from the future: one live CD with a complete, modern Linux userland, in text mode or in
+X (TinyX with dwm and st), that boots on a 486 and on a modern UEFI machine. It is a Gentoo-derived
+distribution, cross-compiled from source for i486 against musl, statically linked, and attested end to
+end. The aim is a 486 with 8 MB of RAM; the floor tested today is 64 MB.
+
+Why it exists: [`MYTH.md`](MYTH.md).
 
 This repository continues
 [linux-live-iso-factory](https://github.com/tuckermclean/linux-live-iso-factory), which released
