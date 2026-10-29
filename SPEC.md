@@ -1,89 +1,130 @@
 # The Monolith — Specification
 
-Version 0.3 (draft, 2026-10-27; v0.2 revised after the node-spec review; v0.3 adds port-first, the build cache and
-the path to the first attested build in `docs/first-attested-build.md`). This document is the authority for the repository. Where a node
-spec (`nodes/<id>.md`) and this document disagree, this document wins and the node spec is a defect.
-The dependency graph is `docs/graph.yaml`. The study of the predecessor repository is frozen in
-`docs/study/` and is evidence, not authority.
+Version 0.4 (draft, 2026-10-28). v0.4 replaces v0.3's factory design with the smallest port of the
+predecessor that reaches a reproducible release. `docs/reviews/2026-10-28-v0.4.md` says what was removed
+and why. This document is the authority for the repository. Where a node spec (`nodes/<id>.md`) and this
+document disagree, this document wins and the node spec is a defect. The dependency graph is
+`docs/graph.yaml`, and the plan to the first release is `docs/first-release.md`. The study of the
+predecessor in `docs/study/` is evidence, not authority.
 
 ---
 
 ## 0. What this repository is
 
-The Monolith is a bootable artifact from the future: one live ISO carrying a complete GNU/Linux
-userland that boots on an i486 with a few MB of RAM and on a modern UEFI machine. It is built from
-source against musl and attested end to end.
+The Monolith is a small, specialized Gentoo-derived Linux distribution. It is one live ISO carrying a
+complete GNU/Linux userland, cross-compiled from source against musl for i486. It boots on a 486 with
+64 MB of RAM and on a modern UEFI machine.
 
-This repository is a rebuild. Its predecessor, `tuckermclean/linux-live-iso-factory` (frozen at
-`b9f533b`, released `v0.1.0-rc1`), proved the product and accumulated the knowledge to build it. Its
-factory — the workflows, scripts and storage around the recipes — grew piecemeal, hard-wired one
-storage vendor into five jobs, and died when that vendor's account was disabled. The rebuild keeps
-the **recipes** (the hard-won ebuilds, configs and patches), ports the **factory** onto the
-principles below (Principle 11: port first, then fix), and uses the predecessor's **tests** as the
-acceptance oracle. Three predecessor assets survive and are reused by digest: rc1's builder image, rc1's
-binary-package cache (both on GHCR), and the v0.1.0-rc1 release (ISO, SBOM, checksums).
+**We are building a distribution, not a distribution-building framework.** Portage, crossdev,
+ebuilds, profiles, USE flags, `savedconfig` and binary packages do the work, together with the usual
+kernel, ISO, QEMU, QA and supply-chain tools. Custom code exists only where §5 records a gap that a
+standard mechanism leaves open, and it is the smallest code that closes it.
+
+This repository continues `tuckermclean/linux-live-iso-factory`, frozen at `b9f533b`, which released
+`v0.1.0-rc1`. The predecessor already built, tested and attested this product. It stopped when its
+storage vendor disabled the account; AWS S3 was hard-wired into five jobs. The rebuild therefore
+**ports** the predecessor:
+- Its recipes, scripts, tests and workflows carry over unchanged.
+- S3 is replaced by the GitHub-native storage the predecessor already half used.
+- The bugs the study verified are fixed as named criteria.
+
+These predecessor assets survive and are reused by digest:
+
+| Asset | Where | Identity |
+|---|---|---|
+| rc1 builder image (crossdev i486-musl toolchain) | `ghcr.io/tuckermclean/monolith-builder:20260810-d9d08d1c7422` | `sha256:ab04002a13794c2ad90d821b5de535a4e4df2945346bb04d8073883ea8aab3fa` |
+| rc1 binary packages (one PKGDIR archive, BUILD_EPOCH 20260811) | `ghcr.io/tuckermclean/monolith-binpkgs:20260811` | `sha256:d0a1838d7504d41c95c050e70d0d5399dbf546dd2e21fdd5f793df2ad700b92d` |
+| rc1's Gentoo tree | `github.com/gentoo-mirror/gentoo` history (the snapshot tarball is gone) | A commit near 2026-08-11. All 25 sampled `versions.lock` entries exist at `d4d0b0c7`. |
+| v0.1.0-rc1 release | GitHub release on the predecessor | ISO `a9600659…eb27a` (202 MiB), SBOM `3cfc322a…75887` |
+
+**Out of scope.** The knowledge-content projects that may one day ship on the disc are separate
+projects with their own specifications. This spec places no requirements on them. If they ship, they
+arrive as ordinary packages in the overlay and count against the size budget (§1).
+
+Also out of scope:
+- the predecessor's dashboard and in-browser boot demo;
+- any agent orchestration for building this repository.
 
 ### 0.1 The myth (and why it is load-bearing)
 
 The Monolith is an object that arrives in a world whose clock never started. Its origin is
-1970-01-01, the Unix epoch — "the truest image of a machine whose clock never started" — not Y2K,
-which comes after the origin in the story. Its constituency is the kid's machine: a Socket-7
-486-class board with a VIA, SiS or ALi southbridge, which is Tier 0 by definition. The prompt carries
-a black square. These are not decoration: they decide test sentinels (§3, D-clock-origin-1970),
-kernel tiering (D-486-tier-regime) and what may never be added (D-486-minimalism).
+1970-01-01, the Unix epoch. Its constituency is the kid's machine: a Socket-7 486-class board with a
+VIA, SiS or ALi southbridge, which is Tier 0 by definition. The prompt carries a black square. These
+facts decide three things:
+- the test sentinels (D-clock-origin-1970);
+- kernel tiering (D-486-tier-regime);
+- what may never be added (D-486-minimalism).
 
 ---
 
-## 1. Product
+## 1. Product and constraints
 
-- **Targets:** i486 and up (BIOS via ISOLINUX), x86_64 UEFI machines (GRUB EFI, i386 kernel),
-  common hypervisors (QEMU/KVM, VirtualBox, Hyper-V per G03), USB and optical media (hybrid ISO).
-- **Userland:** the world set inherited from the predecessor (99 atoms at `b9f533b`), cross-compiled
-  `i486-linux-musl`, `-march=i486 -mtune=i486 -Os`.
-- **GUI:** kdrive Xfbdev (TinyX), bitmap fonts only (Terminus default), dwm, st, Stele browser.
-- **Services on the disc:** networking (`monolith-net`, `monolith-router`, nftables, dnsmasq,
-  dhcpcd), persistence (`monolith-persist`), clock honesty (`monolith-time`, `monolith-time-check`),
-  advisory check (`monolith-advisory-check`), the `monolith` help system.
-- **Supply chain:** every release ships an ISO, CycloneDX SBOM, SHA256SUMS and a GitHub/Sigstore
-  SLSA provenance attestation whose subject is the ISO digest.
+- **Targets:**
+  - i486 and up, booting by BIOS through ISOLINUX;
+  - x86_64 UEFI machines, through GRUB EFI with the i386 kernel;
+  - common hypervisors: QEMU/KVM, VirtualBox, and Hyper-V per OD-12;
+  - USB and optical media (hybrid ISO).
+- **Userland:** the predecessor's world set, 99 atoms at `b9f533b`, cross-compiled for
+  `i486-linux-musl` with `-march=i486 -mtune=i486 -Os`.
+- **GUI:** kdrive Xfbdev (TinyX), bitmap fonts only (Terminus by default), dwm, st and the Stele browser.
+- **Services on the disc:**
+  - networking: `monolith-net`, `monolith-router`, nftables, dnsmasq, dhcpcd;
+  - persistence: `monolith-persist`;
+  - clock honesty: `monolith-time`, `monolith-time-check`;
+  - advisory check: `monolith-advisory-check`;
+  - the `monolith` help system.
+- **Release assets:**
+  - the ISO;
+  - a CycloneDX SBOM;
+  - SHA256SUMS;
+  - `release-inputs.json` (§6);
+  - a Sigstore SLSA provenance attestation whose subject is the ISO digest.
 
-What the product does is defined by the oracle (§7), not by prose. A behaviour the README promises
-and no test proves is a gap (phase G) until it is tested or the promise is removed.
+**Non-negotiable constraints.** Each has a check. None may be traded for factory convenience.
+
+| Constraint | Meaning | Checked by |
+|---|---|---|
+| i486 | Every target binary runs on an i486. Boot tests run QEMU with `-cpu 486`. | O01 (ported), O02 (`EM_386`, no `EM_X86_64`) |
+| Static musl | Every rootfs binary is statically linked against musl, and no dynamic loader ships on the disc. rc1 violates this (§3, D-all-static). The list of violations may only shrink, and it is empty before the first non-prerelease. | O02, R03 |
+| Modest memory | The BIOS boot reaches a shell at 64 MB of RAM, the predecessor's floor. | O01 (ported `ram_mb: [64, 256]`) |
+| Hardware compatibility | The predecessor's 17 boot modes pass, including the NIC, VGA and legacy fbdev matrices. | O01 |
+| Reproducibility | A release can be rebuilt from its archived inputs. The rebuild is compared with the release byte for byte, and every difference is listed. | P01, P02 |
+| CD-sized budget | The ISO fits on a 74-minute CD-R (681,984,000 bytes) now, and within the share the owner sets later (OD-16). | P01 (report and gate) |
+
+The oracle (§7) defines what the product does. A README promise that no test proves is a gap (G01)
+until it is tested or the promise is removed.
 
 ---
 
 ## 2. Principles
 
-These come from what failed in the predecessor. Each is enforced by at least one node.
-
-1. **Storage is an interface.** No workflow, script or page names a storage vendor. Everything goes
-   through the `store` contract (§5); backends are swappable and pass one contract suite. (F06, I01, P01)
-2. **Every input is pinned and mirrored under our control.** Portage snapshots, base images,
-   toolchains, distfiles, tools and actions are pinned by digest or exact version and mirrored in the
-   store. A build that would fetch an unpinned or unmirrored input fails. (I02–I05)
-3. **The system is inventoried.** `docs/system.yaml` lists every moving part; CI fails on anything
-   unlisted. (F03)
-4. **Doctrines are executable.** A design rule that has no check is a wish. Every doctrine in §3 maps
-   to a check node. (O06, R03, R04, S04)
-5. **Success is honest.** A step reports success only for the exact thing it was asked to produce, in
-   this run or from a cache entry keyed by the complete input hash. Fallbacks are loud; auth and
-   network errors are failures, never misses; missing or empty inputs fail gates. (B01, I01, S03, S04)
-6. **Two test tiers.** The fast tier (seconds, no build) carries RED for test-first work. The slow tier
-   (build + boot) is GREEN evidence in CI. (F04, O01)
-7. **Publish last.** Nothing public moves — no "latest" pointer, no release, no dashboard row — until
-   the full oracle and attestation have passed for that exact digest. (P02, P03)
-8. **The release path is small, separate and rarely changed.** It is a protected path with elevated
-   review. (P02, §8)
-9. **Authored and generated are never the same file.** Inputs we write and outputs the build resolves
-   live apart; builds never write into tracked files. (R04, B02)
-10. **One identity per actor.** One human author identity, one agent bot identity, one trailer format;
-    CI rejects others. (F04)
-11. **Port first, then fix.** Code and recipes carry forward from the predecessor unchanged unless an
-    acceptance criterion requires a change. A rewrite states which criterion forces it. Fixes for the
-    study's verified bugs are separate, named criteria, so every behaviour change is visible. (all nodes)
-12. **Iterate from cache; release from source.** Development builds restore every artifact whose
-    complete input key matches (I06), so a change rebuilds only what it touches. Release builds read no
-    cache and audit it instead. (I06, B01, P02)
+1. **A Gentoo derivative, not a framework.** Use the standard mechanism first. Write custom code only
+   for a gap recorded in §5, naming the standard mechanism considered and why it falls short. Where no
+   gap is recorded, use the standard approach or drop the feature.
+2. **Port first, fix second.**
+   - Predecessor code, recipes, tests and workflows carry over unchanged unless an acceptance criterion
+     requires a change.
+   - A replacement must name its demonstrated benefit.
+   - Fixes for the study's verified bugs are separate, named criteria, so every behaviour change is
+     visible.
+3. **No storage vendor in the build path.**
+   - Durable bytes live in an OCI registry (GHCR), reached with `oras` or `docker`, or in GitHub
+     Releases.
+   - The registry location is one variable. OCI is a standard protocol, so moving vendors means changing
+     that variable and copying the data.
+   - There is no storage abstraction layer.
+4. **Every input is pinned, and a release's inputs are archived.** The tree commit, the builder image
+   digest, tool versions and action SHAs are pinned. A release archives the distfiles it used and
+   records every pin in `release-inputs.json`. That way it can be rebuilt after upstream has moved on.
+5. **Success is honest.** A step reports success only for what it produced in this run, or for what it
+   restored from a cache entry matching its inputs. Auth errors are failures, never cache misses. Missing
+   or empty inputs fail gates.
+6. **Iterate from binary packages; release from source.** Development builds reuse Portage binary
+   packages. Tag builds compile every package from source (D-tag-builds-from-source, ported).
+7. **Publish last.** Nothing public moves until the full oracle, the gates and the attestation have
+   passed for that exact digest.
+8. **Authored and generated are never the same file.** Builds never write into tracked files.
+9. **Humans merge.** Bots and agents may open PRs. They never merge, approve or use `--admin`.
 
 ---
 
@@ -93,314 +134,316 @@ Hard rules about the product. Ids match `docs/study/doctrine.yaml`, which holds 
 
 | Id | Rule | Enforced by |
 |---|---|---|
-| D-486-minimalism | Everything runs on an i486 with a few MB of RAM. Additions must justify themselves against that. | review checklist (F05); O02 RAM floors |
-| D-all-static | The rootfs is statically linked. **Today untrue**: some binaries are dynamic and the musl loader ships. OD-2 decides how this becomes true. | O06 |
-| D-no-dynamic-loading-no-dlopen | No loadable plugins, no perl XS `.so`, no sqlite load-extension, no X modules. | O06 |
-| D-no-python-on-target | No Python in the rootfs. Python is a host/builder tool only. | O06 |
-| D-bitmap-fonts-no-freetype | No freetype, fontconfig or Xft on the disc. | O06, S01 |
-| D-no-readding-removed-things | Deliberately removed packages stay removed (list in doctrine.yaml). | R02 (denylist check) |
-| D-clock-origin-1970 | The clock origin sentinel is 1970-01-01. | O04 |
-| D-486-tier-regime | Kernel drivers: Tier 0 `=y` boot-critical, Tier 1 `=m` in initrd, Tier 2 `=m` on squashfs. | R04, B02 |
-| D-static-musl-cross-all-the-way | i486-linux-musl via crossdev; host build tools are 32-bit-capable. | I03 |
-| D-supply-chain-honesty | Releases come only through the verifiable pipeline; the digest chain holds. | S05, P02 |
-| D-tag-builds-from-source | Release builds compile every package from source; no cached binary enters a signed release. The cache (I06) serves iteration only. | B01, P02 |
-| D-revbump-on-overlay-change | Changing an ebuild or its files requires `-rN` and a versions.lock bump. | R03 |
-| D-hand-authored-rootfs-files-owned | Every rootfs file is owned by a package or a justified allowlist entry. | R05, S04 |
-| D-state-and-no-hidden-stderr | No `2>/dev/null` on paths that decide success; every test must mean something. | F01 lint |
-| D-two-epoch-pin-model | TOOLCHAIN_EPOCH (builder) and BUILD_EPOCH (runtime tree) are separate pins. | I05 |
-
-`D-s3-publish-only` from the predecessor is superseded by Principle 1 and 7.
+| D-486-minimalism | Everything runs on an i486 with a few MB of RAM. Additions must justify themselves against that. | review; O01 RAM floor |
+| D-all-static | The rootfs is statically linked. **Untrue in rc1**: util-linux, iproute2, dhcpcd, procps, tar, gawk and others are dynamic, and the musl loader ships. O02 enforces a shrinking allowlist, and R03 empties it. | O02, R03 |
+| D-no-dynamic-loading-no-dlopen | No loadable plugins, no perl XS `.so`, no sqlite load-extension, no X modules. | O02 |
+| D-no-python-on-target | No Python in the rootfs. Python is a host and builder tool only. | O02 |
+| D-bitmap-fonts-no-freetype | No freetype, fontconfig or Xft on the disc. | O02 |
+| D-no-readding-removed-things | Deliberately removed packages stay removed, through `package.mask`. The list is in doctrine.yaml. | B01 |
+| D-clock-origin-1970 | The clock origin sentinel is 1970-01-01. | O01 |
+| D-486-tier-regime | Kernel drivers are tiered: Tier 0 is `=y` and boot-critical, Tier 1 is `=m` in the initrd, Tier 2 is `=m` on the squashfs. | B02 |
+| D-static-musl-cross-all-the-way | i486-linux-musl via crossdev. Host build tools are 32-bit-capable. | I03 |
+| D-supply-chain-honesty | Releases come only through the verifiable pipeline, and the digest chain holds. | P01 |
+| D-tag-builds-from-source | Tag builds compile every package from source. No cached binary enters a release. | B01, P01 |
+| D-revbump-on-overlay-change | Changing an overlay ebuild or its `files/` requires a `-rN` bump. | R02 |
+| D-hand-authored-rootfs-files-owned | Every rootfs file is owned by a package or by a justified allowlist entry. | S01 |
+| D-state-and-no-hidden-stderr | No `2>/dev/null` on paths that decide success. | review; S01 for the gates |
+| D-two-epoch-pin-model | The builder pin and the runtime tree pin are separate. | I02, I03 |
 
 ---
 
 ## 4. Architecture
 
-### 4.1 Pipeline
+### 4.1 Pipeline (the predecessor's, ported)
 
 ```text
-pins/pins.yaml ─┐
-                ├─▶ [I02] snapshot (store: snapshot) ─┐
-                ├─▶ [I03] builder image (GHCR by digest)
-                └─▶ [I04] distfiles (store: distfile) ─┤
-recipes/ ───────────────────────────────────────────────┤
-                                                        ▼
-            [I06] cache ─▶ [B01] packages (restore by key in dev; from source on tags)
-                 ├─▶ [B02] kernel + modules ─▶ resolved .config (artifact)
-                 │        └─▶ [B03] initrd
-                 └─▶ [B04] rootfs ─▶ squashfs
-                                   [B05] ISO ◀── initrd + squashfs + kernel
-                                     ├─▶ [S01] SBOM ─▶ [S02-S04] gates
-                                     └─▶ [O02-O06] oracle (CI, slow tier)
-                                                  │  (oracle-gate job)
-                                   [S05] provenance + attest ◀── gates + oracle
-                                                  │
-                              [P02] release ─▶ [P03] dashboard/latest, [P05] advisories
+tree pin (gentoo-mirror commit, archived on GHCR) ─┐
+builder image (GHCR, by digest) ───────────────────┤
+configs/overlay  (the `monolith` Portage repository)┤
+configs/portage  (distribution configuration) ─────┤
+                                                   ▼
+      build-packages.sh: cross-emerge world into the sysroot
+        (dev: binpkgs restored from GHCR; tag: --usepkg off)
+        incl. sys-kernel/monolith-kernel (config from savedconfig)
+                                                   ▼
+      extract-packages.sh / build-rootfs.sh ─▶ squashfs
+      build-initrd.sh ─▶ initrd
+      build-iso.sh ─▶ hybrid ISO (ISOLINUX + GRUB EFI)
+                                                   ▼
+      boot tests (17 modes)   artifact checks   SBOM ─▶ license, CVE, unowned gates
+                                                   ▼
+      tag only: attest (actions/attest-build-provenance) ─▶ GitHub prerelease ─▶ rebuild check
 ```
 
-Within one CI run, artifacts move between jobs as Actions artifacts only. Never `actions/cache`: cache
-entries are immutable per key, so a re-run silently reuses the first attempt's bytes
-(T-run-rerun-reuses-cache). The store is for things that outlive a run, including the build cache
-(§5.1), whose keys are complete input hashes, so a re-run can only ever get the bytes its inputs
-name. The SBOM is taken after B05 because it records the ISO digest.
+Within one CI run, files move between jobs with `actions/upload-artifact` and `download-artifact`, never
+with `actions/cache` (T-run-rerun-reuses-cache). The predecessor used `actions/cache` for this
+(`.github/workflows/build.yml:508-540`).
 
 ### 4.2 Repository layout
 
+The predecessor's layout is kept, so ported scripts keep their paths.
+
 | Path | Contents | Owner node |
 |---|---|---|
-| `Makefile`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`, `.gitignore` | Root files and make entry points (fragments in `factory/mk/`, `oracle/oracle.mk` are included from here) | F01 |
-| `SPEC.md`, `docs/graph.yaml`, `nodes/` | Specification, graph, node specs | F02 |
-| `docs/system.yaml` | System inventory | F03 |
-| `docs/study/` | Frozen study of the predecessor (read-only) | — |
-| `docs/decisions/` | Short decision records (`NNNN-title.md`) | any |
-| `pins/` | `pins.yaml`, `versions.lock`, `crossdev.lock` | I05, R02 |
-| `recipes/overlay/` | Overlay ebuilds and their `files/` | R01 |
-| `recipes/portage/` | make.conf, bashrc, env, package.*, profile, savedconfig, world | R01 |
-| `recipes/kernel/` | Authored kernel config fragments, tier lists, initrd module list | R04 |
-| `image/` | Builder image definition | I03 |
-| `factory/` | Build steps (`factory/bin/*`) and the `store` CLI (`factory/bin/store`) | F06, B0x |
-| `oracle/` | Boot harness, modes, fixtures, artifact checks | O0x |
-| `supplychain/` | SBOM, gates, provenance; policies under `supplychain/policy/` | S0x |
-| `web/` | Dashboard and boot demo | P03, P04 |
-| `tests/fast/` | Fast-tier tests (one file per subject) | every node |
-| `.github/workflows/` | CI | F01, B06, P02, M0x |
-| `.claude/` | Agent loop | F05 |
-| `tools/` | Host tooling that judges the repo: `tools/graph/` (F02), `tools/system/` (F03), `tools/ci/` (F01, F04) | F0x |
-| `factory/mk/`, `factory/data/`, `factory/lib/` | Make fragments included by the root `Makefile`; build data (e.g. `boot/boot-contract.yaml`); shared libraries incl. `factory/lib/store/` backends | B0x, F06 |
-| `recipes/IMPORT.yaml`, `recipes/kernel/legacy/` | Import provenance (hashes at `b9f533b`); the predecessor's kernel files, frozen, read-only | R01, R04 |
-| `oracle/policy/`, `oracle/golden/`, `oracle/modes.yaml` | Oracle policy (allowlists, expected differences), golden images, mode registry | O0x |
-| `oracle/fixtures/rc1.yaml` | The rc1 fixture set: release asset URLs and sha256, fetched on demand, never committed | O01 |
-| `factory/data/cache-inputs.yaml`, `factory/data/build-env.yaml` | Extra per-package cache inputs; the emerge options and variables that shape outputs | I06 |
-| `web/vendor/` | Vendored, pinned front-end libraries (`VENDOR.lock`) | P03, P04 |
-| `docs/status.yaml` | Node status (`done`, `in-progress`) read by `tools/graph --ready` | F02 |
-| `.github/CODEOWNERS`, `.github/dependabot.yml` | Owner-review routing; action updates | F04, M04 |
+| `configs/overlay/` | The `monolith` Portage repository: ebuilds, their `files/`, `metadata/`, `profiles/` (§4.3) | F01, R02 |
+| `configs/portage/` | Distribution configuration, installed as the target's `/etc/portage`: `make.conf`, `bashrc`, `env/`, `package.*`, `profile/`, `savedconfig/`, `world`, `versions.lock`, `crossdev.lock` | F01, B01, B02 |
+| `configs/attestation/` | Supply-chain policies: licence, CVE, CPE, unowned allowlist, schemas | S01 |
+| `configs/` (other files) | `initrd-modules.txt`, boot art | F01 |
+| `rootfs/` | Hand-authored files not yet owned by a package. It shrinks and is covered by S01's allowlist. | F01 |
+| `scripts/`, `scripts/tests/` | Ported build, check and test scripts | every node |
+| `Makefile`, `Dockerfile` | Ported entry points; the builder image definition | F01, I03 |
+| `.github/workflows/` | Ported CI | F01, B03, P01 |
+| `docs/` | Ported predecessor docs (`releasing.md`, `version-pinning.md`, `cve-gate.md`, `kernel-tiers.md`), plus this spec's graph, plan, reviews and study | F01 |
+| `SPEC.md`, `nodes/` | Specification and node specs | owner |
+| `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE` | Ported. AGENTS.md keeps the traps-and-recipes knowledge base. | F01 |
+| `IMPORT.md` | What was ported from `b9f533b`, with a sha256 per file, and what has changed since | F01 |
 
-### 4.3 Languages
+### 4.3 The overlay is a conventional Portage repository
 
-Factory steps are POSIX `sh` or `bash`. Host-side tools (oracle harness, supply-chain gates,
-validators) are Python 3, standard library plus PyYAML, running on the host or builder — never on the
-target (D-no-python-on-target). The boot harness keeps the predecessor's `pexpect`, pinned on the CI
-host (Principle 11; v0.2 required a stdlib rewrite, which bought nothing). The dashboard's tests are the one place another runtime may be needed
-(OD-14). OD-3 records the alternative language choice.
+`configs/overlay/` is the `monolith` repository: `profiles/repo_name`, `metadata/layout.conf` with
+`masters = gentoo`, and thin Manifests. It stays in this repository until there is a real maintenance
+reason to extract it. Extraction must then be `git subtree split --prefix=configs/overlay` with no other
+change. To keep that true:
+
+- The overlay holds only what a Gentoo repository holds: ebuilds, `files/`, eclasses, metadata and
+  profiles. Distribution policy lives in `configs/portage/`: USE, keywords, masks, env, savedconfig and
+  world.
+- No ebuild reads a path outside its own repository or the standard Portage locations.
+  - Today the predecessor's kernel ebuild breaks this rule
+    (`monolith-kernel-6.12.80-r8.ebuild:28-33,76-82`).
+  - It reads and writes `${CONFIGS_DIR}/kernel.config` from a bind mount.
+  - It falls back silently to `allnoconfig` when that file is missing.
+  - B02 moves the file to the standard `savedconfig` location.
+- Nothing outside the overlay writes into it, except Manifest generation (`ebuild … manifest` or
+  `pkgdev manifest`).
+- The overlay passes `pkgcheck scan` (R02), and any accepted warnings are listed.
+
+### 4.4 Languages
+
+These are ported as they are:
+- build steps in POSIX `sh` or `bash`;
+- host-side tools in Python 3 with PyYAML;
+- the boot harness with `pexpect`, pinned on the CI host.
+
+Python never runs on the target (D-no-python-on-target).
 
 ---
 
-## 5. The store contract
+## 5. Standard mechanisms and the custom residue
 
-All durable bytes go through `factory/bin/store`. Nothing else may call a storage provider's CLI.
+This table lists every subsystem of the factory, the standard mechanism it uses and the custom code
+that remains. A custom row must name the gap. Anything v0.3 specified that has no gap here is removed
+(see `docs/reviews/2026-10-28-v0.4.md`).
 
-**Classes** (each with its own retention, M03):
-
-| Class | Contents | Key | Retention |
-|---|---|---|---|
-| `snapshot` | Gentoo trees: commit archives (I02) and, for later epochs, signed daily snapshots | `gentoo-<commit40>.tar.xz` + `gentoo-<commit40>.json`; `gentoo-<epoch>.tar.xz[.gpgsig]` | forever |
-| `distfile` | Source tarballs, archived git sources, vendored crates | `sha256/<hex>` (+ `index/sha512/<hex>`, since Manifests carry SHA512) | while referenced by a live tree or any release |
-| `binpkg` | Build cache: binary packages (§5.1) | `<global-key>/blobs/<sha256>.gpkg.tar`, `<global-key>/sets/<utc>-<run>.json`; PR runs write under `pr-<n>/` | global key unused for 30 d; `pr-*` 14 d; rc1 seed kept until MS4 |
-| `build` | Per-build outputs worth keeping (ISO, SBOM, attestation files, logs); whole-build memo (§5.1); rc1 fixtures | `builds/<version>/<file>`, `builds/<version>/attestation/<file>`, `memo/<input-hash>/<file>`, `fixtures/rc1/<file>` | tags and fixtures forever; memo and others 30 d |
-| `public` | Anything served to the world (dashboard, ISO for demo, status) | stable path | per P01 |
-
-**Operations:** `put <class> <key> <file>`, `get <class> <key> <dest>`, `has <class> <key>`,
-`ls [--long] <class> <prefix>` (`--long` adds size and creation time, for M03),
-`url <class> <key>` (public only), `set public <key> <file>` (the only mutable write: allowed only for
-keys matching `factory/data/public-mutable.txt`, e.g. `latest.json`, indexes, `status/*`), and
-`rm <class> <key> --confirm` (M03 only; refused for `snapshot` and for any key referenced by a release).
-
-**Guarantees every backend must pass (F06 contract suite):**
-- `put` is immutable: putting a different body under an existing key fails; the same body is a no-op.
-- `get` verifies the stored sha256 and fails on mismatch.
-- `has`/`get` distinguish *absent* (exit 3) from *error* (any other non-zero). Auth, network and
-  permission errors are errors, never absence.
-- No backend writes to stdout except data requested; diagnostics go to stderr, never suppressed.
-- Declared exceptions: the `oci` backend cannot make two concurrent `put`s of one key atomic, so the
-  contract suite's concurrency case is documented as a known deviation for `oci` (I01); and the builder
-  image is pushed to GHCR by `docker push` (M02), the one storage write outside `store`; and the rc1
-  builder image and binpkg seed are plain OCI artifacts, read by digest through `store-adopted get`
-  (I01), never written. `ls --long` and `rm` need credentials even where reads are anonymous.
-
-**Backends:** `fs` (tests, local dev), `oci` (GHCR via pinned `oras`, I01), `public` (P01, OD-1). Local
-builds may read the `oci` backend anonymously (the packages are public) and write to `fs`.
-
-### 5.1 The build cache (I06)
-
-- **Global key** = sha256 over a canonical record of: builder image digest, tree pin (commit), the
-  global portage config (`make.conf`, `bashrc`, `profile/`, `env/`), overlay eclasses, and
-  `factory/data/build-env.yaml` (emerge options and variables that shape outputs). Any change to these
-  can change every package, so it opens a new, empty namespace.
-- **Per-package fingerprint** = sha256 over what portage cannot see: the package's ebuild and
-  `files/` (overlay packages), its savedconfig, the `package.env` lines that match it and the env files
-  they name, user patches, and paths listed for it in `factory/data/cache-inputs.yaml` (for example
-  `recipes/kernel/` for the kernel package). Version and USE are checked by portage itself
-  (`--binpkg-respect-use=y --binpkg-changed-deps=y`).
-- **Consistent sets.** Package blobs are stored by content hash. Each run that built packages writes
-  one immutable *set*: the cpv → (fingerprint, blob sha256) of every package in its final sysroot. A set
-  is internally consistent because each package in it was built against the others. Restore takes the
-  newest set in its namespace and places only the entries whose fingerprint still matches.
-- **Static dependents.** Every library is linked statically, so a dependent's bytes contain its
-  dependencies. Restore therefore runs with `--rebuild-if-unbuilt=y`: any package built from source
-  in a run forces its build-time reverse dependencies to rebuild in that run. (The predecessor ran plain
-  `--usepkg`, `scripts/build-packages.sh:221`, so a cached dependent could embed a stale library.)
-- **Honest restore.** Only matching entries are placed in `PKGDIR`; every world atom is reported as
-  `built` or `cache:<sha256>`. Auth and network errors fail the run.
-- **Whole-build memo.** The ISO input hash covers the global key, every fingerprint in the plan, and
-  `factory/`, `recipes/`, `pins/`, `image/`, `.github/workflows/`. A non-release run whose hash has a memo entry reuses the
-  ISO and SBOM, and re-runs only the oracle and gates whose own inputs changed. Oracle results are keyed
-  by (ISO sha256, mode definition, harness hash).
-- **Writers.** Runs on `main` write the shared namespace; PR runs write `pr-<n>/` and read both.
-  Memo entries follow the same rule, and a PR's memo is read only by that PR.
-- **Release builds** never restore. After building from source they compare each package's payload
-  with the cache entry of the same key and report mismatches (input to B07, non-blocking until then).
-- **Seed.** rc1's binpkg cache becomes the first set under the global key that the verbatim R01
-  import, the adopted builder and the recovered tree produce. A package is kept only if its embedded
-  ebuild matches the pinned tree (or the imported overlay) byte for byte and, where the predecessor
-  recorded a savedconfig hash, that hash matches.
+| Area | Standard mechanism | Custom residue: gap → smallest solution |
+|---|---|---|
+| Toolchain | crossdev `i486-linux-musl`, in a Docker image built from a Gentoo stage3 | None new. The ported `Dockerfile`; rc1's image is adopted by digest (I03). |
+| Packages | Gentoo ebuilds from the pinned tree; the `monolith` overlay for packages Gentoo lacks or that must be patched | None new. The ported `scripts/build-packages.sh` drives `${CHOST}-emerge`. |
+| Distribution policy | `make.conf`, `package.use`/`.mask`/`.env`/`.accept_keywords`, `env/`, `bashrc`, a profile | None new. The ported `configs/portage/`; rc1's working static-link workarounds live in `bashrc` and `env/`. Policy is not moved into an overlay profile: no demonstrated benefit yet. |
+| Versions | The pinned tree fixes every version; `package.mask` holds back removed packages | `versions.lock` (ported). Gap: the predecessor emerges world as `=cat/pkg-ver` atoms (`build-packages.sh:180-197`), so a tree bump moves no world version unreviewed. The ported `update-versions.sh` regenerates the file, and B01 fixes its 23-atom drift. |
+| Binary cache | Portage `PKGDIR` with gpkg, `--usepkg`, `--binpkg-respect-use=y`, `--binpkg-changed-deps=y`, `--rebuild-if-unbuilt` | Gap: Portage cannot see edits to `make.conf`, `bashrc`, `env/`, `package.env` or the profile, nor to `savedconfig` contents. The smallest solution has three parts: (a) the cache tag includes a hash of those files, so changing one starts a cold cache; (b) the ported `savedconfig-cache.sh` marker handles savedconfig; (c) an overlay edit needs a revbump, the standard Gentoo rule (R02). Transport: the ported `binpkg-store.sh` pushes the whole `PKGDIR` as one OCI artifact. A Portage binhost over HTTP (`binrepos.conf`) was considered. It needs a web host for about 2 GB, and GitHub Pages (P03) is sized for far less, so it waits until a host exists. Removed: v0.3's per-package fingerprints, sets, memo and seeding (I06). |
+| Static dependents | `--rebuild-if-unbuilt` rebuilds the build-time reverse dependencies of anything built from source | None; it is one flag. Its behaviour with a cross `ROOT` is unverified, and B01's first slice checks it. Releases build from source, so a miss cannot reach a release. |
+| Gentoo tree | A gentoo-mirror git commit (Portage `sync-type = git`); signed daily snapshots for later epochs | Gap: upstream prunes snapshots, and rc1's 20260810/11 snapshots now return 404. I02 archives the pinned tree as one OCI artifact, and the ported `sync-portage.sh` reads it by digest. |
+| Distfiles | `DISTDIR`, Manifest checksums, `GENTOO_MIRRORS`; `cargo.eclass` `CRATES` for Rust packages | Gap: upstream URLs disappear, so an old release could not be rebuilt. P01 archives the tag build's `DISTDIR` as one OCI artifact per release. There is no mirror service. `rl144` and `stele` still fetch crates at build time (`RESTRICT=network-sandbox`), so their crates are in no archive. R02 moves them to `CRATES`, the standard form, and P02 lists the gap until then. |
+| Kernel | kbuild with a `savedconfig` (`savedconfig.eclass`) and `olddefconfig` | None new. The ported `verify-*.sh` assertions. v0.3's fragment split and tier tooling are removed. |
+| Initrd | dracut and genkernel were considered | Gap: both assume a glibc, udev or systemd-style userland and are far larger than the 486 budget. The ported `build-initrd.sh` (busybox, deterministic cpio) stays. |
+| Rootfs and ISO | Portage `ROOT` and VDB, squashfs-tools, xorriso, ISOLINUX, `grub-mkimage` | None new. The ported `extract-packages.sh`, `build-rootfs.sh` and `build-iso.sh`. |
+| Boot tests | QEMU, OVMF, `pexpect`. openQA was considered, but it is a service to run and maintain for 17 serial-console modes. | The ported `boot-test.py` and `boot-test.yml`, unchanged. |
+| Artifact doctrine checks | `scanelf` (pax-utils), the Portage VDB | The ported `static-audit.sh`, extended in O02 with `scanelf` for PT_INTERP, machine type and textrels. |
+| SBOM | syft over the rootfs (Portage VDB cataloger) | The ported `enrich-sbom.py`. Gap: syft lacks CPEs for many Gentoo packages and records host paths. |
+| Licences | Portage `ACCEPT_LICENSE` | The ported `check-licenses.py` over the SBOM, because it is in rc1's release path. Tightening `ACCEPT_LICENSE` to the same allowlist is a later, separate change. |
+| CVEs | grype with its DB | The ported `check-cves.sh` policy (waivers, fix states); S01 fixes waiver expiry. |
+| Unowned files | Portage VDB `CONTENTS` (`qfile -o` considered) | The ported `check-unowned.py`; S01 fixes its fail-open paths. |
+| Provenance | `actions/attest-build-provenance`, `actions/attest-sbom`, `gh attestation verify` | None. These replace the ported `generate-provenance.py` with `actions/attest`. Benefit: the platform writes the provenance, not our script. |
+| Reproducibility | `SOURCE_DATE_EPOCH`, diffoscope | A known-differences list (P02). |
+| CI | GitHub Actions, Dependabot for action SHAs, CODEOWNERS and branch protection | The ported workflows, without the AWS steps. |
+| Storage | An OCI registry (GHCR) via `oras` or `docker`; GitHub Releases; Actions artifacts | None. No store interface, contract suite or backends; v0.3's F06 and I01 are removed. |
+| Publishing | GitHub Releases, as the download page; GitHub Pages for the advisory feed | The advisory feed later (P03): static JSON on GitHub Pages under the OD-1 name, so no cloud key is stored. The dashboard and boot demo are out of scope. |
+| Process | Branch protection, CODEOWNERS, PR review | None. v0.3's agent loop, identity CI, graph tooling and system inventory are removed. |
 
 ---
 
 ## 6. Pins and inputs
 
-`pins/pins.yaml` (I05) is the single source of versions: `TOOLCHAIN_EPOCH`, the runtime tree pin
-(`BUILD_EPOCH` names it; I02 pins it by gentoo-mirror commit, and the first pin is rc1's tree),
-`SOURCE_DATE_EPOCH` derivation, the stage3 image for builder rebuilds (by digest, M02), the builder image
-digest, crossdev versions (via `crossdev.lock`), rust toolchain, syft, grype, oras, actionlint,
-shellcheck, the boot-media tools (grub, syslinux, xorriso, mtools, dosfstools, squashfs-tools), the
-CI-host QEMU and OVMF, v86, and `PUBLIC_BASE_URL`. GitHub Action SHAs have exactly one home: the
-`uses:` lines of the workflows; I05 checks every one is a full SHA and M04 updates them (node specs that
-also list them in `pins.yaml` follow this rule when implemented). Package versions live in
-`pins/versions.lock` (R02). A pin bump is a PR (M01, M02, M04). The builder image digest is an output of
-building `image/`, so an image change lands as two commits: the change, then the recorded digest.
+Pins stay where the predecessor kept them, and the ported `update-build-pins.sh` maintains them:
+- `Makefile`;
+- `Dockerfile` ARGs;
+- workflow `env:`;
+- `configs/portage/versions.lock`;
+- `configs/portage/crossdev.lock`.
+
+v0.4 changes three pins:
+
+- **Tree:** `TREE_COMMIT` (a 40-hex gentoo-mirror commit) and `TREE_DIGEST` (the archived tree
+  artifact). They replace the dated `BUILD_EPOCH` snapshot. The first pin is rc1's tree (OD-6).
+- **Build time:** `SOURCE_DATE_EPOCH` is the committer time of `TREE_COMMIT`, so it moves only when the
+  tree moves. Builds pass it explicitly; the value baked into the adopted builder image
+  (`Dockerfile:37`) is not relied on.
+- **Builder:** `BUILDER_DIGEST`, which is `sha256:ab04002a…` until M02 rebuilds the image.
+- **Registry:** `REGISTRY`, by default `ghcr.io/tuckermclean/themonolith`. It is the only place the
+  storage location appears.
+
+GitHub Action references are full commit SHAs in the workflow `uses:` lines, and Dependabot updates them.
+
+**Registry objects** (all under `${REGISTRY}`):
+
+| Name | Contents | Mutability |
+|---|---|---|
+| `builder@sha256:…` | The builder image; rc1's adopted copy is tagged `rc1` | immutable |
+| `gentoo-tree:<commit40>` | A `git archive` of the pinned tree, as one layer | immutable |
+| `binpkgs:<cache-tag>` | The development `PKGDIR`, as one layer in the ported format. `<cache-tag>` is the first 16 hex digits of a sha256 over `BUILDER_DIGEST`, `TREE_COMMIT` and the global config files listed in §5. | overwritten by `main` builds only |
+| `distfiles:<version>` | A release's `DISTDIR` | immutable |
+| `rc1-binpkgs:20260811` | A preserved copy of rc1's cache, for comparison only; never restored | immutable |
+
+**`release-inputs.json`** is a release asset. Together with the source commit, it is everything P02
+needs to rebuild. It records:
+- the version and the source commit;
+- `TREE_COMMIT` and `TREE_DIGEST`;
+- `BUILDER_DIGEST`;
+- the digest of the `distfiles` artifact;
+- `SOURCE_DATE_EPOCH`;
+- the versions of the host tools that touch the ISO: xorriso, squashfs-tools, grub, syslinux, syft,
+  grype, QEMU;
+- the grype DB build time.
+
+Nothing is deleted from the registry automatically. Public GHCR packages cost nothing today, so a
+retention job is added only if storage starts to cost money.
 
 ---
 
 ## 7. Oracle and test tiers
 
-- **Fast tier** (`make test-fast`, < 60 s total, no network, no build): unit tests of scripts and
-  tools, recipe lints, kernel-fragment assertions, graph/inventory validators, boot-harness tests on
-  recorded serial fixtures. Every behaviour change starts with a fast-tier RED where one is possible.
-- **Slow tier** (CI): build, the 17 boot modes inherited from the predecessor (bios, uefi, toram,
-  ahci, nvme, usb, virtio, nicless, nic, vga, fbdev-modprobe, nat, gui, stele-acid2, clock-epoch,
-  clock-1996, persist) plus the modes phase G adds, all registered in `oracle/modes.yaml`, artifact doctrine checks (O06), supply-chain gates (S0x), golden SBOM diff (O07).
-- **Equivalence:** "the same product as rc1" means every slow-tier check passes and, against
-  `v0.1.0-rc1/bom.cdx.json`, every added or removed package and file is listed with a reason. Version
-  movement inside packages present in both is summarised by policy, because a new `BUILD_EPOCH` moves
-  most versions (O07).
-- **rc1 lane:** the oracle and the gates are developed against the v0.1.0-rc1 artifacts before this
-  repo builds anything (`oracle/fixtures/rc1.yaml`: ISO sha256 `a9600659…eb27a`, SBOM sha256
-  `3cfc322a…75887`, fetched by digest, never committed). Where rc1 fails a check because of a known
-  predecessor bug (for example the shipped musl loader), the check records it as an expected rc1 failure
-  with the study id, so the same check passes on rc1 and is strict on our builds.
-- Serial milestones, the ISOLINUX `serial` label and GRUB entry `(serial)` are interfaces between the
-  harness and the disc; changing them is a breaking change to both (O01, B05).
+The release oracle is the predecessor's, ported, plus the checks the study showed were missing.
+
+- **Fast tier** (`make test`: seconds, no build, no network):
+  - the ported `scripts/tests/` (23 files);
+  - `bash -n`, shellcheck, `py_compile` and actionlint from `pr-validate.yml`;
+  - each node's new fast tests.
+- **Slow tier** (CI):
+  - the build;
+  - the 17 boot modes inherited from the predecessor: bios (at 64 and 256 MB), uefi, toram, ahci,
+    nvme, usb, virtio, nicless, nic, vga, fbdev-modprobe, nat, gui, stele-acid2, clock-epoch,
+    clock-1996 and persist;
+  - the artifact doctrine checks (O02);
+  - the SBOM and the licence, CVE and unowned gates (S01).
+- **rc1 lane.**
+  - The boot tests, artifact checks and gates first run against the v0.1.0-rc1 ISO and SBOM, fetched by
+    sha256, before this repository builds anything.
+  - rc1 may fail a check because of a verified predecessor bug, for example the shipped musl loader. The
+    check then records that as an expected rc1 failure with its study id.
+  - That way the same check passes on rc1 and is strict on our builds.
+- **Release reports** (assets of every release, P01):
+  - the package and file difference against rc1's SBOM, with a reason for each added or removed package;
+  - the ISO, squashfs, kernel and initrd sizes against the budget (§1);
+  - the dynamic-binary allowlist with its remaining entries.
+- **Reproducibility** (P02):
+  - A second build of the tag uses `release-inputs.json` only.
+  - It is compared against the release with diffoscope.
+  - Differences go to `docs/known-differences.md`, each with a cause, and the list only shrinks.
+- **Harness interfaces.** Serial milestones, the ISOLINUX `serial` label and the GRUB entry `(serial)`
+  are interfaces between the harness and the disc. Changing one means changing both.
 
 ---
 
 ## 8. CI, trust and release
 
-- **Trusted base.** Checks that judge a PR (F04 discipline, F02/F03 validators, release gates) run
-  the checker and its rules from the PR's base revision, never from the PR's tree.
-- **Owner-review paths** (CODEOWNERS routes them to the owner; the guard hook blocks role agents from
-  editing them unless the node being built lists the path under **Owns**; bots may open PRs that touch
-  them, and the owner reviews and merges): `SPEC.md`, `docs/graph.yaml`, `AGENTS.md`, `.claude/`,
-  `.github/**` (every workflow, CODEOWNERS, dependabot.yml), `tools/ci/`, `tools/graph/`,
-  `tools/system/`, `pins/`, `supplychain/policy/`, `oracle/policy/`, `recipes/kernel/tier0-ceiling.txt`.
-  A PR that touches a judging file (a workflow, a `tools/` checker, a policy) is judged by the base
-  revision's copy (trusted base, above).
-- **Merging.** Humans merge. Bots and agents open PRs and post statuses; they never merge, approve,
-  or use `--admin`.
-- **Release.** A `vX.Y.Z[-rcN|-betaN]` tag triggers the build workflow as the entry point (Sigstore
-  binds the certificate to the entry workflow); a separate workflow publishes on `workflow_run`.
-  Release builds compile from source. A suffixed tag is a prerelease and never "Latest".
-- **Identity.** Commits are authored by `Tucker McLean <me@tuckermclean.com>`, the agent bot (OD-4),
-  or `dependabot[bot]` (M04). Co-author trailers use one format. F04 enforces both.
-- **Repository.** `tuckermclean/themonolith`. The predecessor `tuckermclean/linux-live-iso-factory` is
-  never renamed (rc1's attestation names it); at cutover it gets a pointer commit and is archived (X01).
+- **Owner review.**
+  - CODEOWNERS routes these paths to the owner: `.github/**`, `SPEC.md`, `docs/graph.yaml`,
+    `configs/attestation/`, `Dockerfile` and the release scripts.
+  - Branch protection requires the fast tier and owner review.
+  - Together they replace v0.3's trusted-base checker and identity allowlist.
+- **Merging.** Humans merge. Bots open PRs; they never merge, approve or use `--admin`. The
+  predecessor's `pin-bump.yml` used `--admin`, and M01 removes it.
+- **Release.**
+  - A `vX.Y.Z[-rcN]` tag runs the build workflow with `--usepkg` off.
+  - Attestation and the GitHub release are created only after every boot mode, check and gate has passed
+    for that ISO digest.
+  - A suffixed tag is a prerelease and never "Latest".
+  - The publish step re-verifies the digest chain: `sha256(ISO)` must equal the SHA256SUMS entry, the
+    SBOM's recorded ISO hash and the attestation subject (`gh attestation verify`).
+- **Credentials.**
+  - Workflows use `GITHUB_TOKEN` with the fewest `permissions:` they need.
+  - There are no long-lived cloud keys.
+  - The owner uses a personal token only transiently, in Step 0 of the plan.
+- **Repository.**
+  - This repository is `tuckermclean/themonolith`.
+  - The predecessor is never renamed, because rc1's attestation names it.
+  - At cutover the predecessor gets a pointer commit and is archived (X01).
 
 ---
 
 ## 9. Node spec template
 
-Every `nodes/<ID>-<name>.md` follows this template exactly (F02 validates the headings).
+Every `nodes/<ID>-<name>.md` follows this template.
 
 ```markdown
 # <ID> — <name>
 
-| Phase | Deps | Unlocks | Milestone | Size |
+| Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| <phase> | <deps or none> | <nodes that depend on this> | <MSn or —> | S / M / L |
+| critical / later | <deps or none> | <nodes that depend on this> | <MSn or —> | S / M / L |
 
-**Owns:** <paths in this repo this node creates or is the owner of>
-**Carries from linux-live-iso-factory@b9f533b:** <old paths, or "nothing">
-**Study refs:** <inventory ids, trap ids T-*, doctrine ids D-*, gaps, contradictions it resolves>
+**Owns:** <paths this node creates or changes>
+**Ports from linux-live-iso-factory@b9f533b:** <paths, carried unchanged unless a criterion says otherwise>
+**Study refs:** <trap ids T-*, doctrine ids D-*, verified bugs>
 
 ## Purpose
-2–4 sentences: what exists after this node that did not before, and why it matters.
+2–4 sentences: what exists afterwards that did not before.
 
-## Scope
-In: bullet list. Out: bullet list (name the node that owns each excluded thing).
+## Standard mechanism
+What Gentoo or the ecosystem already provides here, and what this node uses. For any custom code:
+the gap, and why the standard mechanism is not enough. "None" is the expected answer.
 
-## Design
-Interfaces, files, commands, data formats, behaviour. Concrete enough that two implementers would
-build compatible things. Decisions taken here, each with the rejected alternative in one line.
-
-## Traps and doctrines preserved
-For each relevant T-*/D-*: what goes wrong if forgotten, and which AC prevents it.
+## Changes from the port
+Each change to ported code, with the criterion that requires it. Everything else is carried unchanged.
 
 ## Gate
-- **<ID>-AC-1** — <one testable statement>. *Verify:* <command or test file>. *Tier:* fast | slow.
-- ...
+- **<ID>-AC-1** — <one testable statement>. *Verify:* <command or test>. *Tier:* fast | slow.
 
-## RED plan
-Which tests the tester writes first, where they live, and why they fail before implementation.
-
-## Risks and open questions
-Bullets. Reference SPEC §10 open decisions where relevant.
-
-## Cost
-Agent slices (3–8 ACs each), expected CI build cycles, anything that costs money.
+## Risks
+Bullets: unverified third-party behaviour, open decisions (§10).
 ```
 
-A node spec may end with an optional `## Spec defects found` section listing defects in SPEC or the
-graph that it found; the section is emptied when they are fixed. The **Unlocks** column is derived
-from the graph and regenerated by F02. AC ids are `<NODE>-AC-<n>`, numbered from 1, never reused. A removed AC
-stays as `- **<NODE>-AC-<n>** — *Withdrawn (v0.3):* <reason; the node that now owns it, if any>.` Sizes: S ≈ one slice, under a day;
-M ≈ 2–3 slices; L ≈ 4+ slices or more than three slow CI cycles.
+- AC ids are `<ID>-AC-<n>`, numbered from 1 and never reused.
+- Sizes: S is under a day, M is two or three days, L is more.
+- A node is done when every AC passes in CI on `main`.
 
 ---
 
 ## 10. Open decisions
 
-Owner decisions. A node that names one in `decision:` does not start until it is settled.
+These are owner decisions. A node that names one does not start until it is settled. Ids are stable,
+and withdrawn ones are listed so that old references still resolve.
 
 | Id | Question | Default if unanswered |
 |---|---|---|
-| OD-1 | Public hosting and domain. The advisory URL is baked into every disc from the first attested build on, so the name must be chosen before MS2 even if the service (P01, P05) comes later. `themonolith.org` belongs to a third party (it serves a live site), so it is out. The owner's unused domains are `technomantics.com` and `oracube.com`; `tuckermclean.com` is the personal site and `dcxxiv.com` the infra domain. The URL is baked into every ISO's advisory check, so it must be a dedicated name that can be repointed for decades. Host: Cloudflare R2 (S3-compatible, no egress fees, CORS) or another? | `monolith.technomantics.com` on R2 |
-| OD-2 | Static truth: make every rootfs binary static (fix util-linux, iproute2, dhcpcd, procps, tar, gawk), or keep a small dynamic allowlist and change the doctrine? | Allowlist now, each entry with an issue to remove it |
-| OD-3 | Factory language: bash + Python stdlib (as predecessor), or Go like strange-company? | bash + Python stdlib |
-| OD-4 | Agent bot identity name and account. | `monolith-agent[bot]` |
-| OD-5 | Distfiles mirror scope: every distfile (storage cost, GB) or only those upstream may lose (git snapshots, unversioned URLs)? | every distfile |
-| OD-6 | First tree pin: rc1's tree recovered from gentoo-mirror git (rc1's binpkg cache stays valid; the SBOM diff against rc1 is small; but the packages are from 2026-08 and the CVE gate may need waivers), or a current tree (fresh packages; one cold build per iteration until the cache fills; large diff against rc1)? AWS recovery no longer matters for this. | rc1's tree; M01 bumps it right after MS2 |
-| OD-7 | Long-term CI: stay on GitHub Actions, or onboard to strange-company (Forgejo/Woodpecker) at its S01? | GitHub Actions; keep layout compatible |
-| OD-8 | First release version from this repo. | v0.2.0 |
-| OD-9 | Does a CVE in the builder image block a release? (S03 makes the builder scan report-only by default.) | report-only; the owner reviews it at release |
-| OD-10 | The `.claude/` loop files adapted from strange-company are AGPL-3.0; this repo is MIT. Relicense your own files in writing, or write the loop clean-room? | relicense in writing (`docs/decisions/`) |
-| OD-11 | Bump PRs (M01, M02, M04) need a non-`GITHUB_TOKEN` credential so PR checks run on them: a fine-grained PAT or a GitHub App? | GitHub App |
-| OD-12 | Hyper-V: provide manual evidence on real Hyper-V, fund a cloud run, or drop the claim? | CI proxies + dated manual evidence files |
-| OD-13 | Keep the undocumented Tier-0 `NET_9P`, `NET_9P_FD`, `NETFS_SUPPORT` symbols? | keep, documented |
-| OD-14 | Dashboard tests need a JS runtime: allow Node on the CI host only, or test the SPA through Python-driven fixtures? | Node on the CI host only, pinned |
-| OD-15 | The first attested build is a prerelease (`v0.2.0-rc1`). If the CVE gate blocks it on rc1's 2026-08 tree, waive with expiry or bump the tree first? | waive with 30-day expiry; M01 bump follows |
+| OD-1 | The advisory URL is baked into every disc from the first release on. It must be a dedicated name that can be repointed for decades. The service behind it (P03) can come later. `themonolith.org` belongs to a third party, so it is out. Where is the name hosted? | `https://monolith.technomantics.com/`, served by GitHub Pages (a custom domain needs no stored cloud key, SPEC §8) |
+| OD-2 | May a prerelease ship with a non-empty dynamic-binary allowlist? | Yes for prereleases, each entry with an issue. The list is empty before the first non-prerelease (R03). |
+| OD-6 | First tree pin: rc1's tree, recovered from gentoo-mirror git, or a current tree? | rc1's tree; M01 bumps it after MS2 |
+| OD-8 | First release version from this repository. | `v0.2.0-rc1` |
+| OD-9 | Does a CVE in the builder image block a release? | Report-only; the owner reviews it at release |
+| OD-11 | Bump PRs (M01) need a credential other than `GITHUB_TOKEN` so their checks run. Fine-grained PAT or GitHub App? | GitHub App |
+| OD-12 | Hyper-V: provide manual evidence on real Hyper-V, or drop the README claim? | A dated manual evidence file |
+| OD-13 | Keep the undocumented Tier-0 `NET_9P`, `NET_9P_FD` and `NETFS_SUPPORT` symbols? | Keep them, documented |
+| OD-15 | If the CVE gate blocks the first release on rc1's 2026-08 tree: waive with an expiry, or bump the tree first? | Waive with a 30-day expiry; M01 follows |
+| OD-16 | The distribution's share of the CD, once content projects claim space. | The whole 74-minute CD-R (681,984,000 bytes) until set |
+
+Withdrawn in v0.4:
+- OD-3 (language): settled by the port.
+- OD-4 (bot identity): no bot commits.
+- OD-5 (distfile scope): release `DISTDIR` only.
+- OD-7 (CI): GitHub Actions.
+- OD-10 (agent-loop licence): no loop in this repository.
+- OD-14 (dashboard tests): no dashboard.
 
 ---
 
 ## 11. Conventions
 
-- Branches: `node/<ID>-<name>` for node work, `pins/<what>-<from>-<to>` for bumps.
-- Commits: `test(<ID>): …` (RED, carries `TDD-Red-Target: <make target>` as a trailer),
-  `feat(<ID>): …`, `fix(<ID>): …`, `docs(<ID>): …`, `chore: …`. One node = one PR, squash-merged.
-- Further trailers (F04): `TDD-Slow-Only: <reason>` for a change whose only meaningful test is slow-tier,
-  `TDD-Test-Correction: <AC id>` for an owner-approved fix to a RED test.
-- Every PR body has the criterion → test → result table and the CI run links.
-- Any node may start once its deps are done; the loop (F05) is not a gate. Before MS3, the owner or an
-  ordinary session builds nodes under the same rules (RED first, one PR per node, trailers).
-- `track` in the graph orders the work: `critical` nodes first (the ancestors of P02, derived),
-  `parallel` when a slot is free, `deferred` after MS2. `tools/graph --ready` lists them in that order.
-- An AC may end with `*When:* after MS2`. Such an AC does not block the node's merge; the node is
-  `partial` in `docs/status.yaml` until it passes. A `partial` node satisfies its dependents. Only an AC that neither fixes a verified predecessor
-  bug nor guards the release path may carry it.
+- **Branches and PRs.** Use `node/<ID>-<name>` branches, one node per PR, squash-merged. The PR body has
+  an AC → evidence table with CI run links.
+- **Tests first.** Write the fast test first where one is possible. CI does not police commit order.
+- **Authorship.** Commits are authored by `Tucker McLean <me@tuckermclean.com>`. Agent-assisted commits
+  carry a `Co-Authored-By:` trailer.
+- **Order of work.** `track: critical` nodes, the ancestors of P02, come first. `later` nodes start when
+  their deps are done and a slot is free.
