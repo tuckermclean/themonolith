@@ -13,7 +13,44 @@ recipes and credential handling.
 - `docs/first-release.md`: the plan, owner actions and measured timings.
 - The port source is `tuckermclean/linux-live-iso-factory` at `b9f533b`. Cite it as `path:line` at that
   commit.
+- `toolbox/` is the test image; `.claude/` holds the `/node` skill, the role agents and the guard hook.
 - Nothing builds yet. `make test` and the build arrive with F01.
+
+## Commands
+
+- `toolbox/run -- <cmd>` runs a command in the test toolbox, with the checkout mounted at its own path.
+  `toolbox/run` alone opens a shell; `--build` rebuilds the image; `--network none` cuts the network.
+  The image rebuilds by itself when `toolbox/` changes.
+- `toolbox/run -- toolbox-selfcheck` checks that every tool is present at its pinned version.
+- `toolbox/run -- sh scripts/tests/<name>.test.sh` runs one fast test; `toolbox/run -- make test` runs the
+  fast tier once F01 has imported the Makefile.
+- Boot a mode: `toolbox/run -- python3 scripts/boot-test.py --iso <iso> --mode bios --kernel-version
+  <version>`. Read the version from the ISO with `xorriso -osirrox on -indev <iso> -extract /boot/vmlinuz
+  /tmp/vmlinuz` and `file /tmp/vmlinuz`.
+- Package builds and the SBOM gates run in the builder image, with podman, pulled by digest.
+- `python3 -I .claude/skills/node/check-spec.py` checks the graph against the node specs; `--write`
+  regenerates the header rows.
+- `sh .claude/hooks/guard.test.sh` tests the guard hook.
+
+## Building a node
+
+- Use `/node <ID>`. It writes a brief, has a fresh tester commit failing tests (RED), checks them, has a
+  fresh implementer make them pass (GREEN), gets an independent review, runs the slow criteria, and opens
+  a PR with the criterion → evidence table.
+- Tests come first wherever a criterion has a fast check. A slow criterion is met only by a recorded run:
+  a local log or a CI URL.
+- Role agents may not edit the spec, `AGENTS.md`, `CLAUDE.md`, `.claude/` or `toolbox/`; the guard hook
+  blocks it. Spec changes go to the owner.
+
+## Traps
+
+- **Rootless podman without a systemd user session** fails with "Interactive authentication required".
+  `toolbox/run` passes `--cgroup-manager=cgroupfs` in that case; do the same for direct podman calls.
+- **No KVM** unless the user can open `/dev/kvm` (group `kvm`). QEMU then runs in software: boots take
+  about a minute and the first in-guest check can hit its 30 s timeout. Re-run before suspecting the disc.
+- **Workflow files need the `workflow` scope to push.** The default `gh` token lacks it, so a branch that
+  changes `.github/workflows/*` is rejected. Use a token the owner provides, transiently, or ask the owner
+  to push.
 
 ## Constraints on every change
 

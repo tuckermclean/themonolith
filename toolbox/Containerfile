@@ -1,0 +1,57 @@
+# Test toolbox: every tool the fast and slow test tiers need outside the builder image.
+# Build and run it with toolbox/run. The base is pinned by digest, Debian packages come from one
+# snapshot.debian.org date, and downloaded tools are checked against the vendor's sha256.
+# Package builds and the SBOM gates run in the builder image (I03), not here.
+FROM docker.io/library/debian@sha256:e2914ec98e08b24b4cee3cefcb9f90dfb5519f8d215a2ccf0c9a49b10b6e43de
+
+ARG DEBIAN_SNAPSHOT=20261027T000000Z
+ARG ACTIONLINT_VERSION=1.7.7
+ARG ACTIONLINT_SHA256=023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+ARG ORAS_VERSION=1.2.0
+ARG ORAS_SHA256=5b3f1cbb86d869eee68120b9b45b9be983f3738442f87ee5f06b00edd0bab336
+
+# Fast tier: sh, bash, python3 + PyYAML, zstd (pr-validate.yml); shellcheck; jq.
+# Slow tier: qemu-system-x86 + ovmf + pexpect (boot-test.yml), kmod (its module check),
+# squashfs-tools, xorriso, mtools, dosfstools, cpio (ISO and rootfs inspection), pax-utils (scanelf, O02).
+RUN set -eu; \
+    rm -f /etc/apt/sources.list.d/debian.sources; \
+    printf '%s\n' \
+      'Types: deb' \
+      "URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" \
+      'Suites: trixie trixie-updates' \
+      'Components: main' \
+      'Check-Valid-Until: no' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      '' \
+      'Types: deb' \
+      "URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/" \
+      'Suites: trixie-security' \
+      'Components: main' \
+      'Check-Valid-Until: no' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/snapshot.sources; \
+    apt-get -o Acquire::Retries=5 update; \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+      bash ca-certificates cpio curl diffutils dosfstools file git jq kmod make mtools ovmf \
+      pax-utils python3 python3-pexpect python3-yaml qemu-system-x86 shellcheck squashfs-tools \
+      xorriso zstd; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eu; \
+    cd /tmp; \
+    curl -fsSL --retry 3 -o actionlint.tar.gz \
+      "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"; \
+    echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -; \
+    tar -xzf actionlint.tar.gz actionlint; \
+    install -m 0755 actionlint /usr/local/bin/actionlint; \
+    curl -fsSL --retry 3 -o oras.tar.gz \
+      "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"; \
+    echo "${ORAS_SHA256}  oras.tar.gz" | sha256sum -c -; \
+    tar -xzf oras.tar.gz oras; \
+    install -m 0755 oras /usr/local/bin/oras; \
+    rm -f /tmp/*
+
+COPY selfcheck /usr/local/bin/toolbox-selfcheck
+ENV TZ=UTC LC_ALL=C.UTF-8 TOOLBOX=1 \
+    ACTIONLINT_VERSION=${ACTIONLINT_VERSION} ORAS_VERSION=${ORAS_VERSION}
+RUN toolbox-selfcheck

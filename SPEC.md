@@ -211,6 +211,8 @@ The predecessor's layout is kept, so ported scripts keep their paths.
 | `SPEC.md`, `nodes/` | Specification and node specs | owner |
 | `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE` | Ported. `AGENTS.md` opens with this repository's working notes (layout, constraints, spec editing, what not to touch, Git conventions), followed by the predecessor's traps-and-recipes knowledge base. `CLAUDE.md` points agents to it. | F01 |
 | `IMPORT.md` | What was ported from `b9f533b`, with a sha256 per file, and what has changed since | F01 |
+| `toolbox/` | The test toolbox image and `toolbox/run`, which runs any test tier locally | owner |
+| `.claude/` | Agent tooling: the `/node` skill, role agents, guard hook, spec checker | owner |
 
 ### 4.3 The overlay is a conventional Portage repository
 
@@ -273,7 +275,7 @@ custom row must name the gap. Anything with no gap here is not built.
 | CI | GitHub Actions, Dependabot for action SHAs, CODEOWNERS and branch protection | The ported workflows, without the AWS steps. |
 | Storage | An OCI registry (GHCR) via `oras` or `docker`; GitHub Releases; Actions artifacts | None. No store interface, contract suite or backends. |
 | Publishing | GitHub Releases, as the download page; GitHub Pages for the advisory feed | The advisory feed later (P03): static JSON on GitHub Pages under the OD-1 name, so no cloud key is stored. The dashboard and boot demo are out of scope. |
-| Process | Branch protection, CODEOWNERS, PR review | None. No agent loop, identity CI, graph tooling or system inventory. |
+| Process | Branch protection, CODEOWNERS, PR review; Claude Code skills, subagents and hooks | Development tooling, outside the product: the `/node` skill, three role agents (tester, implementer, reviewer), a guard hook and the spec checker in `.claude/`, adapted from strange-company. No agent platform, identity CI or system inventory. |
 
 ---
 
@@ -338,8 +340,8 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
   - the ported `scripts/tests/` (23 files);
   - `bash -n`, shellcheck, `py_compile` and actionlint from `pr-validate.yml`;
   - each node's new fast tests.
-- **Slow tier** (CI):
-  - the build;
+- **Slow tier** (locally, and in CI):
+  - the build, in the builder image;
   - the 17 boot modes inherited from the predecessor (`stele-acid2` from R05 on): bios (at 64 and
     256 MB), uefi, toram, ahci, nvme, usb, virtio, nicless, nic, vga, fbdev-modprobe, nat, gui,
     stele-acid2, clock-epoch, clock-1996 and persist;
@@ -362,6 +364,11 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
   - diffoscope runs only after a mismatch, to show where the bytes differ.
   - The same pipeline can be dispatched on any commit without publishing, so nondeterminism is found
     and fixed before a tag.
+- **Where tests run.** Every tier runs locally. `toolbox/run` runs a command in the test toolbox
+  (`toolbox/Containerfile`: Debian by digest and snapshot date, QEMU, OVMF, pexpect, PyYAML,
+  shellcheck, actionlint, oras, squashfs-tools, xorriso, scanelf), with the checkout mounted. Package
+  builds and the SBOM gates run in the builder image, pulled by digest. CI runs the same commands, and
+  only what needs GitHub itself (registry pushes, attestation, tag pipelines) is CI-only.
 - **Harness interfaces.** Serial milestones, the ISOLINUX `serial` label and the GRUB entry `(serial)`
   are interfaces between the harness and the disc. Changing one means changing both.
 

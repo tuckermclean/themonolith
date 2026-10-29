@@ -1,0 +1,57 @@
+#!/bin/sh
+# Run a command in the test toolbox, with this checkout mounted at its own path.
+#   toolbox/run [--build] [--network none] [--] <cmd> [args...]
+#   toolbox/run                      # interactive shell
+# Uses podman if present, else docker (MONOLITH_ENGINE overrides). The image is tagged by the hash
+# of toolbox/, so editing the Containerfile or selfcheck rebuilds it on the next run.
+# /dev/kvm is passed through when the caller can open it; QEMU falls back to TCG otherwise.
+set -eu
+
+die() { echo "toolbox/run: $*" >&2; exit 2; }
+
+here=$(cd "$(dirname "$0")" && pwd -P)
+root=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null) || die "not inside a git checkout"
+engine=${MONOLITH_ENGINE:-}
+if [ -z "$engine" ]; then
+	if command -v podman >/dev/null 2>&1; then engine=podman
+	elif command -v docker >/dev/null 2>&1; then engine=docker
+	else die "neither podman nor docker is installed"; fi
+fi
+
+# Rootless podman without a systemd user session (an ssh login, a CI shell) cannot use the
+# systemd cgroup manager; cgroupfs works everywhere.
+eng=$engine
+if [ "$engine" = podman ] && [ ! -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; then
+	eng="podman --cgroup-manager=cgroupfs"
+fi
+
+build=0
+network=
+while [ $# -gt 0 ]; do
+	case $1 in
+	--build) build=1; shift ;;
+	--network) [ $# -ge 2 ] || die "--network needs a value"; network=$2; shift 2 ;;
+	--) shift; break ;;
+	*) break ;;
+	esac
+done
+
+inputs=$(cd "$root/toolbox" && cat Containerfile selfcheck | sha256sum | cut -c1-12)
+image=localhost/monolith-toolbox:$inputs
+if [ $build = 1 ] || ! $eng image inspect "$image" >/dev/null 2>&1; then
+	echo "toolbox/run: building $image" >&2
+	$eng build -t "$image" -f "$root/toolbox/Containerfile" "$root/toolbox" >&2
+fi
+
+[ $# -gt 0 ] || set -- bash
+opts="--rm -i -v $root:$root -w $(pwd -P) -e HOME=/tmp"
+[ -t 0 ] && [ -t 1 ] && opts="$opts -t"
+[ -n "$network" ] && opts="$opts --network $network"
+if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then opts="$opts --device /dev/kvm"; fi
+case $engine in
+podman) opts="$opts --userns=keep-id --security-opt label=disable" ;;
+*) opts="$opts --user $(id -u):$(id -g)" ;;
+esac
+case $(pwd -P) in "$root"|"$root"/*) ;; *) die "run it from inside $root" ;; esac
+# shellcheck disable=SC2086 # $eng and $opts are word lists with no spaces inside any value we build
+exec $eng run $opts "$image" "$@"
