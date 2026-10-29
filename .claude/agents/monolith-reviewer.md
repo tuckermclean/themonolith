@@ -24,8 +24,8 @@ You are the **reviewer** for a node slice. You did not write the tests or the co
 2. **RED validity.** `git show <red>` changes only test paths and fixtures, and its failures were the tests' own `FAIL`s, not shell errors. If the evidence is thin, re-run the red target at the RED commit in a clean worktree (`git worktree add` into a temporary directory, then remove it).
 3. **Test protection.** `git diff <red>..<head> -- scripts/tests scripts/fixtures` modifies, deletes or skips no RED test or fixture.
 4. **Node-spec conformance.** The diff makes the node spec's numbered changes at the cited places and nothing else. Flag redesign, renamed or discarded working code, new custom code where SPEC §5 names no gap, and behaviour the spec does not call for. Every changed imported file has a `changed by <ID>` row in `IMPORT.md`.
-5. **Doctrines and traps.** Check against `AGENTS.md`: 486-minimalism, all-static, no Python or freetype on the disc, no hidden stderr on a success path, revbumps for overlay changes, unpinned downloads, secrets, workflow `permissions:` and pinned action SHAs.
-6. **GREEN.** Re-run the red target and `toolbox/run -- make test` at head, and confirm they pass.
+5. **Doctrines and traps.** Check against `AGENTS.md`: 486-minimalism, all-static, no Python or freetype on the disc, no hidden stderr on a success path, revbumps for overlay changes, unpinned downloads, secrets, workflow `permissions:` and pinned action SHAs, and CI parity: a changed workflow passes `toolbox/ci lint` (SPEC §7).
+6. **GREEN.** Re-run the red target and `toolbox/ci run pr-validate` at head (before F01: every `scripts/tests/*.sh` under `toolbox/run`), and confirm they pass.
 
 ## Verdict (your final message, ≤ 40 lines)
 - `verdict`: `approve` | `request_changes` | `test_spec_conflict`

@@ -1,0 +1,484 @@
+#!/usr/bin/env python3
+"""Run GitHub Actions workflows locally, and lint them for local/CI parity.
+
+    toolbox/ci lint [<workflow>...]
+    toolbox/ci run <workflow> [<job>...] [--event E] [--input k=v]... [--matrix k=v]...
+    toolbox/ci jobs <workflow>
+
+A workflow is the one definition of what CI runs. `run` executes its jobs here, in `needs` order,
+with the same shells, env, step outputs, `if:` conditions and timeouts. Every check step is
+`toolbox/run -- ...`, so it runs in the same pinned image in both places. Steps that need GitHub
+itself (a secret, attestation, a registry login) are skipped and listed as CI-only.
+
+`lint` holds a workflow to the subset `run` implements (SPEC §7, CI parity). With no names, it lints
+every workflow that can trigger: any trigger other than `workflow_dispatch`, and anything those call.
+
+Standard library only; YAML is parsed with PyYAML when importable, else inside the toolbox.
+"""
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = subprocess.run(["git", "-C", HERE, "rev-parse", "--show-toplevel"], capture_output=True,
+                      text=True, check=True).stdout.strip()
+WFDIR = os.environ.get("MONOLITH_WORKFLOWS", os.path.join(ROOT, ".github", "workflows"))
+
+# Actions a parity workflow may use. Local behaviour: what `run` does in place of the action.
+#   noop      the checkout is already here, or the file already sits at its path in this tree
+#   need      the files at `path` must exist (an earlier job of this run wrote them)
+#   ci-only   needs GitHub itself; skipped and reported
+ACTIONS = {
+    "actions/checkout": "noop",
+    "actions/upload-artifact": "noop",
+    "actions/download-artifact": "need",
+    "actions/cache/save": "noop",
+    "actions/cache/restore": "need",
+    "actions/attest-build-provenance": "ci-only",
+    "actions/attest-sbom": "ci-only",
+    "docker/login-action": "ci-only",
+    "softprops/action-gh-release": "ci-only",
+}
+CONTEXTS = ("inputs", "matrix", "needs", "steps", "env", "github", "secrets", "vars", "runner", "job")
+EXPR = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
+PATH = r"[a-z]+(?:\.[A-Za-z0-9_-]+)+"
+IF_ATOM = re.compile(r"^(?:!?(?:always|success|failure|cancelled)\(\)|" + PATH +
+                     r"\s*(?:==|!=)\s*'[^']*'|!?" + PATH + r")$")
+STEP_START = re.compile(r"^(?:toolbox/run(?:\s|$)|make\s)")
+
+
+def die(msg):
+    print(f"toolbox/ci: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def load(name):
+    path = name if os.sep in name else os.path.join(WFDIR, name if name.endswith(".yml") else name + ".yml")
+    if not os.path.exists(path):
+        die(f"no workflow {path}")
+    try:
+        import yaml
+        doc = yaml.safe_load(open(path))
+    except ImportError:
+        out = subprocess.run([os.path.join(ROOT, "toolbox", "run"), "--", "python3", "-I", "-c",
+                              "import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1])),"
+                              " default=str))", path], capture_output=True, text=True, check=True).stdout
+        doc = json.loads(out)
+    if not isinstance(doc, dict):
+        die(f"{path}: not a mapping")
+    if True in doc:  # PyYAML reads the bare key `on` as a boolean
+        doc["on"] = doc.pop(True)
+    if "true" in doc and "on" not in doc:
+        doc["on"] = doc.pop("true")
+    return path, doc
+
+
+def triggers(doc):
+    on = doc.get("on") or {}
+    if isinstance(on, str):
+        return {on: {}}
+    if isinstance(on, list):
+        return {t: {} for t in on}
+    return {k: (v or {}) for k, v in on.items()}
+
+
+# --- lint -------------------------------------------------------------------------------------
+
+def lint_one(path, doc):
+    errs = []
+    rel = os.path.relpath(path, ROOT)
+
+    def err(where, msg):
+        errs.append(f"{rel}: {where}: {msg}")
+
+    def check_exprs(where, value):
+        for m in EXPR.finditer(str(value)):
+            e = m.group(1)
+            if not re.fullmatch(PATH, e) or e.split(".")[0] not in CONTEXTS:
+                err(where, f"expression '{e}' is outside the supported subset (a plain context path)")
+
+    def check_if(where, cond):
+        cond = EXPR.sub(lambda m: m.group(1), str(cond)).strip()
+        for atom in re.split(r"\s*&&\s*|\s*\|\|\s*", cond):
+            if not IF_ATOM.match(atom.strip()):
+                err(where, f"if: '{atom}' is outside the supported subset")
+
+    for k in ("env",):
+        for v in (doc.get(k) or {}).values():
+            check_exprs("env", v)
+    for jid, job in (doc.get("jobs") or {}).items():
+        jw = f"jobs.{jid}"
+        if "uses" in job:
+            ref = job["uses"]
+            if not str(ref).startswith("./") or not os.path.exists(os.path.join(ROOT, str(ref)[2:])):
+                err(jw, f"calls '{ref}'; only reusable workflows in this repository are supported")
+            for v in (job.get("with") or {}).values():
+                check_exprs(jw, v)
+            continue
+        ro = job.get("runs-on")
+        if not (isinstance(ro, str) and re.fullmatch(r"ubuntu-[0-9.]+|ubuntu-latest", ro)):
+            err(jw, f"runs-on '{ro}': only GitHub-hosted ubuntu runners")
+        if "container" in job or "services" in job:
+            err(jw, "job containers and services are not supported; use toolbox/run")
+        if "if" in job:
+            check_if(jw, job["if"])
+        for v in list((job.get("env") or {}).values()) + list((job.get("outputs") or {}).values()):
+            check_exprs(jw, v)
+        for i, step in enumerate(job.get("steps") or []):
+            sw = f"{jw}.steps[{i}]" + (f" ({step['name']})" if "name" in step else "")
+            if "if" in step:
+                check_if(sw, step["if"])
+            for v in list((step.get("env") or {}).values()) + list((step.get("with") or {}).values()):
+                check_exprs(sw, v)
+            if "uses" in step:
+                action = str(step["uses"]).split("@")[0]
+                if action not in ACTIONS:
+                    err(sw, f"action '{action}' has no local equivalent; run the tool with toolbox/run")
+                continue
+            script = str(step.get("run", ""))
+            if "${{" in script:
+                err(sw, "expression inside run:; pass it through env: instead")
+            if step.get("shell", "bash") not in ("bash", "sh"):
+                err(sw, f"shell '{step['shell']}': only bash and sh")
+            for line in re.sub(r"\\\n", " ", script).splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or re.fullmatch(r"set -[a-z]+(?: -o [a-z]+)*", line):
+                    continue
+                if not STEP_START.match(line):
+                    err(sw, f"'{line[:60]}': each command is toolbox/run -- <cmd>, or make <target> for the builder")
+    return errs
+
+
+def reachable():
+    """Workflows that can trigger, plus the reusable workflows they call."""
+    names = sorted(f for f in os.listdir(WFDIR) if f.endswith((".yml", ".yaml"))) if os.path.isdir(WFDIR) else []
+    docs = {}
+    for n in names:
+        path, doc = load(os.path.join(WFDIR, n))
+        docs[os.path.realpath(path)] = (path, doc)
+    todo = [k for k, (_, d) in docs.items() if set(triggers(d)) - {"workflow_dispatch", "workflow_call"}]
+    seen = []
+    while todo:
+        k = todo.pop()
+        if k in seen:
+            continue
+        seen.append(k)
+        if k not in docs:
+            docs[k] = load(k)
+        for job in (docs[k][1].get("jobs") or {}).values():
+            ref = str(job.get("uses", ""))
+            if ref.startswith("./") and os.path.exists(os.path.join(ROOT, ref[2:])):
+                todo.append(os.path.realpath(os.path.join(ROOT, ref[2:])))
+    return [docs[k] for k in sorted(seen)]
+
+
+def cmd_lint(names):
+    targets = [load(n) for n in names] if names else reachable()
+    errs = [e for p, d in targets for e in lint_one(p, d)]
+    for e in errs:
+        print(e)
+    print(f"toolbox/ci lint: {len(targets)} workflow(s), {len(errs)} problem(s)")
+    return 1 if errs else 0
+
+
+# --- run --------------------------------------------------------------------------------------
+
+class Ctx:
+    def __init__(self, event, inputs):
+        sha = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        ref = subprocess.run(["git", "-C", ROOT, "symbolic-ref", "-q", "HEAD"], capture_output=True, text=True).stdout.strip()
+        self.github = {"event_name": event, "sha": sha, "ref": ref, "ref_name": ref.rsplit("/", 1)[-1],
+                       "run_id": "local", "run_number": "0", "run_attempt": "1", "workspace": ROOT,
+                       "repository": os.environ.get("GITHUB_REPOSITORY", "local/local"), "actor": "local"}
+        self.inputs = inputs
+        self.needs = {}
+
+    def lookup(self, path, scope):
+        parts = path.split(".")
+        cur = {"github": self.github, "inputs": self.inputs, "needs": self.needs, "runner": {"os": "Linux",
+               "temp": tempfile.gettempdir()}, **scope}.get(parts[0])
+        if parts[0] in ("secrets", "vars") or path == "github.token":
+            raise CiOnly(f"needs {path}")
+        for p in parts[1:]:
+            if not isinstance(cur, dict) or p not in cur:
+                return ""
+            cur = cur[p]
+        return "" if cur is None else (json.dumps(cur) if isinstance(cur, (dict, list)) else
+                                       str(cur).lower() if isinstance(cur, bool) else str(cur))
+
+    def sub(self, value, scope):
+        return EXPR.sub(lambda m: self.lookup(m.group(1), scope), str(value))
+
+    def cond(self, cond, scope, failed):
+        cond = EXPR.sub(lambda m: m.group(1), str(cond)).strip()
+
+        def atom(a):
+            a = a.strip()
+            neg = a.startswith("!")
+            a = a[1:] if neg else a
+            if a.endswith("()"):
+                v = {"always": True, "success": not failed, "failure": failed, "cancelled": False}[a[:-2]]
+            elif "==" in a or "!=" in a:
+                op = "!=" if "!=" in a else "=="
+                lhs, rhs = (s.strip() for s in a.split(op, 1))
+                v = (self.lookup(lhs, scope) == rhs.strip("'")) == (op == "==")
+            else:
+                v = self.lookup(a, scope) not in ("", "false", "0")
+            return v != neg
+        ors = re.split(r"\s*\|\|\s*", cond)
+        result = any(all(atom(x) for x in re.split(r"\s*&&\s*", o)) for o in ors)
+        # GitHub adds an implicit success() unless a status function appears.
+        if not re.search(r"(always|failure|cancelled|success)\(\)", cond):
+            result = result and not failed
+        return result
+
+
+class CiOnly(Exception):
+    pass
+
+
+def order(jobs, wanted):
+    need = {j: [jobs[j].get("needs")] if isinstance(jobs[j].get("needs"), str) else list(jobs[j].get("needs") or [])
+            for j in jobs}
+    pick, todo = set(), list(wanted or jobs)
+    while todo:
+        j = todo.pop()
+        if j not in jobs:
+            die(f"no job '{j}'")
+        if j not in pick:
+            pick.add(j)
+            todo += need[j]
+    out, done = [], set()
+    while len(out) < len(pick):
+        ready = sorted(j for j in pick - done if set(need[j]) <= done)
+        if not ready:
+            die("cycle in needs")
+        out += ready
+        done |= set(ready)
+    return out, need
+
+
+def expand(matrix, pins):
+    if not matrix:
+        return [{}]
+    if isinstance(matrix, str):
+        die("a matrix from an expression is not supported")
+    combos = [{}]
+    for k, vals in matrix.items():
+        if k in ("include", "exclude"):
+            continue
+        combos = [{**c, k: v} for c in combos for v in vals]
+    for ex in matrix.get("exclude") or []:
+        combos = [c for c in combos if any(c.get(k) != v for k, v in ex.items())]
+    combos += [dict(i) for i in (matrix.get("include") or []) if dict(i) not in combos]
+    return [c for c in combos if all(str(c.get(k)) == v for k, v in pins.items())]
+
+
+def run_step(ctx, step, env, scope, timeout):
+    script = str(step["run"])
+    shell = step.get("shell")
+    argv = {None: ["bash", "-e"], "bash": ["bash", "--noprofile", "--norc", "-eo", "pipefail"],
+            "sh": ["sh", "-e"]}[shell]
+    with tempfile.TemporaryDirectory(prefix="toolbox-ci-") as tmp:
+        files = {k: os.path.join(tmp, k) for k in ("GITHUB_OUTPUT", "GITHUB_ENV", "GITHUB_STEP_SUMMARY", "GITHUB_PATH")}
+        for f in files.values():
+            open(f, "w").close()
+        sfile = os.path.join(tmp, "step.sh")
+        open(sfile, "w").write(script)
+        cwd = os.path.join(ROOT, ctx.sub(step.get("working-directory", "."), scope))
+        full = {**os.environ, **env, **files, "CI": "true", "GITHUB_ACTIONS": "",
+                "GITHUB_WORKSPACE": ROOT, "GITHUB_EVENT_NAME": ctx.github["event_name"],
+                "GITHUB_SHA": ctx.github["sha"], "RUNNER_TEMP": tmp}
+        # Its own process group, so a timeout stops the whole tree, container included, as on GitHub.
+        proc = subprocess.Popen(argv + [sfile], cwd=cwd, env=full, start_new_session=True)
+        try:
+            rc = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            print(f"toolbox/ci: step timed out after {timeout}s", file=sys.stderr)
+            for sig, grace in ((signal.SIGTERM, 10), (signal.SIGKILL, None)):
+                try:
+                    os.killpg(proc.pid, sig)
+                    proc.wait(timeout=grace)
+                    break
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
+            rc = 124
+        except KeyboardInterrupt:
+            os.killpg(proc.pid, signal.SIGTERM)
+            raise
+        outputs = parse_kv(open(files["GITHUB_OUTPUT"]).read())
+        exported = parse_kv(open(files["GITHUB_ENV"]).read())
+    return rc, outputs, exported
+
+
+def parse_kv(text):
+    out, lines, i = {}, text.splitlines(), 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r"^([^=<]+)<<(.+)$", line)
+        if m:
+            key, delim, val = m.group(1), m.group(2), []
+            i += 1
+            while i < len(lines) and lines[i] != delim:
+                val.append(lines[i])
+                i += 1
+            out[key] = "\n".join(val)
+        elif "=" in line:
+            k, v = line.split("=", 1)
+            out[k] = v
+        i += 1
+    return out
+
+
+def run_job(ctx, wfenv, jid, job, combo, report):
+    label = jid + (" (" + ", ".join(f"{v}" for v in combo.values()) + ")" if combo else "")
+    scope = {"matrix": combo, "steps": {}, "env": {}, "job": {"status": "success"}}
+    if "if" in job and not ctx.cond(job["if"], scope, False):
+        report.append((label, "-", "skip", "job if: false"))
+        return True, {}
+    try:
+        env = {}
+        for src in (wfenv, job.get("env") or {}):
+            for k, v in src.items():
+                scope["env"] = env
+                env[k] = ctx.sub(v, scope)
+    except CiOnly as e:
+        report.append((label, "-", "ci-only", str(e)))
+        return True, {}
+    failed = False
+    job_timeout = int(float(job.get("timeout-minutes", 360)) * 60)
+    t0 = time.time()
+    print(f"\n=== {label}", flush=True)
+    for i, step in enumerate(job.get("steps") or []):
+        name = step.get("name") or step.get("uses") or (str(step.get("run", "")).splitlines() or [f"step {i}"])[0][:50]
+        scope["env"] = env
+        try:
+            if "if" in step and not ctx.cond(step["if"], scope, failed):
+                report.append((label, name, "skip", "if: false"))
+                continue
+            if not ("if" in step) and failed:
+                report.append((label, name, "skip", "earlier step failed"))
+                continue
+            senv = {**env, **{k: ctx.sub(v, scope) for k, v in (step.get("env") or {}).items()}}
+            if "uses" in step:
+                action = str(step["uses"]).split("@")[0]
+                kind = ACTIONS.get(action)
+                if kind is None:
+                    raise SystemExit(f"toolbox/ci: {action} has no local equivalent (run `toolbox/ci lint`)")
+                with_ = {k: ctx.sub(v, scope) for k, v in (step.get("with") or {}).items()}
+                if kind == "ci-only":
+                    report.append((label, name, "ci-only", action))
+                elif kind == "need":
+                    missing = [p for p in str(with_.get("path", "")).split() if not os.path.exists(os.path.join(ROOT, p))]
+                    if missing:
+                        report.append((label, name, "FAIL", "missing " + " ".join(missing)))
+                        failed = True
+                    else:
+                        report.append((label, name, "ok", "files present"))
+                else:
+                    report.append((label, name, "ok", "local no-op"))
+                continue
+            print(f"--- {name}", flush=True)
+            left = max(1, job_timeout - int(time.time() - t0))
+            st = step.get("timeout-minutes")
+            rc, outs, exported = run_step(ctx, step, senv, scope, min(left, int(float(st) * 60)) if st else left)
+            env.update(exported)
+            if "id" in step:
+                scope["steps"][step["id"]] = {"outputs": outs, "outcome": "success" if rc == 0 else "failure"}
+            if rc != 0 and not step.get("continue-on-error"):
+                failed = True
+                scope["job"]["status"] = "failure"
+            report.append((label, name, "ok" if rc == 0 else "FAIL", f"exit {rc}"))
+        except CiOnly as e:
+            report.append((label, name, "ci-only", str(e)))
+    outputs = {}
+    try:
+        outputs = {k: ctx.sub(v, scope) for k, v in (job.get("outputs") or {}).items()}
+    except CiOnly:
+        pass
+    return not failed, outputs
+
+
+def cmd_run(name, jobs_wanted, event, inputs, pins):
+    path, doc = load(name)
+    trig = triggers(doc)
+    event = event or next((t for t in ("pull_request", "push", "workflow_dispatch", "workflow_call") if t in trig),
+                          next(iter(trig), "workflow_dispatch"))
+    declared = (trig.get("workflow_dispatch") or trig.get("workflow_call") or {}).get("inputs") or {}
+    full = {k: str(v.get("default", "")).lower() if isinstance(v.get("default"), bool) else str(v.get("default", ""))
+            for k, v in declared.items()}
+    full.update(inputs)
+    ctx = Ctx(event, full)
+    jobs = doc.get("jobs") or {}
+    seq, need = order(jobs, jobs_wanted)
+    report, ok_jobs = [], {}
+    for jid in seq:
+        job = jobs[jid]
+        if any(not ok_jobs.get(n, False) for n in need[jid]) and "always()" not in str(job.get("if", "")):
+            report.append((jid, "-", "skip", "a needed job failed"))
+            ok_jobs[jid] = False
+            continue
+        if "uses" in job:
+            ref = str(job["uses"])
+            sub_inputs = {k: ctx.sub(v, {"matrix": {}, "steps": {}, "env": {}}) for k, v in (job.get("with") or {}).items()}
+            print(f"\n=== {jid} -> {ref}", flush=True)
+            rc = cmd_run(os.path.join(ROOT, ref[2:]), [], "workflow_call", sub_inputs, pins)
+            ok_jobs[jid] = rc == 0
+            report.append((jid, ref, "ok" if rc == 0 else "FAIL", "reusable workflow"))
+            ctx.needs[jid] = {"result": "success" if rc == 0 else "failure", "outputs": {}}
+            continue
+        ok, outs = True, {}
+        for combo in expand((job.get("strategy") or {}).get("matrix"), pins):
+            o, out = run_job(ctx, doc.get("env") or {}, jid, job, combo, report)
+            ok, outs = ok and o, {**outs, **out}
+        ok_jobs[jid] = ok
+        ctx.needs[jid] = {"result": "success" if ok else "failure", "outputs": outs}
+    w = max([len(r[0]) for r in report] + [4])
+    print(f"\n{os.path.relpath(path, ROOT)} ({event}):")
+    for job, step, status, note in report:
+        print(f"  {status:8} {job:{w}}  {step}  [{note}]")
+    bad = [r for r in report if r[2] == "FAIL"]
+    print(f"toolbox/ci run: {'FAIL' if bad else 'ok'}")
+    return 1 if bad else 0
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "lint":
+        return cmd_lint(rest)
+    if cmd == "jobs":
+        _, doc = load(rest[0])
+        for j in (doc.get("jobs") or {}):
+            print(j)
+        return 0
+    if cmd != "run" or not rest:
+        die("usage: toolbox/ci lint [<workflow>...] | run <workflow> [<job>...] [--event E] [--input k=v] [--matrix k=v]")
+    name, jobs, event, inputs, pins = rest[0], [], None, {}, {}
+    it = iter(rest[1:])
+    for a in it:
+        if a in ("--event", "--input", "--matrix"):
+            v = next(it, None)
+            if v is None:
+                die(f"{a} needs a value")
+            if a == "--event":
+                event = v
+            else:
+                if "=" not in v:
+                    die(f"{a} takes k=v")
+                k, val = v.split("=", 1)
+                (inputs if a == "--input" else pins)[k] = val
+        else:
+            jobs.append(a)
+    return cmd_run(name, jobs, event, inputs, pins)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

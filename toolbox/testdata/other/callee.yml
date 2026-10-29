@@ -1,0 +1,14 @@
+name: callee
+on:
+  workflow_call:
+    inputs:
+      word:
+        type: string
+        default: none
+jobs:
+  echo:
+    runs-on: ubuntu-latest
+    env:
+      WORD: ${{ inputs.word }}
+    steps:
+      - run: toolbox/run -- sh -c 'echo "callee got $1"; test "$1" = 2' _ "$WORD"

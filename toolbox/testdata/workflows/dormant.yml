@@ -1,0 +1,9 @@
+# Dispatch-only workflows are not linted by default; this one breaks every rule.
+name: dormant
+on:
+  workflow_dispatch:
+jobs:
+  x:
+    runs-on: self-hosted
+    steps:
+      - run: sudo apt-get install -y qemu-system-x86

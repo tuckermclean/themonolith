@@ -1,0 +1,28 @@
+name: failing
+on:
+  push:
+jobs:
+  first:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: toolbox/run -- sh -c 'exit 3'
+      - name: skipped after failure
+        run: toolbox/run -- true
+      - name: always runs
+        if: always()
+        run: toolbox/run -- true
+      - name: failure runs
+        if: failure()
+        run: toolbox/run -- true
+  second:
+    needs: first
+    runs-on: ubuntu-latest
+    steps:
+      - run: toolbox/run -- true
+  slow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: too slow
+        timeout-minutes: 0.05
+        run: toolbox/run -- sleep 30

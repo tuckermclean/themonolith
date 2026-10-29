@@ -211,7 +211,7 @@ The predecessor's layout is kept, so ported scripts keep their paths.
 | `SPEC.md`, `nodes/` | Specification and node specs | owner |
 | `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE` | Ported. `AGENTS.md` opens with this repository's working notes (layout, constraints, spec editing, what not to touch, Git conventions), followed by the predecessor's traps-and-recipes knowledge base. `CLAUDE.md` points agents to it. | F01 |
 | `IMPORT.md` | What was ported from `b9f533b`, with a sha256 per file, and what has changed since | F01 |
-| `toolbox/` | The test toolbox image and `toolbox/run`, which runs any test tier locally | owner |
+| `toolbox/` | The test toolbox image; `toolbox/run`, which runs any test tier locally; `toolbox/ci`, which runs and lints the workflows | owner |
 | `.claude/` | Agent tooling: the `/node` skill, role agents, guard hook, spec checker | owner |
 
 ### 4.3 The overlay is a conventional Portage repository
@@ -338,7 +338,7 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
 
 - **Fast tier** (`make test`: seconds, no build, no network):
   - the ported `scripts/tests/` (23 files);
-  - `bash -n`, shellcheck, `py_compile` and actionlint from `pr-validate.yml`;
+  - `bash -n`, shellcheck, `py_compile`, YAML well-formedness and actionlint from `pr-validate.yml`;
   - each node's new fast tests.
 - **Slow tier** (locally, and in CI):
   - the build, in the builder image;
@@ -369,6 +369,25 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
   shellcheck, actionlint, oras, squashfs-tools, xorriso, scanelf), with the checkout mounted. Package
   builds and the SBOM gates run in the builder image, pulled by digest. CI runs the same commands, and
   only what needs GitHub itself (registry pushes, attestation, tag pipelines) is CI-only.
+- **CI parity.** A workflow file is the one definition of its jobs, and `toolbox/ci run <workflow> [<job>]`
+  runs it locally with the same shells, `env:`, step outputs, `if:` conditions, `needs` order, matrix
+  and timeouts. To make that hold, every workflow that can trigger (any trigger but `workflow_dispatch`,
+  and what those call) passes `toolbox/ci lint`, which `pr-validate.yml` runs:
+  - each command in a `run:` step is `toolbox/run -- <cmd>`, or `make <target>` for a target that runs
+    the builder image; logic lives in `scripts/`, not in YAML;
+  - no `${{ }}` inside `run:` (values come through `env:`), and expressions elsewhere are plain context
+    paths; `if:` uses status functions and `==`/`!=` comparisons;
+  - GitHub-hosted ubuntu runners, no job containers or services, no `apt-get`, `pip` or `setup-*`
+    actions: the toolbox carries every tool;
+  - `uses:` only from the short list `toolbox/ci` knows. Checkout and artifact or cache transfer are
+    local no-ops, since jobs share the checkout; attestation, registry logins and anything reading a
+    secret are reported as CI-only and skipped.
+  - QEMU runs under TCG in both places. `-cpu 486` is enforced only by emulation, so `toolbox/run` passes
+    no `/dev/kvm`.
+
+  A node that re-enables or changes a workflow brings it into this form. What still differs is the host
+  around the container (runner kernel, CPU speed, docker or podman for the builder image) and the
+  CI-only steps; a test that depends on speed carries a timeout with margin for the slower of the two.
 - **Harness interfaces.** Serial milestones, the ISOLINUX `serial` label and the GRUB entry `(serial)`
   are interfaces between the harness and the disc. Changing one means changing both.
 

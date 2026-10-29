@@ -1,16 +1,37 @@
 #!/bin/sh
 # Run a command in the test toolbox, with this checkout mounted at its own path.
-#   toolbox/run [--build] [--network none] [--] <cmd> [args...]
+#   toolbox/run [--build] [--network none] [-e NAME]... [--] <cmd> [args...]
 #   toolbox/run                      # interactive shell
 # Uses podman if present, else docker (MONOLITH_ENGINE overrides). The image is tagged by the hash
 # of toolbox/, so editing the Containerfile or selfcheck rebuilds it on the next run.
-# /dev/kvm is passed through when the caller can open it; QEMU falls back to TCG otherwise.
+# The same command runs here and in CI (SPEC §7, CI parity), so the container sees the same things in
+# both: CI, GITHUB_ACTIONS, the GITHUB_OUTPUT/ENV/STEP_SUMMARY/PATH files when set, and each -e NAME.
+# No /dev/kvm: boot tests run `-cpu 486` under TCG, which is what catches a non-486 instruction.
+# Inside the toolbox already (TOOLBOX=1), it runs the command directly.
 set -eu
 
 die() { echo "toolbox/run: $*" >&2; exit 2; }
 
 here=$(cd "$(dirname "$0")" && pwd -P)
 root=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null) || die "not inside a git checkout"
+build=0
+network=
+fwd="CI GITHUB_ACTIONS"
+while [ $# -gt 0 ]; do
+	case $1 in
+	--build) build=1; shift ;;
+	--network) [ $# -ge 2 ] || die "--network needs a value"; network=$2; shift 2 ;;
+	-e) [ $# -ge 2 ] || die "-e needs a variable name"; fwd="$fwd $2"; shift 2 ;;
+	--) shift; break ;;
+	*) break ;;
+	esac
+done
+
+if [ "${TOOLBOX:-}" = 1 ]; then
+	[ $# -gt 0 ] || set -- bash
+	exec "$@"
+fi
+
 engine=${MONOLITH_ENGINE:-}
 if [ -z "$engine" ]; then
 	if command -v podman >/dev/null 2>&1; then engine=podman
@@ -25,17 +46,6 @@ if [ "$engine" = podman ] && [ ! -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; th
 	eng="podman --cgroup-manager=cgroupfs"
 fi
 
-build=0
-network=
-while [ $# -gt 0 ]; do
-	case $1 in
-	--build) build=1; shift ;;
-	--network) [ $# -ge 2 ] || die "--network needs a value"; network=$2; shift 2 ;;
-	--) shift; break ;;
-	*) break ;;
-	esac
-done
-
 inputs=$(cd "$root/toolbox" && cat Containerfile selfcheck | sha256sum | cut -c1-12)
 image=localhost/monolith-toolbox:$inputs
 if [ $build = 1 ] || ! $eng image inspect "$image" >/dev/null 2>&1; then
@@ -44,10 +54,23 @@ if [ $build = 1 ] || ! $eng image inspect "$image" >/dev/null 2>&1; then
 fi
 
 [ $# -gt 0 ] || set -- bash
-opts="--rm -i -v $root:$root -w $(pwd -P) -e HOME=/tmp"
+opts="--rm -i --init -v $root:$root -w $(pwd -P) -e HOME=/tmp"
 [ -t 0 ] && [ -t 1 ] && opts="$opts -t"
 [ -n "$network" ] && opts="$opts --network $network"
-if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then opts="$opts --device /dev/kvm"; fi
+# A `git worktree` keeps its repository outside the checkout; mount that too, at its own path.
+common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)
+case $common in "$root"/*) ;; *) opts="$opts -v $common:$common" ;; esac
+for v in $fwd; do
+	case $v in *[!A-Za-z0-9_]*|[0-9]*) die "-e $v: not a variable name" ;; esac
+	eval "set_=\${$v+x}"
+	[ -n "$set_" ] && opts="$opts -e $v"
+done
+for v in GITHUB_OUTPUT GITHUB_ENV GITHUB_STEP_SUMMARY GITHUB_PATH; do
+	eval "f=\${$v:-}"
+	[ -n "$f" ] || continue
+	case $f in *[[:space:]:]*) die "$v has a space or colon in its path" ;; esac
+	opts="$opts -e $v -v $f:$f"
+done
 case $engine in
 podman) opts="$opts --userns=keep-id --security-opt label=disable" ;;
 *) opts="$opts --user $(id -u):$(id -g)" ;;

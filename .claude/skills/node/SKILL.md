@@ -42,7 +42,8 @@ Verify the handoff yourself:
 ## 3. GREEN
 Dispatch a **new** `monolith-implementer` with the brief path, the RED SHA, the red target and the failing tests. Check its handoff:
 - the red target passes at head;
-- `toolbox/run -- make test` passes (before the Makefile exists: every `scripts/tests/*.sh` under `toolbox/run`);
+- `toolbox/ci run pr-validate` passes: the PR check exactly as CI runs it (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
+- if the slice touched a workflow, `toolbox/ci lint` passes;
 - `git diff <red>..HEAD -- scripts/tests scripts/fixtures` modifies or deletes no RED test;
 - every changed imported file has a `changed by <ID>` row in `IMPORT.md`.
 
@@ -53,18 +54,18 @@ Dispatch a **new** `monolith-reviewer` with the brief path, the base, RED and he
 
 ## 5. Slow tier
 For each slow criterion, in this order of preference:
-1. **Locally in the toolbox** when it needs only an ISO and QEMU, or the predecessor's tools: boot modes (`toolbox/run -- python3 scripts/boot-test.py --iso … --mode … --kernel-version …`), artifact checks, rc1 lanes. Keep the log under `out/node/<ID>/`.
+1. **Locally, by running the CI job itself** when it is in a parity workflow: `toolbox/ci run <workflow> <job> [--matrix k=v]`. This is the preferred evidence: the same definition CI runs. Otherwise in the toolbox directly when it needs only an ISO and QEMU, or the predecessor's tools: boot modes (`toolbox/run -- python3 scripts/boot-test.py --iso … --mode … --kernel-version …`), artifact checks, rc1 lanes. Keep the log under `out/node/<ID>/`.
 2. **Locally in the builder image** with podman when it needs Portage: package builds and the SBOM gates. Pull the builder by digest (`BUILDER_DIGEST`).
 3. **In CI**, when it needs GitHub itself: GHCR pushes, attestations, tag pipelines, `workflow_dispatch` runs. Push, run, and record the run URL.
 
-Record each command, exit code and log path or run URL. A slow criterion without a recorded run is not met.
+Record each command, exit code and log path or run URL. A slow criterion without a recorded run is not met. When a criterion ran both locally and in CI, record both; a step that passes in one and fails in the other is a parity bug, so stop and report it (step 7).
 
 ## 6. Pull request
 Push with `git push -u origin HEAD`. A push that changes `.github/workflows/*` needs a token with the `workflow` scope, and the default `gh` token lacks it. Use a token the owner provides, transiently (the credential rules in `AGENTS.md`), or ask the owner to push the branch.
 
 Open the PR with `gh pr create`. The body has:
 - what the node delivers, in two or three sentences;
-- the criterion → evidence table (SPEC §11): criterion, test or command, where it ran (toolbox, builder, CI URL), result;
+- the criterion → evidence table (SPEC §11): criterion, test or command, where it ran (`toolbox/ci`, toolbox, builder, CI URL), result;
 - the RED → GREEN → review SHAs for each slice;
 - deviations and open questions.
 

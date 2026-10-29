@@ -30,8 +30,9 @@ Read the brief, the RED commit (`git show <sha>`), the node spec's "Changes from
 
 ## Validate locally, in the toolbox
 - the red target now exits 0, and every RED test passes;
-- `toolbox/run -- make test` passes (before the Makefile exists: every `scripts/tests/*.sh`);
-- `toolbox/run -- shellcheck --severity=error` on the shell files you touched, and `toolbox/run -- actionlint -shellcheck=` if you touched a workflow.
+- `toolbox/ci run pr-validate` passes, which is the PR check as CI runs it (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
+- `toolbox/run -- shellcheck --severity=error` on the shell files you touched; if you touched a workflow, `toolbox/run -- actionlint -shellcheck=` and `toolbox/ci lint`, and run its changed jobs with `toolbox/ci run <workflow> <job>`.
+- A workflow step is `toolbox/run -- <cmd>` or a builder `make` target, with values passed through `env:` (SPEC §7, CI parity). Move logic into `scripts/`.
 
 Commit with subject `feat(<ID>): …` or `fix(<ID>): …`. Stage with `git add <paths>` as one command, then run `git commit` as a separate command.
 

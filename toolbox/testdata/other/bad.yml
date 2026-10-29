@@ -1,0 +1,21 @@
+name: bad
+on:
+  pull_request:
+jobs:
+  x:
+    runs-on: self-hosted
+    container: debian:trixie
+    if: contains(github.ref, 'main')
+    steps:
+      - uses: actions/setup-python@0000000000000000000000000000000000000000
+      - run: sudo apt-get install -y qemu-system-x86
+      - run: toolbox/run -- echo "${{ github.ref }}"
+      - name: second command not wrapped
+        run: |
+          toolbox/run -- true
+          curl -sSfL https://example.com/x | sh
+      - env:
+          V: ${{ format('{0}', github.sha) }}
+        run: toolbox/run -- true
+      - shell: python
+        run: toolbox/run -- true

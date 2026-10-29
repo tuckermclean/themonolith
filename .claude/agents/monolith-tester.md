@@ -27,7 +27,7 @@ The orchestrator gives you a brief path (`out/node/<ID>/brief.md`) and the accep
 Run the red target yourself before committing:
 - it exits non-zero;
 - every failure is one of your tests reporting `FAIL`. A shell error is not a valid RED: `command not found`, exit 126 or 127, a syntax error. If the script under test does not exist yet, the test checks for it and reports `FAIL: <path> missing`;
-- tests that passed before your change still pass (`toolbox/run -- make test` once the Makefile exists, otherwise every `scripts/tests/*.sh`).
+- tests that passed before your change still pass (`toolbox/ci run pr-validate` once F01 has imported it, otherwise every `scripts/tests/*.sh` under `toolbox/run`).
 
 If a new test already **passes**, the behaviour exists. Stop and report `already_satisfied` with the evidence. Do not weaken the test to make it fail.
 

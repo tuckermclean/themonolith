@@ -13,7 +13,8 @@ recipes and credential handling.
 - `docs/first-release.md`: the plan, owner actions and measured timings.
 - The port source is `tuckermclean/linux-live-iso-factory` at `b9f533b`. Cite it as `path:line` at that
   commit.
-- `toolbox/` is the test image; `.claude/` holds the `/node` skill, the role agents and the guard hook.
+- `toolbox/` is the test image, `toolbox/run` and the workflow runner `toolbox/ci`; `.claude/` holds the
+  `/node` skill, the role agents and the guard hook.
 - Nothing builds yet. `make test` and the build arrive with F01.
 
 ## Commands
@@ -21,7 +22,12 @@ recipes and credential handling.
 - `toolbox/run -- <cmd>` runs a command in the test toolbox, with the checkout mounted at its own path.
   `toolbox/run` alone opens a shell; `--build` rebuilds the image; `--network none` cuts the network.
   The image rebuilds by itself when `toolbox/` changes.
+  `-e NAME` forwards a variable; `CI`, `GITHUB_ACTIONS` and the `GITHUB_OUTPUT`-style files always pass.
 - `toolbox/run -- toolbox-selfcheck` checks that every tool is present at its pinned version.
+- `toolbox/ci run <workflow> [<job>...]` runs a workflow's jobs locally, as CI runs them. `--event`,
+  `--input k=v` and `--matrix k=v` set the trigger, inputs and one matrix combination. The report marks
+  each step `ok`, `FAIL`, `skip` or `ci-only`. `toolbox/ci lint` checks the parity rules (SPEC §7).
+- `toolbox/ci run pr-validate` is the whole PR check, once F01 has imported it. Run it before pushing.
 - `toolbox/run -- sh scripts/tests/<name>.test.sh` runs one fast test; `toolbox/run -- make test` runs the
   fast tier once F01 has imported the Makefile.
 - Boot a mode: `toolbox/run -- python3 scripts/boot-test.py --iso <iso> --mode bios --kernel-version
@@ -30,7 +36,7 @@ recipes and credential handling.
 - Package builds and the SBOM gates run in the builder image, with podman, pulled by digest.
 - `python3 -I .claude/skills/node/check-spec.py` checks the graph against the node specs; `--write`
   regenerates the header rows.
-- `sh .claude/hooks/guard.test.sh` tests the guard hook.
+- `sh .claude/hooks/guard.test.sh` tests the guard hook; `sh toolbox/ci.test.sh` tests `toolbox/ci`.
 
 ## Building a node
 
@@ -48,8 +54,11 @@ recipes and credential handling.
   `toolbox/run` passes `--cgroup-manager=cgroupfs` in that case; do the same for direct podman calls.
   With cgroupfs, podman also leaves an empty `oom` file in the directory it starts from; `toolbox/run`
   starts it from a state directory. Never commit an `oom` file.
-- **No KVM** unless the user can open `/dev/kvm` (group `kvm`). QEMU then runs in software: boots take
-  about a minute and the first in-guest check can hit its 30 s timeout. Re-run before suspecting the disc.
+- **QEMU runs in software, here and in CI.** `boot-test.py` uses `-cpu 486`, which only emulation
+  enforces, so `toolbox/run` passes no `/dev/kvm`. Boots take about a minute and the first in-guest check
+  can hit its 30 s timeout. Re-run before suspecting the disc.
+- **A step timeout must stop the container.** `toolbox/run` starts containers with `--init`, so SIGTERM
+  reaches the command; without it a timed-out step leaves its container running.
 - **Workflow files need the `workflow` scope to push.** The default `gh` token lacks it, so a branch that
   changes `.github/workflows/*` is rejected. Use a token the owner provides, transiently, or ask the owner
   to push.
@@ -62,6 +71,9 @@ recipes and credential handling.
 - Port, don't redesign. Predecessor recipes, scripts and tests carry over unchanged unless a node spec
   lists the change.
 - Use Portage and standard tools. Custom code only where SPEC §5 names a gap.
+- CI parity (SPEC §7): a workflow that can trigger passes `toolbox/ci lint`. Each `run:` command is
+  `toolbox/run -- <cmd>` or a builder `make` target, values reach `run:` through `env:`, and tools come
+  from the toolbox, never `apt-get` or `setup-*`. Put logic in `scripts/`, not YAML.
 - MS1, a working ISO for iteration, comes first. Do not add work to its path; SPEC §10 lists the concerns
   tracked outside it.
 
