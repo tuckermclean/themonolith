@@ -1,0 +1,708 @@
+area: recipes
+repo_head: b9f533b
+notes_general:
+  - "Overlay name is 'monolith' (configs/overlay/profiles/repo_name:1), masters=gentoo, thin-manifests=true (configs/overlay/metadata/layout.conf:1-2). All overlay ebuilds are KEYWORDS=~amd64 and package.accept_keywords opens them with '**'. All ebuilds EAPI=8."
+  - "Doctrine summary visible in recipes: all-static via */* package.env static.conf; no python on target (host python only for codegen/patch helpers); bitmap-only (freetype chain package.provided); i486 -Os with -fno-exceptions."
+  - "Host-python use inside bashrc (gpm and nethack hooks call 'python3 -') means the BUILDER image must carry a host python3 even though the target has none (configs/portage/bashrc:115,282). Mirror this as a builder-image requirement."
+  - "Overlay ebuilds read CONFIGS_DIR and CROSS_COMPILE from the environment (monolith-kernel ebuild:28,35); these are not set in make.conf, so the build script/container must export them."
+  - "Revbump is manual and the only cache-buster: AGENTS.md says portage binpkg matching ignores ebuild-content changes (versions.lock:103-108 repeats this). configs/portage/savedconfig is the exception: scripts/savedconfig-cache.sh hashes savedconfig (outside scope)."
+
+packages:
+  - id: ebuild.sys-kernel/monolith-kernel
+    path: configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r8.ebuild
+    version: "6.12.80-r8"
+    purpose: "Cross-compile Linux 6.12.80 (ARCH=i386, i486) from the pinned configs/kernel.config; install bzImage as /boot/vmlinuz-6.12.80, modules into the sysroot, and the gzipped resolved config as package content."
+    upstream:
+      source: "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${PV}.tar.xz (ebuild:8)"
+      pin: "tarball linux-6.12.80.tar.xz, size 148229368, SHA512 e1444aeb771db0f0bd885a03585577d4507b5d6adca3e7c8c522a464458ee014d94df8c63b57857c3696cb644ccaab5f7bdc094755c20bb6e710f2368ab1c42f (configs/overlay/sys-kernel/monolith-kernel/Manifest:1)"
+      evidence: "ebuild:8, Manifest:1"
+    build_hacks:
+      - what: "PATCHES=( files/linux-6.12-gcc15-std-gnu11.patch ): adds -std=gnu11 to KBUILD_CFLAGS in drivers/firmware/efi/libstub/Makefile"
+        why: "GCC 15 defaults to C23, where bool/true/false are keywords that the kernel defines itself; the EFI stub Makefile resets KBUILD_CFLAGS without carrying -std=gnu11. The sibling arch/x86/boot/compressed/Makefile fix landed upstream in 6.12.80 so is NOT in the patch."
+        evidence: "files/linux-6.12-gcc15-std-gnu11.patch:1-15; ebuild:24; git c4617f7"
+      - what: "src_configure: cp ${CONFIGS_DIR}/kernel.config .config, then 'make ARCH=i386 CROSS_COMPILE=${CROSS_COMPILE} olddefconfig'; falls back to allnoconfig with a warning if no config"
+        why: "pinned config is machine-managed; olddefconfig normalises it (and erases hand comments, hence docs/kernel-tiers.md as the policy home)"
+        evidence: "ebuild:26-36; docs/kernel-tiers.md (callout 'Why this lives in a doc')"
+      - what: "src_compile uses emake -j1 (bzImage + modules)"
+        why: "'cross-gcc is memory-heavy; higher parallelism OOMs CI runners'"
+        evidence: "ebuild:39-40"
+      - what: "modules_install with INSTALL_MOD_PATH=${D} INSTALL_MOD_STRIP=1; delete lib/modules/<krel>/build and source symlinks; re-run 'depmod -b ${D} <krel>'"
+        why: "strip keeps modules small for 486 disk + gzip budget; build/source symlinks dangle into the ephemeral tree; depmod rooted at the image so on-target modprobe resolves deps. Modules ride into squashfs via build-rootfs.sh rsync of sysroot (Tier 2)."
+        evidence: "ebuild:48-61"
+      - what: "Ship gzip -9 of resolved .config to /usr/share/monolith-kernel/resolved-kernel.config.gz as package content (DCX-99)"
+        why: "src_install copy-back to configs/kernel.config is a no-op on binpkg cache hit, so scripts/verify-resolved-i2c-off.sh used to pass vacuously; content inside the binpkg is identical on source and cache paths. scripts/build-packages.sh re-derives configs/kernel.config from this artifact each run and hard-fails if missing; proof artifact excluded from the shipped rootfs (486 minimalism)."
+        evidence: "ebuild:63-74; commit 982b50d/16affed/b9f533b messages"
+      - what: "src_install still does 'cp .config ${CONFIGS_DIR}/kernel.config || die'"
+        why: "dev convenience for 'make kernel-config'; formerly '|| true' swallowed failures (made loud in DCX-99)"
+        evidence: "ebuild:76-82"
+      - what: "pkg_config(): re-extract tarball from portageq distdir into ${T}, eapply the patch via ${EBUILD%/*}/files, olddefconfig, interactive menuconfig, copy back"
+        why: "interactive config path; FILESDIR/DISTDIR not populated in pkg_* phases"
+        evidence: "ebuild:85-116"
+    traps_encoded:
+      - "GCC15/C23 vs kernel-defined bool (patch)"
+      - "binpkg-cache hit skips src_install, so anything not in CONTENTS is invisible (DCX-99); 'Overlay-ebuild revbump busts binpkg cache' in AGENTS.md (r7->r8 in b9f533b)"
+      - "DDC sub-option -> CONFIG_I2C=y trap is guarded in kernel.config + resolved-config assertion (AGENTS.md 'DDC sub-option')"
+    doctrine: [486-minimalism]
+    deps_cut: []
+    fetches_at_build: ["ext.kernel-org (cdn.kernel.org tarball)"]
+    revbump_state: "AGREE: ebuild file is -r8 and versions.lock:8 says sys-kernel/monolith-kernel:6.12.80-r8:0. Manifest present."
+    bdepend: "sys-devel/bc sys-devel/flex app-alternatives/lex sys-devel/bison dev-libs/elfutils (ebuild:16-22)"
+
+  - id: ebuild.app-misc/monolith-base
+    path: configs/overlay/app-misc/monolith-base/monolith-base-0.1.0-r6.ebuild
+    version: "0.1.0-r6"
+    purpose: "No-source ebuild that owns every hand-authored rootfs helper/profile.d/bashrc.d/topic file so attestation Pillar 4 sees them as package-owned (not in unowned-allowlist)."
+    upstream:
+      source: "none (S=${WORKDIR}, no SRC_URI; files from FILESDIR) (ebuild:9-14)"
+      pin: "n/a (in-tree files; no Manifest file exists for this package)"
+      evidence: "ebuild:9-14; ls configs/overlay/app-misc/monolith-base shows no Manifest"
+    build_hacks:
+      - what: "S=${WORKDIR}"
+        why: "EAPI 8 default S=${WORKDIR}/${P} would not exist with no SRC_URI"
+        evidence: "ebuild:14"
+      - what: "Numeric ordering contract for /etc/profile.d: STATUS lines first (20-persist, 30-clock-hint) then ACTIONABLE (40-advisory, 50-dropbear-hint); budget <=10 lines of output on clean boot"
+        why: "/etc/profile sources profile.d in lexical order; dropbear hint (50-dropbear-hint.sh) is NOT installed by this ebuild, it is generated by scripts/build-rootfs.sh"
+        evidence: "ebuild:72-98"
+      - what: "bash-only hooks go in /etc/bash/bashrc.d (50-persist-history.bash, 60-monolith-cnf.bash, 99-monolith-square.bash), not profile.d"
+        why: "/etc/profile sources profile.d BEFORE /etc/bash/bashrc, and Gentoo's stock bashrc may assign PROMPT_COMMAND/PS1 unconditionally and clobber profile.d settings; bashrc.d runs after stock setup"
+        evidence: "files/50-persist-history.bash header; ebuild:115-128"
+      - what: "own startx here"
+        why: "hand-authored => must be owned or attestation Pillar 4 fails (AGENTS.md rootfs-files-unowned trap)"
+        evidence: "ebuild:28-31"
+    traps_encoded:
+      - "rootfs files unowned by attestation (AGENTS.md)"
+      - "GNU sys-apps/which does not build against musl (bundled gnulib getopt conflicts with musl getopt) and busybox is initramfs-only, hence POSIX-sh files/which (files/which header)"
+    doctrine: [486-minimalism, all-static, no-python-target]
+    deps_cut: []
+    fetches_at_build: []
+    revbump_state: "AGREE: -r6 ebuild, versions.lock:9 app-misc/monolith-base:0.1.0-r6:0"
+    contradictions_local:
+      - "world comment (configs/portage/world:11-17) lists files 'formerly hand-installed by scripts/build-rootfs.sh'; but configs/attestation/unowned-allowlist.yaml:93 and :190 still reference a pending 'monolith-base sweep' (see its lines) - allowlist not fully pruned; out of recipes scope, flag to doctrine/oracle owner"
+
+  - id: ebuild.dev-lang/monolith-perl
+    path: configs/overlay/dev-lang/monolith-perl/monolith-perl-5.42.0-r5.ebuild
+    version: "5.42.0-r5 (perl 5.42.0 + perl-cross 1.6.4 + CGI.pm 4.10)"
+    purpose: "Static, -Uusedl, no-threads Perl for the i486 disc, cross-built with arsv/perl-cross, with CGI.pm baked in as pure-perl for the guestbook boot-test fixture."
+    upstream:
+      source: "https://www.cpan.org/src/5.0/perl-${PV}.tar.xz ; https://github.com/arsv/perl-cross/releases/download/${PC_PV}/perl-cross-${PC_PV}.tar.gz ; https://cpan.metacpan.org/authors/id/L/LE/LEEJO/CGI-${CGI_PV}.tar.gz (ebuild:52-56)"
+      pin: "PC_PV=1.6.4 (ebuild:23), CGI_PV=4.10 (ebuild:50). Manifest SHA512: perl-5.42.0.tar.xz 14400988 b10f74d1245a879ae51d3ad93ad519a148df126ec865715474c801548ccfc3f542ef3bbb1f59568cea2ec77302d428dc772aba605357d7faf13eb6a351917275 ; perl-cross-1.6.4.tar.gz 119502 SHA512 0a6152cfaef1da7611554fa8fc93ff1edb3ce is truncated in this note - authoritative value in Manifest:3 ; CGI-4.10.tar.gz 185980 b11125ec8aaca06ab68ff1ca71cb0bd320c3c9e9bdbe69680a9e61d8b6a42be7b1357583b52dae5aa7b59cb6ceeb5b8f21332c66ae3e33566d6c631f4f555a98 (Manifest:1)"
+      evidence: "configs/overlay/dev-lang/monolith-perl/Manifest:1-3"
+    build_hacks:
+      - what: "STRICT version pairing perl 5.42.0 <-> perl-cross 1.6.4; do not float perl"
+        why: "each perl-cross release ships per-exact-perl-version patchsets (cnf/diffs/perl5-X.Y.Z/); a perl without a matching patchset risks silent 'strangely broken' configure/miniperl failures. 1.6.4 has 5.42.0 but no 5.42.1+ patchset."
+        evidence: "ebuild:9-23"
+      - what: "src_prepare: cp -a perl-cross tree over the perl source (== README's tar --strip-components=1); stage CGI-4.10 into cpan/CGI"
+        why: "perl-cross's documented install method; CGI needs no --static-ext because it has no .xs/.c/.h => classified nonxs_ext by cnf/configure_mods.sh"
+        evidence: "ebuild:81-124"
+      - what: "CGI.pm pinned to 4.10 (not 4.72 current)"
+        why: "every CGI release >= 4.11 hard-depends on HTML::Entities, which ships in the XS HTML-Parser dist; 4.10 is the newest release with zero XS in its dep tree (checked Makefile.PL and tarball *.xs/*.c/*.h grep). Risk: predates post-2014 bugfixes unrelated to param()/header()."
+        evidence: "ebuild:25-50; world:73-82"
+      - what: "./configure invoked directly (never via econf): --target=${CHOST} --prefix=/usr -Dcc=${CHOST}-gcc -Uusedl -Uusethreads -Duse64bitint -Duselargefiles -Dman1dir=none -Dman3dir=none -Accflags='${CFLAGS} -D_GNU_SOURCE -DNO_LOCALE' -Aldflags='${LDFLAGS} -Wl,--allow-multiple-definition' --all-static"
+        why: "see sub-entries"
+        evidence: "ebuild:197-206"
+      - what: "do NOT pass EXTRA_ECONF (--disable-shared --enable-static from env/static.conf)"
+        why: "perl-cross's hand-rolled configure_args.sh dies 'Unknown argument' on those tokens; not routed through econf so they never reach it. Planned fix if ever needed: an env/perl-cross.conf blanking EXTRA_ECONF (does not exist in configs/portage/env/ - never needed)."
+        evidence: "ebuild:127-143; ls configs/portage/env"
+      - what: "--all-static (not '--static')"
+        why: "bare '--static' is not in the arg parser's no-value list so it swallows the next token (would silently eat -Accflags). -Uusedl alone does NOT make perl core XS exts (POSIX, Fcntl, IO, Socket) static; --all-static sets $allstatic so all XS is baked in."
+        evidence: "ebuild:150-169"
+      - what: "-D_GNU_SOURCE in ccflags"
+        why: "perl-cross link-detects memrchr/setresuid/setresgid/eaccess (present in musl) and sets HAS_*, but musl declares them only under _GNU_SOURCE; perl adds it itself only for glibc (d_gnulibc). Without it GCC 14 errors on implicit declarations. Same fix as Buildroot/OpenWrt."
+        evidence: "ebuild:171-177"
+      - what: "-DNO_LOCALE in ccflags"
+        why: "perl-cross 1.6.4 hardcodes a glibc locale profile (d_perl_lc_all_uses_name_value_pairs=define, no positional map) but musl setlocale(LC_ALL,'') returns positional 'C.UTF-8;C;C;C;C;C', so perl panics at boot in locale.c ('needs an = to split name=value'). Undef of the macro alone is not enough; config.h is regenerated from config.sh during make so post-configure patches don't stick. -DNO_LOCALE compiles the whole USE_LOCALE machinery out; perl-scoped (other tools keep C.UTF-8); Unicode (use utf8, -C, unicore) is independent."
+        evidence: "ebuild:179-196; commit 7926f71"
+      - what: "-Wl,--allow-multiple-definition in ldflags"
+        why: "the 're' ext recompiles regcomp.c as re_comp.c (-DPERL_EXT_RE_BUILD) exporting Perl_get_ANYOFHbbm_contents etc. also in libperl.a(regcomp.o); under -Uusedl --all-static both land in one binary and modern binutils rejects duplicate strong symbols. Same source, so first-wins is safe. Deliberately NOT in env/static.conf (perl-specific quirk)."
+        evidence: "ebuild:208-216"
+      - what: "src_compile: after emake, for every ext/dist/cpan Makefile: rm -f <dir>/pm_to_blib; emake -C <dir> PERL_CORE=1 pm_to_blib (ewarn on failure)"
+        why: "THE BUG: perl-cross builds static exts via MakeMaker 'static' target which compiles XS into .a but does not run pm_to_blib, then touches a FAKE pm_to_blib stamp. With -Uusedl EVERY module is static ext, so NO .pm gets staged; installperl then ships a binary with all XS baked in but Fcntl.pm/File::Spec/Cwd missing => \"Can't locate X.pm in @INC\" (breaks File::Temp, CGI.pm). Confirmed by DIAG build."
+        evidence: "ebuild:219-247; AGENTS.md 'perl-cross static musl ... force per-module pm_to_blib or ship NO static-ext .pm'"
+      - what: "src_install backfill: cp -a ${S}/lib/. and every */blib/lib tree into ${ED}/usr/lib/perl5/5.42.0; die if Fcntl.pm, File/Spec.pm, File/Spec/Unix.pm, Cwd.pm still missing (dumps find candidates)"
+        why: "perl-cross static install skips baked-XS .pm even after the pm_to_blib fix; belt-and-braces so File::Temp/CGI work. NOTE privlib path hardcodes 5.42.0 (ebuild:269)."
+        evidence: "ebuild:258-291"
+      - what: "Prune: delete *.pod; CPAN/CPANPLUS dirs and CPAN.pm/CPANPLUS.pm; ExtUtils/ dirs; Pod/ dirs; usr/bin/h2ph, h2xs. Explicitly keep lib/unicore."
+        why: "size budget (spec §3): perl binary <=12 MiB stripped, /usr/lib/perl5 <=35 MiB. No CPAN client, no MakeMaker/XS build at runtime (no dlopen), no perldoc/man pipeline (mandoc+man-pages is the man reader). unicore kept because smoke_perl_utf8 uc() on non-ASCII reads unicore tables."
+        evidence: "ebuild:293-347"
+      - what: "explicit ${CHOST}-strip on the perl binary and MONOLITH-PERL-SIZE log markers"
+        why: "portage auto-strip runs after src_install so the logged size would be unstripped; markers are greppable from the CI log (budgets 12MB / 35MB)"
+        evidence: "ebuild:349-381"
+      - what: "RESTRICT=test"
+        why: "cannot run i486 binaries on x86_64 build container; acceptance is boot-test time"
+        evidence: "ebuild:72-76"
+    traps_encoded:
+      - "perl-cross static musl (-Uusedl perl 5.42): _GNU_SOURCE, --allow-multiple-definition, -DNO_LOCALE, force per-module pm_to_blib or ship NO static-ext .pm (AGENTS.md, matches verbatim)"
+      - "DBD driver can't static_ext into -Uusedl perl: DBD::SQLite Makefile.PL needs an importable DBI at configure time but miniperl can't load DBI's XS; DBI+DBD::SQLite attempted at -r2 and REVERTED; guestbook uses sqlite3 CLI instead (versions.lock:96-108, world:83-91)"
+    doctrine: [all-static, 486-minimalism, no-python-target]
+    deps_cut: ["No DBI/DBD::SQLite; no HTML::Entities / HTML-Parser (hence CGI 4.10)"]
+    fetches_at_build: ["ext.cpan (www.cpan.org, cpan.metacpan.org)", "ext.git-github (perl-cross release asset)"]
+    revbump_state: "AGREE on r5: versions.lock:109 dev-lang/monolith-perl:5.42.0-r5:0. STALE COMMENT: versions.lock:95 references monolith-perl-5.42.0-r2.ebuild (file no longer exists). The revbump history: -r1 NO_LOCALE; -r2 CGI 4.10 + prune + guestbook test (DBI/DBD attempted and reverted at an earlier -r2 label, never cached); r3-r5 meaning not documented in-tree (commit messages not read)."
+    manifest_note: "Manifest holds three DIST lines (perl, perl-cross, CGI); check Manifest:1-3 for perl-cross hash"
+
+  - id: ebuild.dev-db/monolith-sqlite
+    path: configs/overlay/dev-db/monolith-sqlite/monolith-sqlite-3.53.4.ebuild
+    version: "3.53.4"
+    purpose: "Static sqlite3 CLI + libsqlite3.a from the SQLite autoconf amalgamation (no tcl)."
+    upstream:
+      source: "https://sqlite.org/2026/sqlite-autoconf-${MY_PV}.tar.gz -> ${P}.tar.gz (ebuild:406)"
+      pin: "MY_PV=3530400 (hand-encoded, ebuild:405); Manifest: monolith-sqlite-3.53.4.tar.gz 3283177 SHA512 c24374e9393a943157f533f96e89e6c5743e5f5aad169d8393cff3088ca5ccbe5cc0561681ace49c349d0fe402298ee2624d319f422967247ce0792e3b3aa01e"
+      evidence: "ebuild + Manifest:1"
+    build_hacks:
+      - what: "use the amalgamation tarball, not ::gentoo dev-db/sqlite"
+        why: "::gentoo ebuild BDEPENDs dev-lang/tcl (test/doc tooling) = unnecessary cross tarpit"
+        evidence: "ebuild:397-404 (file line numbers 15-22 in-file)"
+      - what: "append-cppflags -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION=1 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_JSON1"
+        why: "no threads; no dlopen on all-static disc; FTS5+JSON1 for guestbook-era consumers"
+        evidence: "ebuild in-file lines 25-30"
+      - what: "econf --disable-editline --disable-readline --disable-load-extension (rely on EXTRA_ECONF from static.conf for --disable-shared --enable-static; do not repeat)"
+        why: "autosetup-based configure in 3.53.x: option is --disable-load-extension, NOT classic --disable-dynamic-extensions (rejected as unknown). No readline/editline in sysroot."
+        evidence: "ebuild in-file lines 33-43"
+    traps_encoded: ["autosetup configure option names differ from autoconf", "::gentoo sqlite BDEPEND tcl"]
+    doctrine: [all-static, 486-minimalism]
+    deps_cut: ["tcl"]
+    fetches_at_build: ["ext.sqlite-org (sqlite.org/2026/)"]
+    revbump_state: "NOT IN versions.lock (ebuild 3.53.4 has no -r; versions.lock has no dev-db/monolith-sqlite line). Version-only tracking; no revbump discipline is encoded for it."
+    note_consumption: "world:235-242 says libsqlite3.a/sqlite3.h are currently consumed by nothing in-tree (kept for a future DBD retry); only the sqlite3 CLI is used (guestbook.cgi)."
+
+  - id: ebuild.games-roguelike/rl144
+    path: configs/overlay/games-roguelike/rl144/rl144-0.1.0_p20260805.ebuild
+    version: "0.1.0_p20260805"
+    purpose: "Cross-build rl144 (Rust, integer-only roguelike) as a static i486-musl binary using rustup nightly + -Zbuild-std for a custom JSON target."
+    upstream:
+      source: "https://github.com/tuckermclean/rl144/archive/${COMMIT}.tar.gz -> ${P}.tar.gz (ebuild:16)"
+      pin: "COMMIT=f33a80efc4b0b02ce72e708182594b84695e742d (ebuild:15). Manifest: rl144-0.1.0_p20260805.tar.gz 636169 SHA512 cbec2b7ead488367419b6b6c1cc524a54fd47093cbaf6b9a7530e41e32b89ebe472f01657a32726eafb0495049827c6c3cf7d22e6187983798e1455fc9a34239. Fallback plan if GitHub archive gzip drifts: host tarball in project S3 (ebuild:12-14)."
+      evidence: "ebuild:9-17; Manifest:1"
+    build_hacks:
+      - what: "RESTRICT=network-sandbox"
+        why: "-Zbuild-std fetches std's own pinned crates (libc, object, gimli, ...) from crates.io during src_compile; versions pinned by the nightly's rust-src Cargo.lock so deterministic. Future hardening: vendor into builder image."
+        evidence: "ebuild:26-31"
+      - what: "Toolchain from the builder image's rustup, NOT portage: RUST_NIGHTLY=nightly-2026-07-15; RUSTUP_HOME defaults /opt/rustup; PATH+=/opt/cargo/bin; CARGO_HOME=${T}/cargo; CARGO_TARGET_DIR=${WORKDIR}/cargo-target"
+        why: "nightly + -Zbuild-std for a custom JSON target is a rustup workflow; i486 has no prebuilt Rust std. Pin MUST match Dockerfile (Dockerfile:170 --default-toolchain nightly-2026-07-15 --component rust-src)."
+        evidence: "ebuild:33-50; Dockerfile:164,170"
+      - what: "files/i486-unknown-linux-musl.json custom target spec: cpu i486, features -cmov,-mmx,-sse,-sse2, max-atomic-width 32, panic-strategy abort, crt-static-default true, env musl, crt-objects-fallback musl, pre-link-args -m32 -Wl,-melf_i386, relro full, std true, tier 2"
+        why: "no rustc built-in i486 musl target; no cmov/MMX/SSE; 32-bit atomics only (i486 has no cmpxchg8b)"
+        evidence: "files/i486-unknown-linux-musl.json:1-106"
+      - what: "CARGO_TARGET_I486_UNKNOWN_LINUX_MUSL_LINKER=${CHOST}-gcc (env var name derived from JSON filename stem)"
+        why: "link with the same crossdev musl gcc as the rest of the ISO"
+        evidence: "ebuild:52-56"
+      - what: "RUSTFLAGS=-Clink-self-contained=no -Clink-arg=-L${T}/unwindlib"
+        why: "by default rustc links 'self-contained' (-nostartfiles -nodefaultlibs, own crt objects from its rustlib dir, empty for this custom target) giving 'cannot find crtend.o/crtn.o'. Disabling lets the i486-linux-musl-gcc driver supply crt objects from its own paths (crtn.o under /usr/i486-linux-musl/usr/lib/, crtend.o under /usr/lib/gcc/i486-linux-musl/15/)."
+        evidence: "ebuild:66-92"
+      - what: "alias libgcc_eh.a (fallback libgcc.a) as ${T}/unwindlib/libunwind.a"
+        why: "even with panic=abort std's backtrace support references _Unwind_* so rustc links -lunwind; crossdev musl/gcc has no standalone libunwind, the unwinder lives in libgcc"
+        evidence: "ebuild:77-91"
+      - what: "cargo +nightly-2026-07-15 -Z build-std=std,panic_abort -Z json-target-spec build --release --no-default-features --features backend-term --target <json> --manifest-path ${S}/Cargo.toml"
+        why: "terminal backend only; panic_abort to match Cargo profile panic=abort"
+        evidence: "ebuild:94-102"
+      - what: "src_install readelf guard: die if PT_INTERP present; ewarn if not Intel 80386; install to /usr/bin (not /usr/games/bin)"
+        why: "all-static i486 rootfs: dynamic/wrong-arch would fail at boot; /usr/games/bin not on rootfs PATH (mirrors bsd-games)"
+        evidence: "ebuild:105-127"
+      - what: "diagnostic prints of gcc -print-file-name=crtn.o/crtend.o and -print-search-dirs"
+        why: "leftover debugging of crossdev sysroot layout (kept; '|| true')"
+        evidence: "ebuild:58-64"
+    traps_encoded:
+      - "Rust: rustup nightly + build-std + link fixes -> static i486-musl (AGENTS.md 'Static cross-build recipes'). Link fixes visible in this ebuild: (1) custom target JSON, (2) self-contained=no, (3) libunwind alias, (4) panic-strategy abort, (5) CARGO_TARGET_*_LINKER=${CHOST}-gcc, (6) network-sandbox off for build-std crates. AGENTS says '6 link fixes'; this ebuild shows these six."
+    doctrine: [all-static, 486-minimalism]
+    deps_cut: []
+    fetches_at_build: ["ext.rustup (toolchain baked into builder image at image-build time, not at emerge)", "ext.crates-io (std deps during build-std; network-sandbox disabled)", "ext.git-github (source tarball)"]
+    revbump_state: "AGREE: versions.lock:85 games-roguelike/rl144:0.1.0_p20260805:0 matches ebuild; Manifest present. Pinned by commit + date (_p), not -rN."
+
+  - id: ebuild.www-client/stele
+    path: configs/overlay/www-client/stele/stele-0.1.0_p20260821.ebuild
+    version: "0.1.0_p20260821"
+    purpose: "Cross-build Stele (Rust, no-JS document browser, direct /dev/fb0) as one static i486 binary; also ships fixtures/acid2.html as demo/boot-test page."
+    upstream:
+      source: "https://github.com/tuckermclean/stele-browser/archive/${COMMIT}.tar.gz -> ${P}.tar.gz"
+      pin: "COMMIT=0e4921bbb85c88899a7919a45415a8d749df3ec8; Manifest stele-0.1.0_p20260821.tar.gz 1839397 SHA512 0d77cd44192b4e15c125090d786d7eef2df5d68e66894a0a5cbc0e6f6f04581d1dc7191a7f21b39b00dfb13f576992a08f61b3282c427152b84c84dc062eb939"
+      evidence: "ebuild:16-18; Manifest:1"
+    build_hacks:
+      - what: "REPIN EACH BUILD while it churns: bump COMMIT + _pYYYYMMDD (and -rN if same day) + regenerate Manifest + versions.lock line together"
+        why: "moving target; -rN busts the S3 --usepkg binpkg cache"
+        evidence: "ebuild:9-15; versions.lock:86-88; AGENTS.md roadmap 'REPIN it each build'"
+      - what: "RESTRICT=network-sandbox"
+        why: "build-std pulls std's crates AND Stele's own (gif/jpeg-decoder/png/taffy) from crates.io; Cargo.lock is committed so deterministic"
+        evidence: "ebuild:30-34"
+      - what: "RUST_NIGHTLY=nightly-2026-07-15, RUST_TARGET=i486-monolith-linux-musl; target JSON comes from the repo's own targets/ dir (no FILESDIR file)"
+        why: "pin MUST match repo rust-toolchain.toml AND Dockerfile RUST_NIGHTLY (shared with rl144)"
+        evidence: "ebuild:36-46"
+      - what: "linker env CARGO_TARGET_I486_MONOLITH_LINUX_MUSL_LINKER=${CHOST}-gcc"
+        why: "crossdev musl gcc; env name derives from JSON filename stem"
+        evidence: "ebuild:53-56"
+      - what: "libunwind.a alias to libgcc_eh.a (fallback libgcc.a) via RUSTFLAGS -L ${T}/unwindshim (Stele DECISIONS D7)"
+        why: "same as rl144: std musl unwind crate references _Unwind_* even with panic=abort; no standalone libunwind in crossdev toolchain. NOTE: unlike rl144, no -Clink-self-contained=no in RUSTFLAGS because the target spec turns self-contained off."
+        evidence: "ebuild:58-70"
+      - what: "cargo build -Z build-std=std,panic_abort -Z json-target-spec --release (default features, no backend-term flag)"
+        why: "Stele renders straight to fb"
+        evidence: "ebuild:72-79"
+      - what: "src_install: readelf INTERP/386 checks; install /usr/bin/stele; install fixtures/acid2.html to /usr/share/stele/ if present; dodoc only existing files from LICENSE REPORT.md DECISIONS.md JOURNAL.md"
+        why: "all-static i486 check (Stele acceptance A1); acid2 page is self-contained (data: URIs), used by boot-test mode stele-acid2 (ebuild-owned => no unowned-allowlist entry); EAPI8 dodoc die()s on missing file so guarded"
+        evidence: "ebuild:82-119"
+      - what: "LICENSE=GPL-3 declared before LICENSE file exists in upstream"
+        why: "GPL-3 is in @FREE so satisfies ACCEPT_LICENSE gate regardless; owner to add file"
+        evidence: "ebuild:20-26"
+    traps_encoded: ["Rust: rustup nightly + build-std + link fixes (AGENTS.md)", "EAPI8 dodoc dies on missing file"]
+    doctrine: [all-static, 486-minimalism, bitmap-only-no-freetype]
+    deps_cut: []
+    fetches_at_build: ["ext.crates-io", "ext.rustup (image-time)", "ext.git-github"]
+    revbump_state: "AGREE: versions.lock:88 www-client/stele:0.1.0_p20260821:0 matches ebuild. Boot-test mode 'stele-acid2' depends on /usr/share/stele/acid2.html."
+
+  - id: ebuild.x11-base/monolith-xserver
+    path: configs/overlay/x11-base/monolith-xserver/monolith-xserver-1.3_p20241113-r1.ebuild
+    version: "1.3_p20241113-r1"
+    purpose: "TinyX/kdrive Xfbdev: static, framebuffer-native, zero-dlopen X server over /dev/fb0 (vesafb/efifb)."
+    upstream:
+      source: "https://github.com/tinycorelinux/tinyx/archive/${COMMIT}.tar.gz -> ${P}.tar.gz"
+      pin: "COMMIT=feab72ca891bc04b18763763e15ee4e532369cdf; Manifest monolith-xserver-1.3_p20241113.tar.gz 788302 SHA512 71ca2f76ef5c04904c8f00ff83d68c5913c4c842754274ca834b01e6cd62acd7314d5ffe4f86a0a10f40c298fac4a9a72101471cf68fc6234e1bf4dbd50d8530. NOTE: xcb-proto distfile line is in x11-base/xcb-proto/Manifest, not here (cat output shows both)."
+      evidence: "ebuild:20-22"
+    build_hacks:
+      - what: "eautoreconf in src_prepare (tinyx ships configure.ac+autogen.sh only)"
+        why: "no ./configure in tarball; needs x11-misc/util-macros (16 XORG_* macros) + pkg-config"
+        evidence: "ebuild:48-58"
+      - what: "5 vendored server-side headers copied into include/X11 and include/X11/extensions: XShm.h, sync.h, XTest.h (server stub), Xauth.h, Xdmcp.h (from libXext 1.3.7 / libXau 1.0.11 / libXdmcp 1.1.5; MIT)"
+        why: "2007-era kdrive reuses CLIENT headers that ::gentoo ships only in libX11/libXext/libXau/libXdmcp, the client stack the minimal server excludes; sub-includes all resolve from xorg-proto; server supplies implementations (or _*_SERVER_ guard blanks client body) so no client lib is linked. XTest.h is an empty stub under _XTEST_SERVER_ because the real one drags in XInput.h (libXi/libXtst). Xpoll.h deliberately absent: xorg-proto generates+installs it."
+        evidence: "ebuild:60-83; files/XTest.h:1-20; AGENTS.md TinyX trap ('5 vendored server header shims, no client libs, Xpoll from xorg-proto, GCC-14 -Wno-error quartet')"
+      - what: "append-flags -Wno-error=implicit-int -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types; --disable-werror"
+        why: "GCC 14+ promotes these K&R-isms to hard errors independent of -Werror; this is the 'GCC-14 -Wno-error quartet'"
+        evidence: "ebuild:95-102"
+      - what: "append-cppflags -I${S}/include"
+        why: "keep vendored headers on the search path for every subdir regardless of its own -I"
+        evidence: "ebuild:103"
+      - what: "append-cppflags -DKDRIVESERVER (-r1)"
+        why: "shipped include/dix-config.h.in is stale: no '#undef KDRIVESERVER' placeholder, so configure's AC_DEFINE under --enable-kdrive never lands. Without it dix/dixfonts.c compiles out BuiltinRegisterFpeFunctions(), the libXfont 'built-ins' FPE is never registered, FontFile FPE mis-claims it and the server dies \"could not open default font 'fixed'\". -r1 pure revbump to rebuild after the fix."
+        evidence: "ebuild:105-114; commit 26b780a"
+      - what: "econf --enable-kdrive --disable-xvesa --enable-xfbdev --disable-install-setuid --disable-xdmcp --disable-xdm-auth-1 --disable-xres --disable-screensaver --disable-dbe --disable-xf86bigfont --disable-dpms --disable-werror"
+        why: "Xvesa needs BIOS int10/vm86/x86emu - inherit vesafb instead; strip unused extensions; no setuid (boots as root); disable-xdmcp drops libXdmcp link"
+        evidence: "ebuild:86-127"
+      - what: "src_install readelf guard (no INTERP, 80386) on /usr/bin/Xfbdev; dodoc README COPYING"
+        why: "all-static i486 rootfs"
+        evidence: "ebuild:130-145"
+    traps_encoded: ["TinyX Xfbdev static build (AGENTS.md)", "stale dix-config.h.in => KDRIVESERVER undefined => 'could not open default font fixed'", "Lesson (AGENTS.md): enumerate the whole header gap before spending another build cycle"]
+    doctrine: [all-static, bitmap-only-no-freetype, 486-minimalism]
+    deps_cut: ["no pixman (tinyx 1.2.0-era fb does not PKG_CHECK it)", "no libX11/libXext (server only)", "no xkb/xinput/GL/dlopen"]
+    fetches_at_build: ["ext.git-github"]
+    revbump_state: "AGREE: versions.lock:14 x11-base/monolith-xserver:1.3_p20241113-r1:0"
+    depend: "x11-base/xorg-proto x11-libs/xtrans x11-libs/libXfont x11-libs/libfontenc sys-libs/zlib (ebuild:40-46); xtrans/libfontenc/xorg-proto pulled from ::gentoo"
+
+  - id: ebuild.x11-libs/libXfont
+    path: configs/overlay/x11-libs/libXfont/libXfont-1.5.4-r1.ebuild
+    version: "1.5.4-r1"
+    purpose: "libXfont v1 (::gentoo only has libXfont2, ABI/pkg-config 'xfont2' incompatible with TinyX's 'xfont') built bitmap-only with built-in fonts."
+    upstream:
+      source: "https://www.x.org/archive/individual/lib/${P}.tar.gz"
+      pin: "Manifest libXfont-1.5.4.tar.gz 659706 SHA512 3627b6c767e028344b4ca11638538dc8c35548856031c4442c4d76423d068298caa2180d682e3f074d90145b9e7ea5d439a6ee9b4b6124e50dd660b88bb2ecbd"
+      evidence: "ebuild in-file line 19; Manifest:1"
+    build_hacks:
+      - what: "econf --disable-freetype --enable-pcfformat --enable-bdfformat --disable-snfformat --enable-builtins"
+        why: "--disable-freetype removes the only scalable rasterizer path (keeps freetype/fontconfig off disc); --enable-builtins bakes file_6x13[] + file_cursor[] into libXfont with 'fixed' aliased to 6x13, so Xfbdev can start with '-fp built-ins' and open default font/cursor with zero font files (what SP-GUI G1 Step 3's boot test relies on). Static/no-pie/disable-shared come from env/static.conf; do not repeat."
+        evidence: "ebuild in-file lines 40-61"
+    traps_encoded: ["freetype trap (bitmap-only doctrine)"]
+    doctrine: [bitmap-only-no-freetype, all-static]
+    deps_cut: ["freetype"]
+    fetches_at_build: ["ext.x-org (www.x.org/archive)"]
+    revbump_state: "AGREE: versions.lock:15 x11-libs/libXfont:1.5.4-r1:0. libXfont is in versions.lock but NOT in world (pulled as DEPEND of monolith-xserver)."
+    notes: "CVE-gate note in ebuild: libXfont v1 carries historical CVEs; 'flag it if the SBOM/CVE gate trips'. Check configs/attestation/cve-policy.yaml for an exception (not read; out of scope)."
+
+  - id: ebuild.x11-base/xcb-proto
+    path: configs/overlay/x11-base/xcb-proto/xcb-proto-1.17.0.ebuild
+    version: "1.17.0"
+    purpose: "Data-only xcb-proto (XML + pure-python xcbgen) for cross-building libxcb with HOST python and no target python/libxml2."
+    upstream:
+      source: "https://xorg.freedesktop.org/archive/individual/proto/${P}.tar.xz"
+      pin: "Manifest xcb-proto-1.17.0.tar.xz 151748 SHA512 34c3795e5a48a66d89b72ee1777fb0bede489d5ec07018e6c9ef3c13bdd60b0358fc2c04a1f0ed0acb5b681aeeb92033db579036e4f5edd967fe56714c03acdf (x11-base/xcb-proto/Manifest:1)"
+      evidence: "ebuild in-file line 5"
+    build_hacks:
+      - what: "overlay shadows ::gentoo x11-base/xcb-proto (inherit python-r1, RDEPEND target python -> zstd [masked], python_optimize byte-compile, BDEPEND libxml2 [masked])"
+        why: "all fatal for no-target-python cross env; xcb-proto is only data. NOTE the ebuild comment says 'priority 20 > ::gentoo' but no priority is set in layout.conf (configs/overlay/metadata/layout.conf); priority must be set in the builder's repos.conf (not in scope; ask build area)."
+        evidence: "ebuild in-file lines 9-18"
+      - what: "IUSE=+python_targets_python3_14 (no-op flag)"
+        why: "libxcb's BDEPEND is python_gen_any_dep 'xcb-proto[${PYTHON_USEDEP}]' = xcb-proto[python_targets_python3_14]; declaring the flag satisfies the USE-dep / python_check_deps has_version match. NOTE: hard-coded to python3_14 - breaks silently if the host python target changes."
+        evidence: "ebuild in-file lines 24-28"
+      - what: "src_configure: PYTHON=true econf; src_compile no-op; src_install 'emake install DESTDIR=${D} SUBDIRS=src'; doins xcbgen/*.py to /usr/lib/xcb-proto/xcbgen; sed xcb-proto.pc pythondir=${pc_sysrootdir}/usr/lib/xcb-proto"
+        why: "AM_PATH_PYTHON wants a python only to compute pythondir; SUBDIRS=src skips xcbgen install-pythonPYTHON (py-compile needs interpreter); libxcb finds xcbgen via pkg-config --variable=pythondir xcb-proto"
+        evidence: "ebuild in-file lines 38-65"
+    traps_encoded: ["X client libs cross+static: dodge the modern-X Python tar-pit with a data-only overlay xcb-proto (host-python codegen; no target python/libxml2/zstd) (AGENTS.md)"]
+    doctrine: [no-python-target, 486-minimalism]
+    deps_cut: ["dev-lang/python", "app-arch/zstd (masked)", "dev-libs/libxml2 (masked)"]
+    fetches_at_build: ["ext.freedesktop (xorg.freedesktop.org archive)"]
+    revbump_state: "NOT IN versions.lock (version-only; no -rN). Not in world; pulled by libxcb."
+
+  - id: ebuild.x11-terms/monolith-st
+    path: configs/overlay/x11-terms/monolith-st/monolith-st-0.9.2-r2.ebuild
+    version: "0.9.2-r2"
+    purpose: "suckless st terminal ported off Xft/fontconfig/freetype to core X11 bitmap fonts; default font Terminus."
+    upstream:
+      source: "https://dl.suckless.org/st/st-0.9.2.tar.gz -> ${P}.tar.gz"
+      pin: "Manifest monolith-st-0.9.2.tar.gz 48381 SHA512 1ca484227189d9e92ffc1092183fdc6a162da8bb41b9c18df662212d49a9551a84c3c87784ae16f2294105776b9d58983f29396bc681e367b761610bd7071b61"
+      evidence: "ebuild:11; Manifest"
+    build_hacks:
+      - what: "PATCHES=( files/st-0.9.2-core-fonts.patch ) (964 lines): replaces entire Xft/fontconfig render layer in x.c with XLoadQueryFont / XChar2b / XDrawImageString16; config.mk drops fontconfig/freetype2/-lXft, links -lX11 -lXext -lutil -lm -lrt"
+        why: "bitmap-only doctrine. Documented simplifications: single face for bold via '-medium-'->'-bold-' XLFD substitution with fallback, italic reuses regular face, codepoints > U+FFFF draw '?', ATTR_WIDE/CJK not double-width-aware."
+        evidence: "ebuild:18-27; files/st-0.9.2-core-fonts.patch:1-40"
+      - what: "src_prepare sed: set 'static char *font' in config.def.h to the Terminus XLFD -xos4-Terminus-Medium-R-Normal--16-160-72-72-C-80-ISO10646-1, with a grep -qF verification"
+        why: "deterministic font for a flagship client instead of whatever 'fixed' resolves to; -r2 busts -r1's binpkg (which named builtin 'fixed'). Patch's own default is -misc-fixed-... (font-misc-misc), overwritten by the sed."
+        evidence: "ebuild:44-57"
+      - what: "src_compile overrides CC=$(tc-getCC), INCS and LIBS from cross pkg-config; LIBS uses 'pkg-config --static --libs x11 xext' + -lutil"
+        why: "config.mk defaults X11INC/X11LIB to /usr/X11R6 (absent); config.mk hardcodes CC=c99 => HOST gcc (x86-64, -fcf-protection) => dies 'CPU does not support x86-64' on -march=i486; static libX11.a does not auto-pull deps so --static needed for xcb/Xau/Xdmcp"
+        evidence: "ebuild:59-78"
+    traps_encoded: ["Makefile hardcoded host CC", "static libX11 needs pkg-config --static", "Xft pulls freetype"]
+    doctrine: [bitmap-only-no-freetype, all-static]
+    deps_cut: ["Xft", "fontconfig", "freetype"]
+    fetches_at_build: ["ext.suckless (dl.suckless.org)"]
+    revbump_state: "NOT IN versions.lock (monolith-st absent from versions.lock) although -r2 exists and the revbump rationale is documented in ebuild. GAP: binpkg staleness protection for st/dwm relies on version label only; versions.lock pin absent."
+    runtime_dep_note: "RDEPEND font package intentionally commented out (ebuild:35-39); Terminus comes from media-fonts/terminus-font[pcf] in world."
+
+  - id: ebuild.x11-wm/monolith-dwm
+    path: configs/overlay/x11-wm/monolith-dwm/monolith-dwm-6.5-r2.ebuild
+    version: "6.5-r2"
+    purpose: "dwm 6.5 ported off Xft/fontconfig, Xinerama compiled out; links only libX11 (static)."
+    upstream:
+      source: "https://dl.suckless.org/dwm/dwm-6.5.tar.gz -> ${P}.tar.gz"
+      pin: "Manifest monolith-dwm-6.5.tar.gz 25588 SHA512 6cc3efd8d8a5e96517474fdcb1c1a6192fdf669c1bb02de6aea0a9f1a951360bf73c9576a5a0f06b00e2f839bacc304d60548d5ead0996bf46d82be4121ed248"
+      evidence: "ebuild:96; Manifest"
+    build_hacks:
+      - what: "PATCHES=( files/dwm-6.5-core-fonts.patch ) (413 lines): drw.c/drw.h rewritten to XLoadQueryFont/XFontStruct/XChar2b/XDrawString16/XTextWidth16, Clr is XColor via XParseColor+XAllocColor; drops Xft include in dwm.c"
+        why: "bitmap-only doctrine; single font, no per-glyph fallback (missing glyphs draw default_char)"
+        evidence: "ebuild:103-110; patch drw.h hunk"
+      - what: "sed config.def.h fonts[] and dmenufont[] to the same Terminus XLFD (ISO10646-1, 16px) with grep -qF verification"
+        why: "stock 'monospace:size=10' is a fontconfig string this build cannot parse; -r2 busts -r1's binpkg"
+        evidence: "ebuild:119-134"
+      - what: "emake CC=$(tc-getCC) INCS=<pkg-config --cflags x11> LIBS=<pkg-config --static --libs x11> LDFLAGS='-static ${xlibs}' XINERAMAFLAGS="
+        why: "Makefile hardcodes cc (host); XINERAMAFLAGS= drops -DXINERAMA (no libXinerama); CRITICAL: dwm's Makefile hard-assigns 'LDFLAGS = ${LIBS}', SHADOWING the env's -static, so without the command-line override dwm links DYNAMIC and fails at boot as 'dwm: not found' (exit 127 - the GUI boot-test black screen, the lone hit in static-audit's 'found 1 dynamically linked'). Command-line LDFLAGS beats config.mk and must carry the libs since link rule is '${CC} -o dwm ${OBJ} ${LDFLAGS}'. st does not need this (its Makefile references $(LDFLAGS))."
+        evidence: "ebuild:136-162"
+    traps_encoded: ["Makefile-clobbered LDFLAGS => silently dynamic binary on all-static rootfs", "Xft pulls freetype"]
+    doctrine: [bitmap-only-no-freetype, all-static]
+    deps_cut: ["Xft", "fontconfig", "freetype", "libXinerama"]
+    fetches_at_build: ["ext.suckless"]
+    revbump_state: "NOT IN versions.lock (same gap as st). -r2 documented."
+
+config:
+  - id: cfg.portage/make.conf
+    path: configs/portage/make.conf
+    purpose: "Cross make.conf installed at /usr/i486-linux-musl/etc/portage/make.conf (make.conf:1-4)."
+    entries:
+      - {entry: 'CHOST="i486-linux-musl"', why: "cross target", evidence: "make.conf:7"}
+      - {entry: 'ROOT="/usr/${CHOST}"', why: "crossdev emerge wrapper sets SYSROOT but not ROOT; modern portage requires ROOT to match SYSROOT (or both /)", evidence: "make.conf:9-11"}
+      - {entry: 'CFLAGS="-march=i486 -mtune=i486 -Os -pipe -fno-exceptions"; CXXFLAGS=${CFLAGS}', why: "size-optimised i486; -fno-exceptions for smaller binaries (overridden per package by env/fexceptions.conf)", evidence: "make.conf:13-20"}
+      - {entry: 'CFLAGS_FOR_BUILD="-O2 -m32"', why: "host build tools run during cross-compile must use 32-bit longs to match target ABI; native tools like nethack makedefs otherwise emit data files with 64-bit longs i486 binaries can't read. IMPLIES the builder image has 32-bit (multilib) host gcc support", evidence: "make.conf:22-25"}
+      - {entry: 'LDFLAGS="-Wl,--gc-sections"', why: "NO -static here: it breaks shared-lib builds for deps (zlib, xz); static linking comes from env/static.conf via package.env", evidence: "make.conf:27-32"}
+      - {entry: 'USE="-* minimal static static-libs -nls -ipv6 -X -systemd unicode"', why: "start with nothing; everything else opt-in via package.use", evidence: "make.conf:34-36"}
+      - {entry: 'FEATURES="buildpkg strip -sandbox -usersandbox"', why: "buildpkg for binpkg reuse; strip with ${CHOST}-strip so binpkgs install ready; sandbox disabled because it often breaks cross-compilation", evidence: "make.conf:38-44"}
+      - {entry: 'ACCEPT_KEYWORDS="*"', why: "embedded crossdev profile has no parent chain into profiles/arch/x86/ so ~x86 matching doesn't work; '*' accepts any keyword but not keyword-less (live/9999) ebuilds", evidence: "make.conf:46-49"}
+      - {entry: 'MAKEOPTS="-j${JOBS}"', why: "make.conf supports only ${VAR}, not $(cmd); JOBS env var set by the build script. gdb overrides to -j1.", evidence: "make.conf:51-53"}
+      - {entry: 'PKGDIR="/output/packages"; BINPKG_FORMAT="gpkg"; BINPKG_COMPRESS="xz"', why: "binpkgs persist in the mounted /output volume (default ${ROOT}/var/cache/binpkgs is ephemeral); this is the binpkg cache the S3 layer syncs", evidence: "make.conf:55-62"}
+      - {entry: "NOT set: ACCEPT_LICENSE", why: "defaults to @FREE; stele relies on GPL-3 being in @FREE (stele ebuild:20-26)", evidence: "absence"}
+  - id: cfg.portage/bashrc
+    path: configs/portage/bashrc
+    purpose: "Portage per-phase hook script (361 lines) holding all package-specific cross/static surgery that env files can't express."
+    entries:
+      - {entry: "configure phase: pre_src_configure() wraps meson_src_configure to append -Ddefault_library=static", why: "with -static in LDFLAGS any .so link via meson fails with 'undefined reference to main' (GCC pulls crt1.o into -shared link); static-only eliminates .so links. Uses bash dynamic scoping to append to the ebuild's local emesonargs array.", evidence: "bashrc:19-63; commit 4f33968 / e409314"}
+      - {entry: "meson glib: add -Dlibmount=disabled", why: "glib links libmount.a which pulls blkid symbols; avoid transitive dep", evidence: "bashrc:56-59"}
+      - {entry: "kmod: sed meson.build 'libkmod = shared_library(' -> 'libkmod = library('", why: "kmod hardcodes shared_library(), ignoring default_library=static, so the .so link collides with -static; rewriting yields libkmod.a only and kmod tools link libkmod_internal static. ewarn if the pattern vanishes (upstream change).", evidence: "bashrc:31-48; commit 513574d"}
+      - {entry: "cmake: wrap cmake_src_configure to add -DBUILD_SHARED_LIBS=OFF -DCMAKE_FIND_LIBRARY_SUFFIXES=.a", why: "prevent cmake picking stale .so from sysroot that -static LDFLAGS can't use", evidence: "bashrc:65-78"}
+      - {entry: "post_src_configure: sed every libtool script in WORKDIR to add compile_command/finalize_command += $link_static_flag after prefer_static_libs=built", why: "libtool swallows -static (prefers static archives but does not pass -static to the compiler) so binaries stayed dynamic; makes -static behave like -all-static without breaking configure tests", evidence: "bashrc:6-17,81-87"}
+      - {entry: "coreutils: sed 's|src/libstdbuf\\.so||g' on ${S}/Makefile in post_src_configure", why: "--disable-stdbuf is NOT recognised by coreutils configure; libstdbuf.so (LD_PRELOAD helper, useless on static system) can't link with -static ('undefined reference to main')", evidence: "bashrc:89-101"}
+      - {entry: "gpm: python3 helper rewrites every Makefile and Makefile.in under WORKDIR: strip -static/-no-pie from the libgpm.so link recipe; add target-specific 'override LDFLAGS := $(filter-out -static -no-pie,$(LDFLAGS))'; drop $(PROG) from 'all' and clear PROG=; delete the 'Makefile: Makefile.in' self-remake rule", why: "gpm has a custom Makefile.in with @LDFLAGS@ baked in as literal text so -static is in the .so recipe AND comes via emake's command line; -no-pie pulls crt1.o even with -shared; programs (mev, gpm-root) link libgpm.so.1 with -static => 'attempted static link of dynamic object'; mtime granularity on overlayfs can make make regenerate Makefile from the template and undo the patch. Hook placed in post_src_configure (not pre_src_compile) because multilib-minimal sets BUILD_DIR inside the ABI loop in src_configure. NOTE: uses HOST python3 (python3 - heredoc).", evidence: "bashrc:103-220; commit 23dbec2"}
+      - {entry: "compile phase: pre_src_compile iproute2: export PATH=${S}:${PATH}", why: "tc/Makefile calls bare 'yacc-reference' which lives in the source root, not PATH", evidence: "bashrc:241-250; commit 7e8dfda"}
+      - {entry: "compile phase: pre_src_compile gpm: log Makefile 'all:' and 'PROG=' lines", why: "diagnose Makefile regeneration undoing post_src_configure patches", evidence: "bashrc:252-263"}
+      - {entry: "compile phase: pre_src_compile nethack: rm include/vis_tab.h src/vis_tab.c; python3 appends to util/Makefile: OBJDIR=. (was ../src), CC_FOR_BUILD ?= gcc, CFLAGS_FOR_BUILD := $(CFLAGS_FOR_BUILD) -std=gnu89 -I$(abspath ../include) -DDLB -DSECURE -DTIMED_DELAY -DVISION_TABLES -DDUMPLOG -DSCORE_ON_BOTL, and 'makedefs lev_comp dgn_comp dlb: override CC/CFLAGS/LFLAGS(-m32)/LDFLAGS(-m32)'", why: "makedefs/lev_comp/dgn_comp/dlb are built for i486 but run on x86_64 host to generate sources. OBJDIR=. stops them linking the i486 ../src/monst.o/objects.o. 'override' needed since ebuild passes CC=/CFLAGS= on make command line; target-specific vars propagate to prerequisites. vis_tab.[ch] ship pre-generated so make skips 'makedefs -v' - deleted to force regen. Written for 3.6.x shape; 5.0.0 restructured it (hence the pin + mask). NOTE: HOST python3 again.", evidence: "bashrc:226-317; commit 3bd6abe"}
+      - {entry: "postinst: post_pkg_postinst() deletes *.so, *.so.* regular files and dangling *.so* symlinks under ${SYSROOT}/usr/lib and /lib after EVERY package, each find under 'timeout 30'", why: "ncurses etc. install .so+.a regardless of --disable-shared; cmake/meson then pass the .so full path to linker, which refuses it under -static. Portage guarantees postinst of dep completes before dependent's configure. Timeout/logging added to diagnose a hanging GitHub runner (commit 4c734e4). Side effect: modules (.ko) unaffected since not *.so; but ALSO deletes any intended .so in sysroot (e.g. none shipped).", evidence: "bashrc:319-342; commits 4c734e4, 513574d"}
+      - {entry: "postinst: override pkg_postinst for app-text/mandoc to run HOST /usr/sbin/makewhatis (60s timeout) against ${ROOT}/usr/share/man", why: "stock pkg_postinst runs 'makewhatis || die' on an i486 binary that can't execute on x86_64 host. Requires host mandoc in builder Dockerfile; warns if missing.", evidence: "bashrc:344-361; commit 3bd6abe"}
+      - {entry: "QUIRK: all pre_/post_ hook definitions are nested inside 'if [[ ${EBUILD_PHASE} == ... ]]' blocks, evaluated each time bashrc is sourced", why: "functions are only defined in the matching phase; hooks therefore must match the phase that sources them (post_src_configure defined in configure phase, pre_src_compile in compile phase, post_pkg_postinst in postinst phase)", evidence: "bashrc:18,241,330,349"}
+    note: "Dead/legacy: the package.env/cross-compile comment (lines 17-21) says disable-stdbuf.conf's --disable-stdbuf is 'unrecognised by coreutils configure'; the bashrc sed is the real fix and the env file is belt-and-suspenders."
+  - id: cfg.portage/env/static.conf
+    path: configs/portage/env/static.conf
+    purpose: "Catch-all static non-PIE environment for */* (via package.env)."
+    entries:
+      - {entry: 'CFLAGS+=" -no-pie -fno-pie"; CXXFLAGS+=same; LDFLAGS+=" -no-pie -static"', why: "on i486/musl PIE+static conflict - linker can't produce static-PIE, gcc silently falls back to dynamic-PIE", evidence: "static.conf:1-8"}
+      - {entry: 'EXTRA_ECONF="--disable-shared --enable-static"', why: "libtool strips -static from LDFLAGS; --disable-shared forces linking .a only; ignored by non-autotools. NOTE: assignment REPLACES (not appends) EXTRA_ECONF, and later env files append with ${EXTRA_ECONF} - ordering of package.env files matters.", evidence: "static.conf:10-13"}
+      - {entry: "I_KNOW_WHAT_I_AM_DOING=1", why: "xz-utils sanity check dies when liblzma.so missing (expected with --disable-shared); the ebuild's own escape hatch", evidence: "static.conf:15-17"}
+  - id: cfg.portage/env/disable-stdbuf.conf
+    path: configs/portage/env/disable-stdbuf.conf
+    purpose: "coreutils: EXTRA_ECONF += --disable-stdbuf"
+    entries:
+      - {entry: 'EXTRA_ECONF="${EXTRA_ECONF} --disable-stdbuf"', why: "stdbuf is LD_PRELOAD based and useless on static system; libstdbuf.so with -static fails linking. Actually ineffective: configure does not recognise the flag (see bashrc coreutils sed)", evidence: "disable-stdbuf.conf:1-11; package.env/cross-compile:17-21"}
+  - id: cfg.portage/env/fexceptions.conf
+    path: configs/portage/env/fexceptions.conf
+    purpose: "Re-enable C++ exceptions for smartmontools and gdb."
+    entries:
+      - {entry: 'CXXFLAGS/CFLAGS += -fexceptions', why: "overrides global -fno-exceptions; gdb's gdbsupport/new-op.cc wraps operator new in try/catch which is a hard compile error under -fno-exceptions", evidence: "fexceptions.conf:1-4; package.env/cross-compile:26-32"}
+  - id: cfg.portage/env/gdb-lowmem.conf
+    path: configs/portage/env/gdb-lowmem.conf
+    purpose: "Serialize gdb's internal make."
+    entries:
+      - {entry: 'MAKEOPTS="-j1"', why: "gdb-17.2 C++ TUs are memory-heavy; with MAKEOPTS=-j2 and emerge --jobs=2 peak RAM OOM-kills the CI runner silently (no error, no build.log, failure-log upload step never runs). NOTE: comment says global MAKEOPTS=-j2 but make.conf uses -j${JOBS}.", evidence: "gdb-lowmem.conf:1-7"}
+  - id: cfg.portage/env/libiconv.conf
+    path: configs/portage/env/libiconv.conf
+    purpose: "app-arch/tar only: link libiconv with --whole-archive."
+    entries:
+      - {entry: 'LDFLAGS += -Wl,--whole-archive,-liconv,--no-whole-archive', why: "gnulib/librecode code calls libiconv_open/libiconv_close (external-prefixed) instead of musl's built-in iconv but omits -liconv; GNU ld single-pass archive scanning leaves refs unresolved if -liconv precedes the objects; --whole-archive sidesteps ordering. Requires a libiconv.a in sysroot (provenance not in recipes scope).", evidence: "libiconv.conf:1-9; commits 347d044, 4f33968"}
+  - id: cfg.portage/env/mutt-tinfo.conf
+    path: configs/portage/env/mutt-tinfo.conf
+    purpose: "mutt: LIBS += -ltinfo"
+    entries:
+      - {entry: 'LIBS="${LIBS} -ltinfo"', why: "ncurses built USE=tinfo (split libtinfo) so bare -lncurses static link leaves tgetent/cur_term/setupterm unresolved; mutt's AC_CHECK_LIB(ncurses, initscr) fails -> 'no curses library found'. mtr sidesteps via a Gentoo tinfo patch; mutt has none.", evidence: "mutt-tinfo.conf:1-11; commit c004ca3"}
+  - id: cfg.portage/env/no-static-ldflags.conf
+    path: configs/portage/env/no-static-ldflags.conf
+    purpose: "DEAD: replacement LDFLAGS='-Wl,--gc-sections -no-pie' for packages that build .so (meson, plain-Makefile)."
+    entries:
+      - {entry: 'LDFLAGS="-Wl,--gc-sections -no-pie"', why: "plain ${VAR} expansion only in env files so cannot strip -static with ${VAR//..}; overwrite instead", evidence: "no-static-ldflags.conf:1-11"}
+    notes: "UNREFERENCED: grep finds no package.env line using it (introduced 796d42c / 4f33968, superseded by bashrc meson/cmake/libtool hooks). Candidate to drop."
+  - id: cfg.portage/env/ppp-no-plugins.conf
+    path: configs/portage/env/ppp-no-plugins.conf
+    purpose: "net-dialup/ppp: --disable-plugins"
+    entries:
+      - {entry: 'EXTRA_ECONF="${EXTRA_ECONF} --disable-plugins"', why: "plugins are libtool -module -avoid-version .so dlopen'd; dead on a no-dynamic-loader rootfs and risk the -static+-shared 'undefined reference to main' class; removes pppd/plugins from SUBDIRS and drops pppd's -ldl and -Wl,-E", evidence: "ppp-no-plugins.conf:1-16"}
+  - id: cfg.portage/env/shadow-libdir.conf
+    path: configs/portage/env/shadow-libdir.conf
+    purpose: "sys-apps/shadow: --libdir=/usr/lib"
+    entries:
+      - {entry: 'EXTRA_ECONF="${EXTRA_ECONF} --libdir=/usr/lib"', why: "shadow installs libsubid to /lib but merged-usr requires /usr; fails portage QA otherwise", evidence: "shadow-libdir.conf:1-4"}
+  - id: cfg.portage/package.env/cross-compile
+    path: configs/portage/package.env/cross-compile
+    purpose: "Maps env/*.conf to packages."
+    entries:
+      - {entry: "*/*  static.conf", why: "force static non-PIE for every package incl. deps; virtuals/man-pages ignore harmlessly", evidence: "cross-compile:7-15"}
+      - {entry: "sys-apps/coreutils disable-stdbuf.conf", why: "belt-and-suspenders; real fix in bashrc", evidence: "cross-compile:17-21"}
+      - {entry: "app-arch/tar libiconv.conf", why: "gnulib libiconv_open without -liconv", evidence: "cross-compile:23-24"}
+      - {entry: "sys-apps/smartmontools fexceptions.conf", why: "C++ exceptions", evidence: "cross-compile:26-27"}
+      - {entry: "dev-debug/gdb fexceptions.conf gdb-lowmem.conf", why: "new-op.cc try/catch; OOM-kills CI runner", evidence: "cross-compile:28-32"}
+      - {entry: "sys-apps/shadow shadow-libdir.conf", why: "libsubid to /usr/lib", evidence: "cross-compile:34-35"}
+      - {entry: "net-dialup/ppp ppp-no-plugins.conf", why: "no dlopen plugin subsystem", evidence: "cross-compile:37-39"}
+      - {entry: "mail-client/mutt mutt-tinfo.conf", why: "-ltinfo", evidence: "cross-compile:41-43"}
+    notes: "Ordering: package.env applies multiple files in order; later EXTRA_ECONF appends with ${EXTRA_ECONF} rely on static.conf running first (static.conf SETS it). The cross-gcc EXTRA_ECONF for libatomic.a lives in the Dockerfile (/etc/portage/env/cross-gcc-static.conf, Dockerfile:191-205), NOT in this repo's configs - builder-side config the rebuild must also carry."
+  - id: cfg.portage/package.accept_keywords/i486
+    path: configs/portage/package.accept_keywords/i486
+    purpose: "Accept ~x86 for everything; '**' for all 11 monolith overlay packages."
+    entries:
+      - {entry: "*/* ~x86", why: "i486 not an official arch; need unstable keywords", evidence: "i486:1-7"}
+      - {entry: "sys-kernel/monolith-kernel, games-roguelike/rl144, dev-db/monolith-sqlite, dev-lang/monolith-perl, app-misc/monolith-base, x11-libs/libXfont, x11-base/monolith-xserver, x11-base/xcb-proto, www-client/stele, x11-terms/monolith-st, x11-wm/monolith-dwm  **", why: "local overlay, no arch support matrix; every overlay ebuild must be listed here or it is unmaskable (a new overlay package that is not added fails with keyword mask)", evidence: "i486:9-20"}
+    notes: "Redundant with make.conf ACCEPT_KEYWORDS=* but kept; ACCEPT_KEYWORDS '*' does not cover '**' (keyword-less), only for overlay ebuilds that have KEYWORDS (all have ~amd64), so the '**' lines are belt-and-suspenders."
+  - id: cfg.portage/package.mask/problematic
+    path: configs/portage/package.mask/problematic
+    purpose: "Masks for packages/versions that break the static i486-musl cross build or violate doctrine."
+    entries:
+      - {entry: "sys-apps/man-db", why: "pulls virtual/tmpfiles -> systemd-utils[tmpfiles] with REQUIRED_USE PYTHON_SINGLE_TARGET; masking makes virtual/man resolve to app-text/mandoc", evidence: "problematic:15-18", doctrine: no-python-target}
+      - {entry: "games-misc/fortune-mod", why: "CMake needs a pre-installed NATIVE 'strfile' in PATH: circular build-tool dep. Re-enable by installing fortune-mod natively in Dockerfile first", evidence: "problematic:20-23"}
+      - {entry: "app-misc/mc", why: "hard-requires e2fsprogs[tools]; e2fsprogs+tools fails statically (tools link libext2fs.so not .a)", evidence: "problematic:25-27"}
+      - {entry: "sys-apps/pciutils", why: "cross-linker includes crt1.o building libpci.so; build system incompatible with musl cross toolchain", evidence: "problematic:29-31"}
+      - {entry: "app-arch/zstd", why: "meson + multilib-minimal eclass fails cross-compilation with the crt1.o error", evidence: "problematic:33-36"}
+      - {entry: "dev-libs/libxml2", why: "same meson/multilib failure; jq pulls bison->gettext->libxml2. Re-enable by providing a meson cross-file for i486-linux-musl. Consequence: bc and jq blocked (world:172-175)", evidence: "problematic:33-37"}
+      - {entry: "media-libs/libcaca", why: "uses C++ exceptions with -fno-exceptions; needs per-package fexceptions + shared-lib cross fix", evidence: "problematic:39-41"}
+      - {entry: "app-misc/toilet", why: "depends on libcaca", evidence: "problematic:39-42"}
+      - {entry: "net-analyzer/nethogs", why: "requires ncurses[cxx]; building ncurses with cxx breaks ncurses build in this musl cross context, cascading to ~20 dependents", evidence: "problematic:44-46"}
+      - {entry: "sys-apps/usbutils", why: "usbutils -> virtual/libudev -> systemd-utils unconditional REQUIRED_USE python_single_target (same root as nmap)", evidence: "problematic:48-50", doctrine: no-python-target}
+      - {entry: "net-analyzer/nmap", why: "unconditional REQUIRED_USE python_single_target even with all python features off; re-enable by adding dev-lang/python to world and python_single_target_python3_12 in package.use/nmap (file does not exist; note python3_12 vs xcb-proto python3_14 hint)", evidence: "problematic:52-56", doctrine: no-python-target}
+      - {entry: ">=games-roguelike/nethack-5.0.0", why: "5.0.0 needs USE=lua (REQUIRED_USE lua_single_target_*) and restructured util/Makefile vars that bashrc CC_FOR_BUILD patch was not written for (see .batteries/reports/nethack.md - path not verified); world pins =nethack-3.6.7-r1, mask is belt-and-suspenders", evidence: "problematic:58-63"}
+      - {entry: ">=dev-python/docutils-0.23", why: "0.23 hard-depends on dev-python/pillow (46MB) -> pybind11 -> dev-cpp/eigen; docutils is a HOST BDEPEND (rst2man) of dev-libs/glib man pages, unconditional/no USE gate. Mask keeps docutils-0.21.x. NB only effective once package.mask is mirrored HOST-side (scripts/build-packages.sh) because BDEPEND resolves against host /etc/portage not the cross sysroot. 'Real fix for the post-pin red build'.", evidence: "problematic:65-78; commit 87225c0"}
+      - {entry: ">=dev-cpp/eigen-9999", why: "live (git HEAD) ebuild; its versioned patch eigen-5.0.1-cmake-GNUInstallDirs.patch fails once upstream drifts, which turned every full build red; pulled as HOST build-dep through glib->docutils->pillow->pybind11->eigen. Mask so stable header-only eigen is chosen. 'A live ebuild has no place in a pinned build.' Belt-and-suspenders now.", evidence: "problematic:80-89; commit 87225c0"}
+    notes: "Example comments at lines 7-13 are placeholders (not active)."
+  - id: cfg.portage/package.use/dnsmasq
+    path: configs/portage/package.use/dnsmasq
+    purpose: "dnsmasq USE set for the static image."
+    entries:
+      - {entry: "net-dns/dnsmasq dhcp -static -dbus -script -nls -ipv6 -dnssec -tftp", why: "dhcp must be explicit since global USE=-* strips default +dhcp (else -DNO_DHCP, DNS-only, useless for SP3). '-static' is counter-intuitive: static linking comes from env/static.conf LDFLAGS; the ebuild's 'static' USE flag only emits -DHAVE_DNSSEC_STATIC, making upstream Makefile link -lgmp unconditionally even with -dnssec -> 'cannot find -lgmp'. Off => no gmp/nettle and still fully static. No dbus, no lease-change script exec, no NLS, IPv4-only, no DNSSEC (needs trust anchor; deferred), no TFTP (netboot deferred).", evidence: "dnsmasq:1-20"}
+  - id: cfg.portage/package.use/nftables
+    path: configs/portage/package.use/nftables
+    purpose: "Lean nftables."
+    entries:
+      - {entry: "net-firewall/nftables -json -python -xtables -readline", why: "only batch mode used by monolith-router (nft -f -, list/add/delete). static -lreadline fails to link (readline needs -ltinfo, naive configure probe doesn't add it). -readline => --without-cli keeps every batch feature. No python bindings (doctrine), no iptables-compat.", evidence: "nftables:1-7", doctrine: no-python-target}
+  - id: cfg.portage/package.use/static
+    path: configs/portage/package.use/static
+    purpose: "Per-package USE flags (351 lines). Only entries that encode workarounds/reasons are listed; plain 'static' marker lines are documentation-only because static linking comes from env/static.conf."
+    entries:
+      - {entry: "*/* static static-libs", why: "global; make.conf also sets USE=static static-libs", evidence: "static:5"}
+      - {entry: "sys-apps/busybox savedconfig static", why: "busybox built from configs/portage/savedconfig/sys-apps/busybox (initramfs only)", evidence: "static:8"}
+      - {entry: "sys-apps/kmod tools", why: "global USE=-* strips 'tools' => no modprobe AND meson aborts ('test suite requires also building the tools'). Modules are plain uncompressed .ko so no zlib/xz/zstd. Pairs with bashrc kmod shared_library rewrite.", evidence: "static:11-16"}
+      - {entry: "app-alternatives/* reference; app-alternatives/tar gnu; app-alternatives/cpio gnu; app-alternatives/sh dash; app-alternatives/lex flex", why: "global USE=-* strips alternatives' defaults, so choose explicitly; cpio selector REQUIRED_USE exactly-one-of(gnu libarchive) not satisfied by wildcard 'reference'", evidence: "static:18-25,87-90"}
+      - {entry: "app-shells/bash static -net -plugins readline", why: "minimal static bash", evidence: "static:26"}
+      - {entry: "net-misc/dropbear static minimal -pam -shadow -syslog multicall", why: "minimal ssh; sshd present but off (hint is generated by build-rootfs.sh)", evidence: "static:29"}
+      - {entry: "net-misc/curl static static-libs ssl openssl curl_ssl_openssl -gnutls -nss -ldap -rtmp -ssh -telnet", why: "openssl TLS only", evidence: "static:32"}
+      - {entry: "app-editors/nano static minimal -magic -spell -ncurses unicode", why: "minimal", evidence: "static:36 (note -ncurses with nano is unusual; unverified)"}
+      - {entry: "app-editors/vim static -minimal", why: "-minimal overrides global 'minimal' to keep syntax highlighting", evidence: "static:108"}
+      - {entry: "sys-libs/ncurses static static-libs tinfo -gpm -minimal unicode", why: "tinfo split => requires mutt-tinfo.conf; -gpm; unicode (ncursesw)", evidence: "static:97"}
+      - {entry: "dev-libs/gmp static-libs; dev-libs/mpfr static-libs; dev-libs/expat static-libs -unicode", why: "gdb deps. gmp asm/cpudetection left OFF so it builds portable C instead of i386 hand-tuned asm against this musl/i486 toolchain. expat -unicode overrides global USE=unicode to avoid redundant libexpatw.a. static-libs on mpfr propagates onto gmp.", evidence: "static:140-158"}
+      - {entry: "dev-debug/gdb static -server xml lzma -python -guile -source-highlight -nls", why: "Python mandatory off (doctrine). -server: gdbserver in-process agent (libinproctrap/tdesc-ipa) is a -fPIC .so which fails under global -static (same class as ppp plugins/libstdbuf); reviving needs --disable-inprocess-agent. +xml pulls expat; +lzma free since xz-utils in world. -debuginfod avoids elfutils; -guile/-source-highlight/-babeltrace/-rocm avoid heavy deps.", evidence: "static:138 (+comments above)", doctrine: no-python-target}
+      - {entry: "sys-fs/e2fsprogs static static-libs -nls", why: "tools USE (libext2fs.so link) fails statically; dropped (also why app-misc/mc is masked)", evidence: "static:244-246"}
+      - {entry: "sys-apps/shadow static -static-libs -pam -cracklib", why: "libsubid path fix via shadow-libdir.conf", evidence: "static:248-249"}
+      - {entry: "net-misc/iperf -sctp", why: "avoid lksctp-tools", evidence: "static:178-180"}
+      - {entry: "net-analyzer/mtr ncurses jansson -gui -filecaps", why: "ncurses UI (Gentoo tinfo patch in mtr-0.96-r1), JSON via jansson, no GTK (-gui avoids glib+gtk3), -filecaps avoids fcaps/libcap (disc runs as root)", evidence: "static:182-194"}
+      - {entry: "net-dialup/ppp static -atm -pam -selinux -systemd -activefilter", why: "no IUSE=static on ppp; -activefilter avoids libpcap and needs kernel CONFIG_PPP_FILTER (unset); plugins off via env", evidence: "static:196-204"}
+      - {entry: "sys-apps/ethtool static netlink; net-libs/libmnl static static-libs", why: "netlink path via libmnl (Alpine ships libmnl-static as evidence static is supported); ioctl fallback still compiled", evidence: "static:206-227"}
+      - {entry: "www-client/lynx static ssl -minimal -nls; www-client/w3m static ssl -minimal -imlib", why: "w3m: imlib (needs X) disabled. w3m is NOT in world (dead entry; AGENTS/world comment 'dropped by --keep-going like w3m')", evidence: "static:257-261"}
+      - {entry: "mail-client/mutt static ssl imap smtp sasl gsasl -gpgme -autocrypt -idn -kerberos -hcache -doc -nls", why: "smtp requires sasl (REQUIRED_USE); USE=gsasl (net-misc/gsasl) avoids cyrus-sasl -> virtual/tmpfiles -> systemd-utils -> Python trap. Leading comment lines 260-264 describe an older 'drop smtp+sasl' decision now superseded by the gsasl line (stale comment).", evidence: "static:263-270"}
+      - {entry: "net-misc/gsasl static-libs client -server", why: "REQUIRED_USE any-of(client server); mutt is a client", evidence: "static:272-275"}
+      - {entry: "net-irc/irssi -perl -otr -proxy", why: "no perl scripting (doctrine: perl stays build-host BDEPEND; NB monolith-perl is nonetheless on disc), no libotr/libgcrypt, no BNC. SSL is unconditional openssl RDEPEND; old 'static ssl -minimal -socks -nls' tokens don't exist on irssi-1.4.5 IUSE.", evidence: "static:277-282"}
+      - {entry: "dev-libs/glib static static-libs -dbus -debug -doc -elf -introspection -mime -selinux -sysprof -systemtap -test -utils -xattr", why: "irssi dependency; glib 8-byte atomics needed libatomic.a on -march=i486 (why irssi was masked before #32). meson hook forces static and disables libmount. -introspection avoids Python/bison.", evidence: "static:284-290"}
+      - {entry: "dev-libs/libffi static static-libs -debug -exec-static-trampoline -pax-kernel -test", why: "glib dep", evidence: "static:292-294"}
+      - {entry: "games-roguelike/nethack -X", why: "ncurses UI unconditional in 3.6.x; only X togglable", evidence: "static:308-311"}
+      - {entry: "sys-apps/kbd static zlib -pam -nls -bzip2 -lzma -selinux -test -xkb -zstd", why: "setfont/loadkeys for console (UX Pass Task 5). zlib ON so setfont reads .gz PSF directly. CI-UNVERIFIED when written; if it fails '--keep-going silently drops it' (rcS setfont call guarded).", evidence: "static:313-329"}
+      - {entry: "media-fonts/terminus-font -a-like-o -center-tilde -distinct-l -otf pcf -pcf-8bit pcf-unicode psf -quote -ru-dv -ru-g -ru-i -ru-k", why: "+psf for console setfont (installs ter-1*.psf.gz and ter-v*.psf.gz; rcS uses ter-116n.psf.gz). +pcf +pcf-unicode added later for X default font (iso10646-1 PCF in /usr/share/fonts/terminus) - the leading comment (psf only, -pcf-unicode) is STALE vs the actual flags. -otf drops outline fonts. NOTE flags 'pcf' and 'pcf-unicode' pull x11-apps/bdftopcf at build time (host side).", evidence: "static:~331-351 (atom is the last line); commit 428c5f7"}
+      - {entry: "app-text/mandoc static system-man", why: "satisfy virtual/man (man-db masked)", evidence: "static:111"}
+      - {entry: "dead entries (atoms not in world): sys-process/dcron, www-client/w3m, app-misc/gpm (world has sys-libs/gpm)", why: "app-misc/gpm static does NOT match sys-libs/gpm; harmless since static comes from env, but evidence of drift", evidence: "static:242 (dcron), 261 (w3m), 306 (app-misc/gpm)"}
+  - id: cfg.portage/profile/package.provided
+    path: configs/portage/profile/package.provided
+    purpose: "Atoms treated as installed, to cut doctrine-violating dependency chains."
+    entries:
+      - {entry: "virtual/tmpfiles-0-r7", why: "ppp (and mutt via cyrus-sasl) 'inherit tmpfiles' => virtual/tmpfiles, which on a no-systemd image resolves ONLY to systemd-utils[tmpfiles] whose REQUIRED_USE demands python_single_target. Other provider sys-apps/seedfiles is a keywordless -9999 live ebuild; opentmpfiles removed from ::gentoo. Disc has no tmpfiles.d processor, so snippets are inert anyway; pppd creates its own runtime dirs.", evidence: "package.provided:1-17; commit 38edc8c; AGENTS.md tmpfiles trap", doctrine: no-python-target}
+      - {entry: "media-libs/freetype-2.14.3", why: "font.eclass fonts RDEPEND x11-apps/mkfontscale -> freetype; bitmap-only disc generates fonts.dir at image build (scripts/pcf-fontname.py) so never needs it. Version must track the pinned tree; if a repin drifts them freetype reappears in the build log.", evidence: "package.provided:19-25; commit 428c5f7", doctrine: bitmap-only-no-freetype}
+      - {entry: "x11-apps/mkfontscale-1.2.4", why: "same chain", evidence: "package.provided:26"}
+      - {entry: "media-fonts/encodings-1.1.0", why: "same chain", evidence: "package.provided:27"}
+    notes: "Version-coupled to the portage snapshot (BUILD_EPOCH=20260811 per AGENTS.md); every epoch bump must re-verify these three versions and virtual/tmpfiles-0-r7 or the dep chain silently returns/ the provided-version mismatch makes portage ignore the entry. Lives under profile/, so builder must install it at /etc/portage/profile/package.provided (path mapping lives in Dockerfile/scripts, not verified)."
+  - id: cfg.portage/versions.lock
+    path: configs/portage/versions.lock
+    purpose: "Exact pins for 'world' packages: category/package:version:slot, generated by update-versions.sh update; last Updated 2026-08-05T03:50:14 (header). Consumed by scripts/binpkg-store.sh (pins never pruned), scripts/attestation.sh/enrich-sbom.py (hashed into SBOM), build scripts."
+    entries:
+      - {entry: "77 pin lines (non-comment, non-blank)", why: "see coverage_gap", evidence: "versions.lock:8-109"}
+      - {entry: "overlay pins: monolith-kernel 6.12.80-r8, monolith-base 0.1.0-r6, monolith-xserver 1.3_p20241113-r1, libXfont 1.5.4-r1, rl144 0.1.0_p20260805, stele 0.1.0_p20260821, monolith-perl 5.42.0-r5", why: "revbump coupling: change ebuild -rN AND this line together", evidence: "versions.lock:8,9,14,15,85,88,109"}
+      - {entry: "toolchain pins in the list: sys-devel/binutils 2.46.1:2.46, sys-apps/busybox 1.36.1-r4, app-shells/bash 5.3_p15, openssl 3.6.3, curl 8.21.0-r1, vim 9.1.1652-r2, etc.", why: "reproducible builds", evidence: "versions.lock:16-89"}
+    coverage_gap: "World atoms with NO versions.lock line (version-floating or revbump-unprotected): app-arch/cpio, dev-db/monolith-sqlite, dev-debug/gdb, games-roguelike/nethack, mail-client/mutt, media-fonts/terminus-font, net-analyzer/mtr, net-dialup/ppp, net-dns/dnsmasq, net-firewall/nftables, net-irc/irssi, net-misc/iperf, sys-apps/ethtool, sys-apps/kbd, sys-apps/pv, sys-fs/ncdu, sys-process/psmisc, x11-base/xorg-proto, x11-libs/libX11, x11-libs/libXext, x11-libs/libxcb, x11-terms/monolith-st, x11-wm/monolith-dwm. Only x11-libs/libXfont is in lock but not in world. Transitive deps (glib, gmp, ...) are never locked. The lock was last updated 2026-08-05, predating all of these additions."
+    stale_comments: ["versions.lock:95 names monolith-perl-5.42.0-r2.ebuild; current is r5", "line 6 'Updated: 2026-08-05' but entries for stele (0.1.0_p20260821) and kernel r8 were hand-edited later"]
+  - id: cfg.portage/crossdev.lock
+    path: configs/portage/crossdev.lock
+    purpose: "Cross-toolchain pins fed to 'crossdev --libc / --gcc' by make build-image; regenerated by .github/workflows/regen-pins.yml from gentoo/stage3:amd64-openrc-20260727 with '*/* ~*' keywords (no live ebuilds)."
+    entries:
+      - {entry: "sys-libs/musl:1.2.6:0", why: "libc pin", evidence: "crossdev.lock:9"}
+      - {entry: "sys-devel/gcc:15.3.1_p20260717:15", why: "cross gcc pin (GCC 15 => C23 default => kernel gnu11 patch)", evidence: "crossdev.lock:10"}
+    notes: "No binutils/kernel-headers pin here; binutils 2.46.1 is pinned in versions.lock:40 (that is the target-side package; cross-binutils version is whatever crossdev picks). kernel.config's CONFIG_CC_VERSION_TEXT says gcc 14.3.1 20260401, i.e. the committed kernel.config was last regenerated under the OLD toolchain (see contradictions)."
+  - id: cfg.portage/world
+    path: configs/portage/world
+    purpose: "99 atoms = the package set built into the rootfs; extensive inline comments."
+    world_atoms: ["sys-kernel/monolith-kernel","app-misc/monolith-base","sys-apps/busybox","app-shells/bash","app-shells/dash","sys-apps/sysvinit","sys-apps/coreutils","sys-apps/util-linux","sys-apps/findutils","sys-apps/grep","sys-apps/sed","sys-apps/gawk","sys-apps/diffutils","app-arch/tar","app-text/tree","sys-libs/readline","sys-libs/ncurses","sys-libs/zlib","dev-libs/libpcre2","dev-libs/openssl","sys-apps/file","sys-apps/less","app-editors/vim","app-editors/nano","sys-apps/man-pages","app-text/mandoc","sys-devel/binutils","dev-build/make","dev-debug/strace","sys-devel/patch","dev-debug/gdb","dev-lang/lua","dev-lang/monolith-perl","app-arch/xz-utils","app-arch/bzip2","app-arch/gzip","sys-apps/iproute2","sys-apps/net-tools","net-misc/iputils","net-misc/dhcpcd","sys-apps/ethtool","net-firewall/nftables","net-dns/dnsmasq","net-misc/dropbear","net-misc/curl","net-misc/wget","net-misc/whois","net-analyzer/netcat","net-analyzer/traceroute","net-misc/iperf:3","net-dialup/ppp","www-client/lynx","mail-client/mutt","net-irc/irssi","app-misc/tmux","sys-apps/shadow","sys-process/procps","sys-process/htop","sys-process/lsof","app-admin/sysklogd","sys-process/psmisc","app-arch/cpio","<sys-fs/ncdu-2","sys-apps/pv","sys-fs/e2fsprogs","sys-fs/dosfstools","sys-fs/squashfs-tools","app-shells/zsh","app-shells/bash-completion","net-misc/rsync","sys-apps/the_silver_searcher","app-arch/zip","app-arch/unzip","net-misc/socat","net-analyzer/iftop","net-analyzer/tcpdump","net-analyzer/mtr","sys-apps/smartmontools","sys-apps/hdparm","sys-apps/dmidecode","sys-apps/kbd","media-fonts/terminus-font","dev-db/monolith-sqlite","sys-libs/gpm","games-misc/bsd-games","app-misc/figlet","app-misc/cmatrix","app-misc/sl","games-roguelike/rl144","x11-base/monolith-xserver","x11-base/xorg-proto","x11-libs/libxcb","x11-libs/libX11","x11-libs/libXext","x11-terms/monolith-st","x11-wm/monolith-dwm","www-client/stele","=games-roguelike/nethack-3.6.7-r1","sys-apps/kmod"]
+    special_handling:
+      - {entry: "<sys-fs/ncdu-2", why: "ncdu 2.x is written in Zig (no Zig toolchain); 1.22 last C release", evidence: "world:167-169"}
+      - {entry: "=games-roguelike/nethack-3.6.7-r1", why: "pin to last 3.6.x; 5.0.0 needs lua and breaks bashrc makedefs patch; unqualified atom floated to 5.0.0 on 2026-08-02", evidence: "world:302-308"}
+      - {entry: "net-misc/iperf:3", why: "also the canary for cross-gcc libatomic.a fix (8-byte atomics on -march=i486): if it builds, the Dockerfile EXTRA_ECONF fix works", evidence: "world:125-129"}
+      - {entry: "sys-apps/busybox", why: "initramfs only (savedconfig); the rootfs uses GNU userland", evidence: "world:19-20"}
+      - {entry: "blocked-but-wanted: bc, jq (BDEPEND bison -> gettext -> libxml2, masked)", why: "needs libxml2 meson cross-file", evidence: "world:172-175"}
+      - {entry: "sys-apps/kmod", why: "modprobe/lsmod/depmod in booted GNU rootfs (busybox module applets initramfs-only; actually Gentoo busybox drops modutils for kmod regardless - build-initrd.sh:97-102)", evidence: "world:310-313"}
+      - {entry: "x11 client stack: x11-base/xorg-proto x11-libs/libxcb libX11 libXext (listed for intent; libxcb/libXau/libXdmcp are transitive)", why: "dwm/st link ONLY these; no Xt/Xaw/Xmu/ICE/SM/Xft", evidence: "world:265-274"}
+    notes: "Comments reference '.batteries/reports/*.md' (gdb, mtr, ethtool, nethack): that directory is not under configs/ and was not verified to exist."
+  - id: cfg.portage/savedconfig/sys-apps/busybox
+    path: configs/portage/savedconfig/sys-apps/busybox
+    purpose: "BusyBox 1.36.1 savedconfig (1219 lines): 222 symbols =y, 805 '# ... is not set', 273 non-comment lines; STATIC=y, STATIC_LIBGCC=y, EXTRA_CFLAGS='-Os -march=i486', LFS=y, CONFIG_PREFIX=./_install; busybox is used in the INITRAMFS only."
+    entries:
+      - {entry: "CONFIG_STATIC=y, CONFIG_STATIC_LIBGCC=y, FEATURE_LIBBUSYBOX_STATIC not set", why: "initramfs has no loader/libs", evidence: "savedconfig:43,47,57"}
+      - {entry: "CONFIG_FINDFS=y, CONFIG_MOUNT*=y (FEATURE_MOUNT_LABEL), SWITCH_ROOT=y, CAT=y, TR=y, GREP=y, FIND=y, ASH=y, MDEV=y, HTTPD=y + FEATURE_HTTPD_CGI=y, MODPROBE/INSMOD/DEPMOD/LSMOD=y, TRACEROUTE=y", why: "initramfs boot needs; HTTPD+CGI added in commit 0897866 (SP4 busybox httpd CGI)", evidence: "savedconfig grep; git log 0897866, c627319 ('give busybox find so the modalias coldplug works')"}
+      - {entry: "# CONFIG_DD is not set; XARGS not set", why: "rootfs/init therefore must read labels with cat|tr|grep, not dd (AGENTS.md: 'initramfs busybox lacks dd and findfs (stale binpkg)')", evidence: "savedconfig:240,482; rootfs/init:430-450"}
+    notes: "Gentoo's busybox ebuild drops modutils applets in favour of sys-apps/kmod regardless of savedconfig (build-initrd.sh:97-102), so CONFIG_MODPROBE=y etc. here are ineffective; the initramfs uses the static kmod instead. Header says generated 'Thu Mar 5 15:43:34 2026'. CONFIG_FINDFS=y in savedconfig vs AGENTS.md 'lacks findfs': the shipped binpkg was stale (savedconfig-cache.sh added to prevent recurrence)."
+  - id: cfg.initrd-modules.txt
+    path: configs/initrd-modules.txt
+    purpose: "Tier-1 module manifest (see kernel.initrd_modules)."
+    entries: []
+  - id: cfg.kernel.config
+    path: configs/kernel.config
+    purpose: "Machine-managed resolved kernel config, Linux/i386 6.12.80 (3600 lines, 921 '=y', 100 '=m'); overwritten by the kernel ebuild's copy-back on each source build; see kernel section."
+    entries: []
+  - id: cfg.overlay/metadata
+    path: configs/overlay/metadata/layout.conf ; configs/overlay/profiles/repo_name
+    purpose: "Overlay identity: repo_name 'monolith'; layout.conf masters=gentoo, thin-manifests=true. No priority set (xcb-proto ebuild claims priority 20) and no profiles/categories file (new categories e.g. x11-terms/x11-wm are tolerated since thin repo inherits ::gentoo categories)."
+    entries: []
+  - id: cfg.attestation-neighbours-not-in-scope
+    path: "configs/attestation/*, configs/bootbg.png, configs/themonolith.ans"
+    purpose: "Present under configs/ but belong to supplychain/oracle areas. configs/themonolith.ans is an EMPTY (0 byte) file; configs/bootbg.png is a 6920-line binary PNG (boot background). Not read."
+    entries: []
+
+kernel:
+  version: "Linux 6.12.80 (ARCH=i386), LOCALVERSION -i486-monolith (kernel.config:36), kernel.config header says built with 'i486-linux-musl-gcc Gentoo 14.4.9999 ... 14.3.1 20260401' and binutils 2.46 (24650)"
+  summary_numbers: "3600 lines; 921 =y; 100 =m"
+  tiers: >-
+    Tier 0 = built-in (=y) the 486 contract: reach a shell from install media with ZERO modules. Boot media (ATA, ATA_PIIX, BLK_DEV_SR, CDROM), filesystems (ISO9660, SQUASHFS, OVERLAY_FS, TMPFS, VFAT), early userland (BLK_DEV_INITRD, DEVTMPFS(+MOUNT)), console (SERIAL_8250(+CONSOLE), FB, FB_EFI, FB_VESA), platform (ACPI for S5 poweroff used by boot-test to terminate QEMU, EFI), module machinery (MODULES, MODULE_UNLOAD). Ceiling not floor: every =y costs the smallest machine RAM forever. Do NOT add drivers to Tier 0 to fix a specific machine unless boot MEDIA unreachable. NICs, mice, sound, USB HID, graphics accelerators go in Tier 2.
+    Tier 1 = initramfs modules ('reach the media'): list in configs/initrd-modules.txt, copied with dependency closure (modules.dep) into initramfs by build-initrd.sh; rootfs/init coldplugs by modalias before searching for rootfs.squashfs. Deliberately BROAD because a module that never loads costs a 486 nothing at steady state (initramfs RAM reclaimed after switch_root). Measured ~3 MB .ko uncompressed ~1.2 MB gzipped in cpio (~4 s extra on 2x CD). Budget: ~6 MB uncompressed requires human review for any PR that grows past it. Escape hatch (not built): two initrds, ISOLINUX lean + GRUB full. Firm line: NO firmware-blob drivers anywhere (breaks attestation chain) => WiFi deliberately excluded; covenant also asserted as 'CONFIG_EXTRA_FIRMWARE must not be set'.
+    Tier 2 = rootfs squashfs modules (=m): everything else; modules_install into sysroot -> build-rootfs.sh -> squashfs; rcS walks /sys modalias and modprobes matches (udev-less coldplug). Phase 1 moved E1000, 8139CP, 8139TOO, MOUSE_PS2 from =y to =m and added INPUT_EVDEV=m. Later additions: NIC zoo (SP1, PR #12), netfilter =m (SP2, PR #14), Hyper-V Gen2 synthetic drivers (PR #10), 27 legacy fbdev .ko (PR #60).
+    Proof model: boot-test asserts lsmod contains e1000 (smoke_nic_is_module) + eth0 DHCP lease; NIC-less negative test; four positive boot paths (AHCI, NVMe, USB, virtio); legacy fbdev via '--mode vga --vga-model cirrus' (cirrusfb). Per-controller proof deliberately NOT attempted in CI ('someone boots it on real hardware').
+    Watch-item: CONFIG_TRIM_UNUSED_KSYMS=y (kernel.config:704) can make a newly-modular driver fail 'Unknown symbol' because symbols referenced only by it were trimmed; suspect first if a Tier-2 module won't load.
+  tier0_confirmed_in_config:
+    - "M486=y, X86_32, HIGHMEM4G=y/HIGHMEM, SMP not set (NR_CPUS=1, X86_UP_APIC), PREEMPT_VOLUNTARY, HZ_250, CC_OPTIMIZE_FOR_SIZE=y, KERNEL_GZIP=y, RD_GZIP+RD_XZ, DEFAULT_HOSTNAME=monolith (kernel.config:36-54,167-179,262,282,332,368)"
+    - "EFI=y, EFI_STUB=y, EFI_HANDOVER_PROTOCOL=y, ACPI=y, PCI_GOANY (BIOS+DIRECT+MMCONFIG), ISA=y, ISAPNP=y, ISA_BUS (kernel.config:392-394,461,530-537,1178)"
+    - "ATA=y, ATA_SFF/BMDMA, ATA_PIIX=y, PATA_ALI/AMD/OLDPIIX/SIS/VIA/MPIIX=y, ATA_GENERIC=y, PATA_LEGACY=y (satisfies the Tier-0 audit item in kernel-tiers.md about VIA/SiS/ALi southbridges), BLK_DEV_SR=y, BLK_DEV_SD=y, SCSI=y, SCSI_VIRTIO=y, HYPERV_STORAGE=y"
+    - "FB=y, FB_VESA=y, FB_EFI=y, FB_SIMPLE=y, FRAMEBUFFER_CONSOLE=y (+LEGACY_ACCELERATION), VGA_CONSOLE=y, FONTS 8x8/8x16; DRM not set (only DRM_PANEL_ORIENTATION_QUIRKS=y)"
+    - "SERIAL_8250=y (+CONSOLE, PCI, 4 UARTs), VT_CONSOLE, VIRTIO=y (PCI, legacy), VIRTIO_CONSOLE=y, VIRTIO_INPUT=y"
+    - "ISO9660, SQUASHFS (ZLIB+XZ, DECOMP_SINGLE), OVERLAY_FS, VFAT, EFI_PARTITION"
+    - "USB=y core, USB_HID=y, HID_GENERIC; host controllers xhci/ehci/ohci/uhci and usb-storage/uas are =m (Tier 1)"
+    - "PPP=y (+BSDCOMP, DEFLATE, PPPOE, ASYNC, SYNC_TTY) built-in; INET, IP_ADVANCED_ROUTER, IP_PNP+DHCP; NETFILTER=y, NETFILTER_ADVANCED=y, NF_TABLES_IPV4=y built-in, with NF_CONNTRACK/NF_NAT/NF_TABLES/NFT_CT/NFT_NAT/NFT_MASQ/NF_DEFRAG_IPV4 =m; IPV6 not set; WIRELESS not set; SOUND not set; KVM not set; BPF_SYSCALL not set; SECURITY not set; MODULE_SIG not set; CPU_FREQ not set; PCCARD not set; I2C not set"
+    - "NET_9P=y, NET_9P_FD=y, NETFS_SUPPORT=y (present; purpose not documented in-tree - open question)"
+  forced_settings:
+    - {symbol: "CONFIG_FB_RADEON_I2C", value: "not set", why: "bool default y => forces FB_DDC=y (tristate raised by select to selecting symbol's value) => select I2C => CONFIG_I2C=y built into bzImage, with no error or warning. Cost: radeonfb loses DDC/EDID probing, falls back to built-in mode tables or explicit video= boot param.", evidence: "kernel.config:2148; docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md:133-164; AGENTS.md DDC trap; scripts/tests/verify-legacy-fbdev-config.sh want_off"}
+    - {symbol: "CONFIG_FB_3DFX_I2C", value: "not set", why: "same trap (default y bool)", evidence: "kernel.config:2162"}
+    - {symbol: "CONFIG_FB_CYBER2000_DDC", value: "not set", why: "same trap (default y bool)", evidence: "kernel.config:2127"}
+    - {symbol: "CONFIG_FB_NVIDIA_I2C", value: "not set", why: "already defaults n; written out so a future kernel flipping the default can't re-open the hole and so the verify script has something to assert", evidence: "kernel.config:2139"}
+    - {symbol: "CONFIG_FB_SAVAGE_I2C", value: "not set", why: "same as NVIDIA_I2C", evidence: "kernel.config:2155"}
+    - {symbol: "CONFIG_FB_MATROX_I2C", value: "m", why: "explicitly =m (tristate) so its select of FB_DDC is =m not =y, keeping I2C modular. Listed among 'must set explicitly' sub-options in spec.", evidence: "kernel.config:2146; spec lines 122"}
+    - {symbol: "CONFIG_FB_MATROX_MILLENIUM / _MYSTIQUE / _G", value: "y", why: "matroxfb builds an EMPTY .ko (no chip support) when these bool sub-options are at default n on x86", evidence: "kernel.config:2143-2145"}
+    - {symbol: "CONFIG_FB_ATY_CT / CONFIG_FB_ATY_GX", value: "y", why: "atyfb chip support bools default n", evidence: "kernel.config:2151-2152"}
+    - {symbol: "CONFIG_FB_SIS_300 / CONFIG_FB_SIS_315", value: "y", why: "sisfb chip support; FB_SIS already selects 300 if !315, both set so symbol list states intent", evidence: "kernel.config:2157-2158"}
+    - {symbol: "CONFIG_FB_GEODE", value: "y", why: "bool menu gate with no object file (obj-$(CONFIG_FB_GEODE)+=geode/ only enters the subdir) so adds nothing to bzImage; GEODE_LX/GX/GX1 stay =m", evidence: "kernel.config:2169-2172; kernel-tiers.md"}
+    - {symbol: "CONFIG_FB_TILEBLITTING", value: "y (implicit via select)", why: "the one deliberate bzImage growth of the legacy-fbdev change: tiny core helper selected by FB_S3/ARK/VT8623/MATROX, too small to modularize. kernel.config:2193 actually says '# CONFIG_FB_TILEBLITTING is not set' - contradicts docs; see contradictions.", evidence: "kernel-tiers.md; grep"}
+    - {symbol: "CONFIG_FB_ASILIANT, CONFIG_FB_IMSTT, FB_VIRTUAL, FB_ARC, FB_N411, FB_METRONOME, FB_IBM_GXT4500, FB_CARMINE, FB_MB862XX, FB_OPENCORES, FB_S1D13XXX, FB_UDL, FB_SMSCUFX", value: "not set", why: "ASILIANT and IMSTT are bool with depends on (FB = y) - no =m form exists, only a Tier-0 decision; the rest are scope-excluded. verify-legacy-fbdev-config.sh asserts these stay off.", evidence: "scripts/tests/verify-legacy-fbdev-config.sh want_excluded; kernel-tiers.md"}
+    - {symbol: "CONFIG_EXTRA_FIRMWARE", value: "must be unset", why: "covenant: never bake firmware blobs (attestation chain / opaque blobs)", evidence: "verify-nic-zoo-config.sh, verify-legacy-fbdev-config.sh"}
+    - {symbol: "CONFIG_I2C", value: "not set (committed file line 1928 '# CONFIG_I2C is not set')", why: "invariant: I2C must never be a built-in; checked against the RESOLVED post-olddefconfig config by scripts/verify-resolved-i2c-off.sh (hard CI assertion; DCX-99). verify-legacy-fbdev-config.sh comment claims kernel.config has NO CONFIG_I2C line at all - false, see contradictions.", evidence: "kernel.config:1926-1929; verify-legacy-fbdev-config.sh:43-48"}
+    - {symbol: "CONFIG_NF_CONNTRACK, NF_NAT, NF_TABLES, NFT_CT, NFT_NAT, NFT_MASQ, NF_DEFRAG_IPV4 = m; NETFILTER, NETFILTER_ADVANCED, NF_TABLES_IPV4 = y", value: "as stated", why: "SP2: NAT router (monolith-router) via nftables with modular netfilter", evidence: "kernel.config:911-920; verify-netfilter-config.sh"}
+    - {symbol: "NIC zoo =m: NE2000 WD80x3 ULTRA EL3 LANCE NE2K_PCI PCNET32 TULIP 8139TOO 8139CP E100 VIA_RHINE NATSEMI SIS900 E1000 E1000E IGB R8169 SKY2 VIRTIO_NET VMXNET3 HYPERV_NET; vendor gates NET_VENDOR_{8390,AMD,3COM,INTEL,REALTEK,NATSEMI,SIS,VIA,MARVELL}=y", value: "m / y", why: "SP1 NIC zoo (Tier 2); gates must be =y or the =m symbols vanish on olddefconfig", evidence: "verify-nic-zoo-config.sh; kernel.config:1488-1610"}
+    - {symbol: "Hyper-V Gen2: FB_HYPERV=m, HID_HYPERV_MOUSE=m, HYPERV_NET=m, HYPERV_BALLOON=m (plus HYPERV=y, HYPERV_TIMER=y, HYPERV_STORAGE=y, HYPERV_KEYBOARD=y, HYPERV_IOMMU=y)", value: "m", why: "frozen-console fix on Hyper-V Gen2 (hyperv_fb); on QEMU no VMBus devices so they never load; needs real-hardware validation", evidence: "commit ab8705c; kernel.config:1324,1731,1822,2179,2308,2518-2520,2592"}
+    - {symbol: "CONFIG_INPUT_EVDEV m; MOUSE_PS2 m", value: "m", why: "Phase 1 modularization (Tier 2)", evidence: "kernel.config:1752; kernel-tiers.md"}
+  initrd_modules:
+    source: "configs/initrd-modules.txt (61 lines; header says one module per line, '-' and '_' interchangeable, copied with dependency closure resolved from modules.dep by build-initrd.sh, coldplugged by modalias in rootfs/init before searching for rootfs.squashfs; host controllers/libata/scsi_mod are Tier-0 and deliberately absent)"
+    modules_by_group:
+      ahci_and_pre_ahci_sata: [ahci, sata_sil, sata_via, sata_nv, sata_promise]
+      nvme: [nvme]
+      usb_host_and_storage: [xhci-pci, ehci-pci, ohci-pci, uhci-hcd, usb-storage, uas]
+      virtio: [virtio_blk, virtio_scsi]
+      mmc_sd: [sdhci, sdhci-pci, mmc_block]
+      sas_raid: [mptspi, mptsas, mpt3sas, megaraid_sas]
+      pata_addin_cards: [pata_cmd64x, pata_hpt366, pata_hpt37x, pata_artop, pata_serverworks, pata_sil680, pata_it821x, pata_jmicron]
+      firewire: [firewire-ohci, firewire-sbp2]
+    count: 31
+    drift_vs_doc: "kernel-tiers.md manifest table lists sdhci_acpi and generic 'sbp2'; file has neither sdhci_acpi nor sbp2 (has firewire-sbp2). Also doc lists no pata_* add-in cards but file has 8. Config/file are the fact."
+    tier1_config_tail: "kernel.config:3592-3600 carries a trailing block of NVME_CORE=m, VIRTIO_SCSI=m, MMC_BLOCK=m, MMC_SDHCI=m, MMC_SDHCI_PCI=m, FIREWIRE_OHCI=m, FIREWIRE_SBP2=m appended after the normal section ordering - evidence of hand-appended symbols that olddefconfig did not reorder (the file is NOT purely olddefconfig output)."
+
+rootfs_files:
+  - {file: monolith-net, installs_to: /usr/bin/monolith-net, purpose: "POSIX sh; bring up pre-PnP ISA NICs (3c509 self-ids; ne/wd/lance need io=); subcommands status/probe; MONOLITH_NET_SYSCLASS override; unit test scripts/tests/monolith-net.test.sh"}
+  - {file: which, installs_to: /usr/bin/which, purpose: "POSIX-sh which (-a); GNU which fails on musl, busybox not in rootfs"}
+  - {file: startx, installs_to: /usr/bin/startx, purpose: "kills gpm, requires /dev/fb0, starts Xfbdev :0 -fb /dev/fb0 -fp /usr/share/fonts/monolith,/usr/share/fonts/terminus,built-ins, waits up to ~10s for X0 socket, runs dwm then one st; font-path order is the alias tiebreaker (monolith alias first reclaims fixed/variable for Terminus; built-ins LAST only for cursor font); build-rootfs.sh verifies each aliased XLFD exists in terminus fonts.dir"}
+  - {file: monolith, installs_to: /usr/bin/monolith, purpose: "front-door command: help / help <topic> / tools, reads topic texts from MONOLITH_SHARE (default /usr/share/monolith); unit test monolith.test.sh"}
+  - {file: monolith-router, installs_to: /usr/sbin/monolith-router, purpose: "one-command IPv4 NAT router: ip_forward + nftables table monolith_router masquerade/forward; up/down/status, optional --dhcp via dnsmasq (default LAN 192.168.99.1/24, domain home.arpa); env MONOLITH_LAN_CIDR, MONOLITH_NET_SYSCLASS, MONOLITH_IP_FORWARD, MONOLITH_RUN_DIR; test monolith-router.test.sh (link-local flake fixed per AGENTS.md)"}
+  - {file: monolith-console, installs_to: /usr/sbin/monolith-console, purpose: "#!/bin/dash lazy autologin stub run by agetty -n -l on tty1, tty2, ttyS0; blocks on read until Enter then execs interactive bash; sets HOME=/root USER=root LOGNAME=root because agetty -n skips login(1); boot-test wait_for_shell sends newline to wake it"}
+  - {file: monolith-advisory-check, installs_to: /usr/sbin/monolith-advisory-check, purpose: "run from /etc/init.d/S50advisory after network; fetches revocation status for BUILD_TAG in /etc/monolith-release from ADVISORY_BASE_URL (default https://themonolith.s3.amazonaws.com - DEAD: AWS S3 account disabled) and writes /run/monolith-advisory; POSIX sh, silent on failure"}
+  - {file: monolith-time, installs_to: /usr/sbin/monolith-time, purpose: "set clock from plain-HTTP Date header (not https: dead RTC at epoch makes openssl reject all certs); URL from arg or MONOLITH_TIME_URL; never judges plausibility"}
+  - {file: monolith-time-check, installs_to: /usr/sbin/monolith-time-check, purpose: "gate run from /etc/init.d/S45monolith-time (after S40network, before S50advisory); acts only on demonstrated ignorance: SENTINELS='0 315532800 946684800' (1970, 1980, 2000); writes /run/monolith-clock-ignorant when it cannot fix; test monolith-time-check.test.sh"}
+  - {file: monolith-persist, installs_to: /usr/sbin/monolith-persist, purpose: "manual tool: 'init <dev> [--swap N] [--yes]' mkfs.ext4 -L MONOLITH_PERSIST with one confirmation naming the device; optional swapfile at /overlay/swapfile; nothing runs it automatically; test monolith-persist.test.sh"}
+  - {file: guestbook.cgi, installs_to: /usr/lib/cgi-bin/guestbook.cgi, purpose: "perl+CGI.pm guestbook fixture shelling out to sqlite3 CLI (INSERT then SELECT round trip); GUESTBOOK_DB default /tmp/guestbook.db; boot-test smoke_guestbook; LAMP-invariant proof"}
+  - {file: topics/*.txt (dev gui games network persist tools verify web = 8 files)", installs_to: /usr/share/monolith/<topic>.txt, purpose: "curated text for 'monolith help <topic>' / 'monolith tools'; plain text never generated"}
+  - {file: 20-persist.sh, installs_to: /etc/profile.d/20-persist.sh, purpose: "STATUS-group login line 'persist: mounted (N MB free)' / 'persist: none ...'; prints every login by design; POSIX guarded; test monolith-persist-profile.test.sh"}
+  - {file: 30-clock-hint.sh, installs_to: /etc/profile.d/30-clock-hint.sh, purpose: "STATUS-group; prints only while /run/monolith-clock-ignorant exists; interactive-only; single stat"}
+  - {file: 40-advisory.sh, installs_to: /etc/profile.d/40-advisory.sh, purpose: "ACTIONABLE-group; prints security warning while /run/monolith-advisory exists, reads /etc/monolith-release"}
+  - {file: 50-persist-history.bash, installs_to: /etc/bash/bashrc.d/50-persist-history.bash, purpose: "incremental history append / persisted HISTFILE wiring in bashrc.d so stock bashrc cannot clobber PROMPT_COMMAND; test monolith-persist-bashrc.test.sh"}
+  - {file: 60-monolith-cnf.bash, installs_to: /etc/bash/bashrc.d/60-monolith-cnf.bash, purpose: "command_not_found_handle: \"<cmd>: not on the disc. 'monolith tools' lists what is.\" return 127; test monolith-cnf.test.sh"}
+  - {file: 99-monolith-square.bash, installs_to: /etc/bash/bashrc.d/99-monolith-square.bash, purpose: "prepends dark-grey square to PS1 if not already present (runs last after 10-gentoo-color.bash sets PS1)"}
+  - {file: "NOT in this dir but referenced: 50-dropbear-hint.sh, /etc/init.d/S40network, S45monolith-time, S50advisory, /etc/inittab, /etc/profile, /etc/monolith-release, rcS, rootfs/init", installs_to: "generated by scripts/build-rootfs.sh / rootfs/ skeleton", purpose: "owned by the factory area; ownership/attestation via configs/attestation/unowned-allowlist.yaml"}
+
+contradictions:
+  - {claim: "docs/kernel-tiers.md: CONFIG_FB_TILEBLITTING=y is the one deliberate bzImage growth of the legacy fbdev change", where: "docs/kernel-tiers.md", fact: "configs/kernel.config:2193 '# CONFIG_FB_TILEBLITTING is not set'", evidence: "configs/kernel.config:2193"}
+  - {claim: "scripts/tests/verify-legacy-fbdev-config.sh:43-48 says configs/kernel.config has no CONFIG_I2C line at all", where: "scripts/tests/verify-legacy-fbdev-config.sh", fact: "kernel.config:1928 contains '# CONFIG_I2C is not set'", evidence: "configs/kernel.config:1926-1929"}
+  - {claim: "kernel.config is the olddefconfig-resolved config", where: "docs/kernel-tiers.md callout; ebuild:76-82", fact: "committed file has FB_MATROX_I2C=m (selects FB_DDC) yet no FB_DDC line and '# CONFIG_I2C is not set'; a true olddefconfig result would have FB_DDC=m and I2C=m. Also tail block at 3592-3600 is out of section order. So the committed file is NOT a faithful resolved config. This is exactly the staleness DCX-99 targets; build-packages.sh now re-derives it from the shipped resolved-kernel.config.gz each run.", evidence: "kernel.config:2146, 1926-1929, 3592-3600"}
+  - {claim: "crossdev.lock pins cross gcc 15.3.1_p20260717", where: "configs/portage/crossdev.lock:10", fact: "kernel.config header records CONFIG_CC_VERSION_TEXT gcc 14.3.1 20260401 (Gentoo 14.4.9999), i.e. last regenerated under a GCC 14 toolchain; and the kernel patch comment says GCC 15 is the target", evidence: "kernel.config:5-7"}
+  - {claim: "AGENTS.md 'initramfs busybox lacks dd and findfs'", where: "AGENTS.md", fact: "savedconfig has CONFIG_FINDFS=y (only DD is unset); the lack was a stale shipped binpkg for findfs (rootfs/init:447-450). scripts/savedconfig-cache.sh addresses the staleness", evidence: "configs/portage/savedconfig/sys-apps/busybox:240; rootfs/init:430-450"}
+  - {claim: "kernel-tiers.md Tier-1 manifest table", where: "docs/kernel-tiers.md", fact: "table lists sdhci_acpi and 'sbp2'; configs/initrd-modules.txt has no sdhci_acpi and names firewire-ohci/firewire-sbp2; file also has eight pata_* add-in card modules not in the doc table", evidence: "configs/initrd-modules.txt:13-61"}
+  - {claim: "kernel-tiers.md says legacy fbdev set is 'Twenty-seven .ko' from 24 symbols", where: "docs/kernel-tiers.md", fact: "table lists 27 rows incl. FB_GEODE_LX/GX/GX1, i.e. 27 =m symbols in the table but the git message says 24 symbols + FB_GEODE gate; counting detail varies. kernel.config has 27 FB_* =m excluding FB_HYPERV (FB_HYPERV=m is separate)", evidence: "docs/kernel-tiers.md fbdev table vs a53272f message"}
+  - {claim: "versions.lock pins every world package (enrich-sbom.py:854 comment 'pins every world package's exact version')", where: "scripts/enrich-sbom.py:854", fact: "23 world atoms have no versions.lock line (listed in cfg.portage/versions.lock coverage_gap)", evidence: "configs/portage/versions.lock vs configs/portage/world"}
+  - {claim: "versions.lock:95 references monolith-perl-5.42.0-r2.ebuild", where: "configs/portage/versions.lock:95", fact: "only monolith-perl-5.42.0-r5.ebuild exists", evidence: "configs/overlay/dev-lang/monolith-perl/"}
+  - {claim: "package.use/static terminus-font leading comment (lines 292-302 region): psf only, -pcf-unicode dropped, 'X server carries builtin fixed font so terminus adds nothing there'", where: "configs/portage/package.use/static (terminus block)", fact: "actual flags are +pcf +pcf-unicode +psf; world comment says PCF added for default X font. Comment stale", evidence: "package.use/static terminus-font lines; world:223-232"}
+  - {claim: "package.use/static mutt block opening comment: 'drop smtp+sasl'", where: "configs/portage/package.use/static (mutt block)", fact: "atom line enables smtp sasl gsasl", evidence: "same block"}
+  - {claim: "package.use/static 'app-misc/gpm static'", where: "package.use/static", fact: "world package is sys-libs/gpm (versions.lock:80 too); entry never matches", evidence: "world:245"}
+  - {claim: "gdb-lowmem.conf says global MAKEOPTS=-j2", where: "configs/portage/env/gdb-lowmem.conf:2-3", fact: "make.conf MAKEOPTS=-j${JOBS}; actual value depends on JOBS env var", evidence: "make.conf:53"}
+  - {claim: "xcb-proto ebuild says overlay has priority 20 > ::gentoo", where: "configs/overlay/x11-base/xcb-proto/xcb-proto-1.17.0.ebuild", fact: "configs/overlay/metadata/layout.conf has no priority; priority must be set by the builder's repos.conf (not found within the recipes scope)", evidence: "configs/overlay/metadata/layout.conf:1-2"}
+  - {claim: "AGENTS.md says Rust 'rustup nightly + build-std + 6 link fixes' for rl144 and stele", where: "AGENTS.md", fact: "The two ebuilds diverge: rl144 uses -Clink-self-contained=no and a repo-external target JSON in FILESDIR with --no-default-features --features backend-term; stele uses an in-repo targets/*.json (self-contained already off in the spec) and default features", evidence: "rl144 ebuild:92-100 vs stele ebuild:70-79"}
+  - {claim: "world comment says sqlite libsqlite3.a is kept for a future DBD retry", where: "configs/portage/world:235-242", fact: "no package consumes it; costs build time/size nothing on disc beyond .a files and the CLI", evidence: "same"}
+
+open_questions:
+  - "Where does the builder install configs/portage/profile/package.provided (as /etc/portage/profile/package.provided?), env/, package.env, package.mask, bashrc, savedconfig, and how is package.mask mirrored host-side (needed for the docutils/eigen masks to bite)? Lives in Dockerfile/scripts - ask the build area."
+  - "Is libiconv.a provided in the sysroot (app-arch/tar libiconv.conf --whole-archive,-liconv)? By which package? Not visible in configs."
+  - "FB_TILEBLITTING: docs say =y via select from FB_S3/ARK/VT8623/MATROX; committed kernel.config:2193 says '# CONFIG_FB_TILEBLITTING is not set' with FB_S3/FB_ARK/FB_VT8623/FB_MATROX =m. Which is true in the resolved config (Kconfig select from =m symbols would give =m or y)? Check resolved-kernel.config.gz."
+  - "NET_9P/NET_9P_FD/NETFS_SUPPORT are =y in kernel.config; purpose undocumented (likely QEMU 9p debugging). Intentional Tier-0 growth?"
+  - "Which package supplies host python3 (bashrc gpm and nethack hooks), host makewhatis (mandoc hook), 32-bit host gcc (-m32 for CFLAGS_FOR_BUILD), rustup at /opt/rustup + /opt/cargo, cross EXTRA_ECONF for gcc? All Dockerfile concerns; recipes depend on them."
+  - "monolith-perl -r3, -r4, -r5 revbump rationale not documented in-tree (only r1, r2 are described in versions.lock comments). git log -S on the ebuild would tell."
+  - "sys-apps/busybox savedconfig: CONFIG_MODPROBE etc. are =y but ineffective (Gentoo drops modutils for kmod). Is that dead config to keep or prune?"
+  - "env/no-static-ldflags.conf is unreferenced: confirm dead and drop."
+  - ".batteries/reports/*.md referenced by comments (nethack, gdb, mtr, ethtool) - not verified to exist in repo."
+  - "monolith-st/monolith-dwm/monolith-sqlite/xcb-proto are not in versions.lock; is that intentional (version-labelled, revbumped by -rN) or an oversight? binpkg-store prune says versions.lock pins are never deleted, so unlocked overlay packages can be pruned like any other."
+  - "rl144/stele Cargo network access: deterministic only because of committed Cargo.lock + nightly rust-src Cargo.lock; rebuild may want to vendor crates (ebuild comments flag it as future hardening)."

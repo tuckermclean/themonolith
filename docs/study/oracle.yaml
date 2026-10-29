@@ -1,0 +1,577 @@
+area: oracle
+common:
+  # Facts shared by every boot mode (scripts/boot-test.py)
+  milestones_serial_strings:
+    init_start: '"[init] Starting init..." (boot-test.py:135)'
+    overlay_ready: '"[init] Overlay root ready" (:136)'
+    toram_ejectable: '"[init] Boot media can now be ejected" (:137)'
+    exec_init: '"[init] Executing /sbin/init..." (:138)'
+    rcs_start: '"Starting system initialization..." (:139)'
+    rcs_complete: '"System initialization complete." (:140)'
+  common_boot_sequence: >
+    select bootloader entry -> expect the 5 milestones in order (each timeout = --boot-timeout, default 300s,
+    :151) -> wait_for_shell (send "", then loop sendline "echo MONOLITH_SHELL_READY_<hex>" expect_exact 3s per try,
+    60s total, :810-841) -> per-mode checks via run_check (command + "; echo MONOLITH_CHECK_<hex>:$?" sentinel,
+    30s default, :844-880) -> report_results -> poweroff_and_wait (sendline poweroff, expect EOF 90s; fallback
+    "poweroff -f" another 90s; :1392-1409).
+  bootloader_nav:
+    isolinux: 'select_isolinux_label (:732): expect_exact "boot:" up to 90s; on timeout WARN and send label blindly. Label text after the label name is appended to that label APPEND line by SYSLINUX (used for "serial toram", "serial vga=788", "serial persist"). Visible on serial only via SeaBIOS -nographic VGA-text mirroring (isolinux.cfg has no SERIAL directive; scripts/build-iso.sh grep for SERIAL = none).'
+    grub: 'select_grub_serial_entry (:753): expect_exact "(serial)" up to 180s (blind fallback if not seen), sleep .5, send 2x Down (GRUB_SERIAL_ENTRY_DOWN_PRESSES=2, :149), sleep .5, send CR. Relies on grub.cfg mirroring menu to serial and on menu order plain,framebuffer,serial,... (scripts/build-iso.sh:305-344).'
+  tier_note: >
+    Every bootmode is tier=slow: needs the built ISO (themonolith-<BUILD_VERSION>.iso) plus qemu-system-x86 +
+    pexpect (+ ovmf for UEFI modes). Nothing can run without a built ISO.
+bootmodes:
+  - id: bootmode.bios
+    runner: run_bios (scripts/boot-test.py:1602); builder build_bios_cmd (:191)
+    boots: ISO as -cdrom, BIOS/SeaBIOS + ISOLINUX label "serial". No firmware file needed.
+    qemu: >
+      qemu-system-i386 -cdrom ISO -m <ram> -cpu 486 -boot d -nographic -serial mon:stdio -no-reboot
+      (:193-202); machine = QEMU default pc/i440fx, default NIC (e1000) and default VGA; -rtc base=... only if
+      --rtc-date given (:209). Default RAM 64 (:2344); CI matrix overrides to 64 and 256.
+    asserts:
+      -
+        what: "5 boot milestones reached"
+        how: "expect_exact on serial"
+        timeout_s: "300 each"
+        evidence: "boot-test.py:1604-1608"
+      -
+        what: "interactive shell"
+        how: "marker echo loop"
+        timeout_s: "60"
+        evidence: ":1609"
+      -
+        what: "run_full_smoke_suite (17 checks, see harness.full_smoke_suite)"
+        how: "guest commands via run_check"
+        timeout_s: "30 each (60 for monolith-net probe)"
+        evidence: ":1338-1354,1610"
+      -
+        what: "poweroff terminates QEMU"
+        how: "expect EOF"
+        timeout_s: "90 (+90 fallback)"
+        evidence: ":1612"
+    flake_handling: 'Global launch-flake retry only (harness.retry): up to 3 launches if guest never reached /init. No per-check retries.'
+    ci: 'job.boot-test.bios (.github/workflows/boot-test.yml:58), matrix ram_mb [64,256] (:64), --mode bios --ram-mb <m> (:89-94). tier: slow'
+    proves: The ISO boots via BIOS/ISOLINUX on an emulated i486 with 64 MB RAM to a usable shell with modular e1000 NIC, DHCP, curl, sqlite, perl+CGI, guestbook CGI, overlay root, man, monolith front door.
+  - id: bootmode.uefi
+    runner: run_uefi (:1616); builder build_uefi_cmd (:214)
+    boots: ISO as -cdrom, UEFI via OVMF_CODE.fd + GRUB serial entry (index 2). Firmware = OVMF_CODE.fd auto-detected from 4 candidate paths (:153-158) or --ovmf-code.
+    qemu: >
+      qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=<OVMF_CODE> -cdrom ISO -m <ram> -boot d
+      -nographic -serial mon:stdio -no-reboot (:223-232). No -cpu, no -machine (default pc), default e1000 NIC.
+      Default RAM 512 (:2345). No OVMF_VARS file is supplied (read-only code image only).
+    asserts:
+      -
+        what: "5 milestones + shell + full smoke suite (same as bios)"
+        how: "serial + guest commands"
+        timeout_s: "300/60/30"
+        evidence: ":1617-1627"
+    flake_handling: Global launch-flake retry. GRUB menu wait has a blind-navigation fallback after 180s (:772-773).
+    ci: 'job.boot-test.uefi (boot-test.yml:105), --mode uefi, no --ram-mb (default 512). tier: slow'
+    proves: The same ISO boots via UEFI 64-bit GRUB (BOOTX64.EFI, serial entry) under OVMF to the same working userland as BIOS.
+  - id: bootmode.toram
+    runner: run_toram (:1630); builder = build_bios_cmd (MODE_BUILDERS :2306)
+    boots: ISO -cdrom, BIOS/ISOLINUX, label typed as "serial toram" (:1631).
+    qemu: Identical argv to bios (:193-202). Default RAM 512 (:2346; comment "128M OOMs"). CI passes no --ram-mb. Also --cdrom-monitor-id default "ide1-cd0" (:2388).
+    asserts:
+      -
+        what: "toram milestone \"[init] Boot media can now be ejected\" appears between init-start and overlay-ready"
+        how: "expect_exact"
+        timeout_s: "300"
+        evidence: ":1633-1636"
+      -
+        what: "reduced smoke suite (uname -r contains expected kernel, e1000 module loaded, eth0 UP, overlay mounted)"
+        how: "guest cmds"
+        evidence: ":1357-1363,1643"
+      -
+        what: "system survives CD eject"
+        how: "send Ctrl-A c to switch to QEMU monitor, expect \"(qemu)\", \"eject -f ide1-cd0\", back, then \"uname -r\" exit 0"
+        timeout_s: "30 each step"
+        evidence: ":1412-1435,1646"
+    flake_handling: Global launch-flake retry only. Eject uses expect_exact "(qemu)" with 30s timeouts; an exception here is pexpect.TIMEOUT which is a pexpect.ExceptionPexpect -> caught in _run_once as FAIL (not retried because init was reached).
+    ci: 'job.boot-test.toram-eject (boot-test.yml:147), --mode toram. tier: slow'
+    proves: The toram kernel parameter copies the squashfs to RAM and the boot media can be ejected while the system keeps running.
+  - id: bootmode.ahci
+    runner: run_ahci (:1682) -> run_uefi_driver_variant (:1654); builder build_ahci_cmd (:247)
+    boots: ISO (isohybrid) as an AHCI CD-ROM behind ich9-ahci on q35, UEFI/OVMF + GRUB serial entry.
+    qemu: >
+      qemu-system-x86_64 -machine q35 -drive if=pflash,...OVMF_CODE -device ich9-ahci,id=ahci
+      -drive id=cd,if=none,media=cdrom,file=ISO -device ide-cd,bus=ahci.0,drive=cd -boot d -m <ram> -nographic
+      -serial mon:stdio -no-reboot (:258-270). Default RAM 512; CI passes --ram-mb 512. q35 default NIC is e1000e
+      which the kernel lacks (comment :1368-1371) so no networking assertions.
+    asserts:
+      -
+        what: "\"ahci\" module in lsmod (regex ^ahci\\b multiline)"
+        how: "lsmod"
+        timeout_s: "30"
+        evidence: ":1140-1153,1685"
+      -
+        what: "storage smoke suite = uname -r contains expected kernel + overlay mounted"
+        how: "guest cmds"
+        evidence: ":1366-1375"
+    flake_handling: Global launch-flake retry.
+    ci: 'job.boot-test.ahci (boot-test.yml:201), --mode ahci --ram-mb 512. tier: slow'
+    proves: CONFIG_SATA_AHCI=m is coldplug-loaded from the initrd by modalias so the ISO can be found/mounted on SATA hardware.
+  - id: bootmode.nvme
+    runner: run_nvme (:1689) -> run_uefi_driver_variant; builder build_nvme_cmd (:274)
+    boots: ISO as raw NVMe namespace (hybrid MBR/GPT), UEFI/OVMF + GRUB.
+    qemu: >
+      qemu-system-x86_64 -drive if=pflash,...OVMF_CODE -drive id=nvm,if=none,format=raw,file=ISO
+      -device nvme,serial=cafe1234,drive=nvm -boot c -m <ram> -nographic -serial mon:stdio -no-reboot (:284-294).
+      RAM 512 default and in CI. Default pc machine, default e1000 NIC.
+    asserts:
+      -
+        what: "\"nvme\" module loaded"
+        how: "lsmod regex ^nvme\\b"
+        evidence: ":1156-1167,1692"
+      -
+        what: "uname -r + overlay mounted"
+        how: "storage smoke suite"
+        evidence: ":1366-1375"
+    flake_handling: Global launch-flake retry.
+    ci: 'job.boot-test.nvme (boot-test.yml:244), --mode nvme --ram-mb 512. tier: slow'
+    proves: CONFIG_BLK_DEV_NVME=m is coldplug-loaded; the isohybrid ISO is bootable as an NVMe disk.
+  - id: bootmode.usb
+    runner: run_usb (:1696) -> run_uefi_driver_variant; builder build_usb_cmd (:298)
+    boots: ISO as USB mass storage behind qemu-xhci, UEFI/OVMF + GRUB.
+    qemu: >
+      qemu-system-x86_64 -drive if=pflash,...OVMF_CODE -device qemu-xhci,id=xhci
+      -drive id=usbdisk,if=none,format=raw,file=ISO -device usb-storage,bus=xhci.0,drive=usbdisk -boot c
+      -m <ram> -nographic -serial mon:stdio -no-reboot (:308-319). RAM 512.
+    asserts:
+      -
+        what: "xhci_hcd loaded"
+        how: "lsmod regex ^xhci_hcd\\b"
+        evidence: ":1170-1181,1703"
+      -
+        what: "usb_storage loaded"
+        how: "lsmod regex ^usb_storage\\b"
+        evidence: ":1184-1195,1704"
+      -
+        what: "uname -r + overlay mounted"
+        how: "storage smoke suite"
+    flake_handling: Global launch-flake retry.
+    ci: 'job.boot-test.usb (boot-test.yml:287), --mode usb --ram-mb 512. tier: slow'
+    proves: The modular USB host-controller chain (xhci_hcd then usb_storage) boots the hybrid ISO as a USB stick under UEFI.
+  - id: bootmode.virtio
+    runner: run_virtio (:1709) -> run_uefi_driver_variant; builder build_virtio_cmd (:323)
+    boots: ISO as virtio-blk-pci disk, UEFI/OVMF + GRUB.
+    qemu: >
+      qemu-system-x86_64 -drive if=pflash,...OVMF_CODE -drive id=vblk,if=none,format=raw,file=ISO
+      -device virtio-blk-pci,drive=vblk -boot c -m <ram> -nographic -serial mon:stdio -no-reboot (:332-342). RAM 512.
+    asserts:
+      -
+        what: "virtio_blk loaded"
+        how: "lsmod regex ^virtio_blk\\b"
+        evidence: ":1198-1208,1712"
+      -
+        what: "uname -r + overlay mounted"
+        how: "storage smoke suite"
+    flake_handling: Global launch-flake retry.
+    ci: 'job.boot-test.virtio (boot-test.yml:330), --mode virtio --ram-mb 512. tier: slow'
+    proves: CONFIG_VIRTIO_BLK=m is coldplug-loaded so the ISO boots as a paravirtual cloud-style disk.
+  - id: bootmode.nicless
+    runner: run_nicless (:1716); builder build_nicless_cmd (:346)
+    boots: ISO -cdrom, BIOS/ISOLINUX "serial".
+    qemu: >
+      qemu-system-i386 -cdrom ISO -m <ram> -cpu 486 -boot d -nic none -nographic -serial mon:stdio -no-reboot
+      (:357-368). RAM 64 (default and CI --ram-mb 64).
+    asserts:
+      -
+        what: "e1000 NOT in lsmod"
+        how: "regex_absent ^e1000\\b"
+        evidence: ":1211-1225,1733"
+      -
+        what: "uname -r + overlay mounted"
+        evidence: ":1734-1735"
+    flake_handling: Global launch-flake retry.
+    ci: 'job.boot-test.nicless (boot-test.yml:373), --mode nicless --ram-mb 64. tier: slow'
+    proves: Negative control - modalias coldplug loads drivers only for present hardware, not unconditionally.
+  - id: bootmode.nic
+    runner: run_nic (:1895); builder build_nic_cmd (:419) = build_bios_cmd + NIC args
+    boots: ISO -cdrom, BIOS/ISOLINUX "serial". Needs --nic-model (pcnet|rtl8139|tulip|ne2k_pci|ne2k_isa), else BootTestError (:423).
+    qemu: >
+      build_bios_cmd argv (-cpu 486 -cdrom ... -nographic) + "-net nic,model=<m> -net user" (:426). Legacy -net form
+      replaces the default e1000 so exactly one card of the model exists. RAM default 256 (:2352), CI passes none.
+    asserts:
+      -
+        what: "\"PCI models: driver module resident (pcnet32 | 8139too/8139cp | tulip | ne2k_pci)"
+        how: "lsmod regex from NIC_MODEL_MODULE (:1231-1236)\""
+        evidence: ":1911"
+      -
+        what: "ne2k_isa: (1) ne NOT loaded by coldplug, (2) `monolith-net probe` output contains 'found' (60s), (3) ne resident after"
+        evidence: ":1321-1335,1909"
+      -
+        what: "uname -r + overlay mounted"
+        evidence: ":1912-1913"
+    flake_handling: Global launch-flake retry per invocation. CI runs the 5 models sequentially in ONE job in a shell loop; failures are collected (FAILED var) and job fails after all models run (boot-test.yml:563-583).
+    ci: 'job.boot-test.nic-models (boot-test.yml:538); loop over pcnet rtl8139 tulip ne2k_pci ne2k_isa, logs output/boot-test-nic-<m>.log. tier: slow'
+    proves: Representative legacy/PCI NIC drivers coldplug by modalias, and the ISA NE2000 (no modalias) is found by the monolith-net probe sweep.
+  - id: bootmode.vga
+    runner: run_vga (:1920); builder build_vga_cmd (:430) = build_bios_cmd + "-vga <model>"
+    boots: 'ISO -cdrom, BIOS/ISOLINUX, label "serial vga=788". Needs --vga-model (only choice: cirrus, VGA_MODEL_MODULE :1252).'
+    qemu: build_bios_cmd argv + "-vga cirrus" (:443). RAM 64.
+    asserts:
+      -
+        what: "cirrusfb resident in lsmod (module residency, not fb0 ownership)"
+        how: "regex ^cirrusfb\\b"
+        evidence: ":1304-1319,1943"
+      -
+        what: "uname -r + overlay mounted"
+        evidence: ":1944-1945"
+    flake_handling: Global launch-flake retry. CI shell loop identical in shape to nic-models.
+    ci: 'job.boot-test.vga-models (boot-test.yml:602), loop for m in cirrus (:632). tier: slow'
+    proves: Legacy fbdev Tier-2 drivers coldplug by PCI modalias for a graphics device (one positive sample of 27 modules).
+  - id: bootmode.fbdev-modprobe
+    runner: run_fbdev_modprobe (:1952); builder = build_bios_cmd (MODE_BUILDERS :2314); boot helper _boot_isolinux_to_shell (:2019)
+    boots: ISO -cdrom, BIOS/ISOLINUX "serial". Default VGA (QEMU std).
+    qemu: Identical to bios argv. RAM 64 default, CI passes none.
+    asserts:
+      -
+        what: "uname -r"
+        evidence: ":1970"
+      -
+        what: "each of tdfxfb sm712fb matroxfb_base s3fb lxfb: `modprobe <m>` output has no /Oops|Kernel panic|BUG:/ (any exit code OK)"
+        evidence: ":1265,1268-1284,1975-1979"
+      -
+        what: "/proc/sys/kernel/tainted == \"0\" exactly"
+        evidence: ":1981-1984"
+      -
+        what: "dmesg lines added since baseline (tail -n +N in guest) contain no Oops|BUG:|WARNING:"
+        evidence: ":1998-2012"
+    flake_handling: _boot_isolinux_to_shell adds a throwaway "serial warmup" `true` command to absorb a known serial-read race that loses the first command's output (:2030-2035). vga16fb deliberately excluded because it coldplugs unconditionally on -vga std (:1256-1264).
+    ci: 'job.boot-test.fbdev-modprobe (boot-test.yml:666), --mode fbdev-modprobe. tier: slow'
+    proves: Hand-loading legacy fbdev modules with no matching hardware does not oops, taint, or warn the kernel.
+  - id: bootmode.nat
+    runner: run_nat (:2038); builders build_nat_router_cmd (:639) and build_nat_client_cmd (:656)
+    boots: Two concurrent guests from the SAME ISO, both BIOS/ISOLINUX "serial" (via _boot_isolinux_to_shell). Router is the pexpect child from main(); client spawned inside run_nat. Needs a HOST fixture http.server on 0.0.0.0:8000 serving probe.txt containing NAT_OK_marker (started by the CI job, NOT by boot-test.py).
+    qemu: >
+      Router: qemu-system-i386 -cdrom ISO -m 256 -cpu 486 -boot d -nographic -serial mon:stdio -no-reboot -nic none
+      -netdev user,id=wan -device e1000,netdev=wan -netdev socket,id=lan,udp=127.0.0.1:12421,localaddr=127.0.0.1:12420
+      -device e1000,netdev=lan (:644-653). Client: same base, -nic none, -netdev socket,id=lan,udp=127.0.0.1:12420,
+      localaddr=127.0.0.1:12421 -device e1000,netdev=lan (:659-667). Ports NAT_ROUTER_PORT 12420 / NAT_CLIENT_PORT 12421
+      (:635-636). UDP socket netdev chosen because TCP listen/connect raced and left the link dead (:628-634).
+      Guests reach host as 10.0.2.2 (SLIRP). RAM 256 each (:2355).
+    asserts:
+      -
+        what: "router: `monolith-router eth0 eth1 --dhcp --yes` output contains 'DHCP+DNS up'"
+        timeout_s: "60"
+        evidence: ":2043-2046"
+      -
+        what: "router: `nft list ruleset` contains masquerade"
+        evidence: ":2047-2049"
+      -
+        what: "router: ip_forward=1 (echoed as ipfwd=1)"
+        evidence: ":2054-2057"
+      -
+        what: "router: dnsmasq UDP :53 bound to 192.168.99.1 and NOT to 0.0.0.0 (netstat -lnu)"
+        evidence: ":2060-2067"
+      -
+        what: "client: hostname set via busybox, boot dhcpcd killed, fresh `dhcpcd -1 -t 30 --hostname=natclient eth0` exits 0"
+        timeout_s: "45"
+        evidence: ":2103-2119"
+      -
+        what: "client: leased address in 192.168.99.50-200"
+        evidence: ":2123-2127"
+      -
+        what: "client: `busybox nslookup monolith.home.arpa 192.168.99.1` contains 192.168.99.1"
+        evidence: ":2133-2136"
+      -
+        what: "client: natclient.home.arpa resolves into the lease range (DHCP option-12 hostname registered in dnsmasq zone)"
+        evidence: ":2145-2149"
+      -
+        what: "client: curl http://10.0.2.2:8000/probe.txt through NAT returns NAT_OK_marker (poll up to 20x, 4s timeout each)"
+        timeout_s: "120"
+        evidence: ":2163-2168"
+      -
+        what: "negative control: after `monolith-router down` (output 'NAT down') curl exits 28 (RC=28)"
+        evidence: ":2170-2174"
+      -
+        what: "diagnostics (non-gating) - ip addr/link, ping gateway, neigh, /proc/net/dev on both nodes"
+        evidence: ":2096-2155"
+    flake_handling: >
+      Historical nat flake root-caused to a monolith-router bug (LAN gateway CIDR skipped when eth1 had a 169.254
+      link-local), now fixed and unit-tested (monolith-router.test.sh test 9) (:2077-2082). drain_router() hygiene
+      reads the router pty between client steps. Curl polled 20x for ARP/conntrack warm-up. Client closed with
+      force in finally. Global launch-flake retry applies to the router only (client _reached_init not tracked).
+    ci: 'job.boot-test.nat-router (boot-test.yml:714): starts `python3 -m http.server 8000 --bind 0.0.0.0` in /tmp/natsrv (:739-744), --mode nat, uploads output/boot-test-nat.log* (router log + .client). tier: slow'
+    proves: The kernel netfilter/conntrack/NAT stack, nftables, dnsmasq (DHCP+DNS, LAN-only bind) and monolith-router work end to end between two guests, and NAT teardown really cuts access.
+  - id: bootmode.gui
+    runner: run_gui (:1742); builder build_gui_cmd (:372)
+    boots: ISO -cdrom, BIOS/ISOLINUX label "serial vga=788" (graphical vesafb 800x600x16; plain serial label gives text mode and Xfbdev dies "no screens found", :1755-1760). BIOS only - kernel has FB_VESA not efifb.
+    qemu: >
+      qemu-system-i386 -cdrom ISO -m <ram> -cpu 486 -boot d -vga std -nographic -serial mon:stdio
+      -qmp unix:<screendump>.qmp.sock,server,nowait -no-reboot (:404-415). Stale socket removed first (:402-403).
+      RAM 128 default and CI --ram-mb 128. Screendump path via --gui-screendump (default output/gui-screendump.ppm).
+    asserts:
+      -
+        what: "after `startx >/tmp/startx.log 2>&1 &` + sleep 8: pgrep Xfbdev, dwm, st all alive and /tmp/Xfbdev.log has no Fatal|could not open default font|giving up"
+        timeout_s: "15"
+        evidence: ":1784-1808"
+      -
+        what: "QMP screendump to PPM succeeds and >0.5% of pixels have a channel >16 (ppm_not_black, pure python P6 parser)"
+        evidence: ":1444-1595,1816-1828"
+      -
+        what: "debug-only (non-gating) fb0 info and Xfbdev/startx log dumps to serial"
+        evidence: ":1771-1795"
+    flake_handling: Global launch-flake retry. Fixed sleeps (1s, 8s) rather than polling for X readiness - timing-dependent on 486 emulation. QMP used instead of HMP so it doesn't disturb the serial mux.
+    ci: 'job.boot-test.gui (boot-test.yml:424), --mode gui --ram-mb 128 --gui-screendump output/gui-screendump.ppm; uploads log and PPM artifacts (:459-478). tier: slow'
+    proves: startx brings up the TinyX Xfbdev + dwm + st stack on vesafb with Terminus fonts and actually paints pixels.
+  - id: bootmode.stele-acid2
+    runner: run_stele_acid2 (:1834); builder = build_gui_cmd (MODE_BUILDERS :2317)
+    boots: Same as gui ("serial vga=788", BIOS, -vga std, QMP socket).
+    qemu: Same argv as gui (:404-415). RAM 256 default and CI.
+    asserts:
+      -
+        what: "`stele --headless --render-fb /usr/share/stele/acid2.html; echo RENDER_RC=$?` output contains RENDER_RC=0"
+        timeout_s: "180"
+        evidence: ":1871-1875"
+      -
+        what: "QMP screendump of framebuffer is not uniformly black (same ppm_not_black thresholds)"
+        evidence: ":1877-1889"
+    flake_handling: Global launch-flake retry. 180s render window for Acid2 CSS layout on emulated 486.
+    ci: 'job.boot-test.stele-acid2 (boot-test.yml:481), --mode stele-acid2 --ram-mb 256 --gui-screendump output/stele-acid2-screendump.ppm; uploads log + PPM ("headline browser demo", :476-480). tier: slow'
+    proves: The Stele browser binary runs on the target, lays out and paints Acid2 to /dev/fb0 offline, exit 0. (Gate is only exit 0 + non-black; it does NOT compare against the Acid2 reference image.)
+  - id: bootmode.clock-epoch
+    runner: run_clock_epoch (:543); builder build_clock_epoch_cmd (:488)
+    boots: ISO -cdrom, BIOS/ISOLINUX "serial", RTC seeded at 1970-01-01T00:00:00 (CLOCK_EPOCH_RTC :463).
+    qemu: build_bios_cmd argv + "-rtc base=1970-01-01T00:00:00" + "-nic none" (:505-509). RAM 64.
+    asserts:
+      -
+        what: "/run/monolith-clock-ignorant exists (S45 monolith-time-check raised the flag)"
+        how: "test -e"
+        evidence: ":575-577"
+      -
+        what: "`date +%Y` contains 1970 (clock untouched, no correction without a time source)"
+        evidence: ":578-581"
+    flake_handling: 'Historic misdiagnosis recorded (:455-462): hang blamed on 1970 RTC was really a long monolith_time_url= typed at the ISOLINUX prompt; fixture-URL approach abandoned, NIC removed instead. Global launch-flake retry.'
+    ci: 'job.boot-test.clock-epoch (boot-test.yml:771): still starts a host http.server on :8000 (:796-801) that the guest can NEVER reach (-nic none) - dead step. tier: slow'
+    proves: A dead-RTC (epoch) clock is judged ignorant (flag raised) and not silently stomped. The fetch-and-set half is covered only by scripts/tests/monolith-time.test.sh (unit, stubbed).
+  - id: bootmode.clock-1996
+    runner: run_clock_1996 (:588); builder build_clock_1996_cmd (:512)
+    boots: ISO -cdrom, BIOS/ISOLINUX "serial", RTC 1996-06-15T12:00:00 (:464). Default NIC kept (build_bios_cmd only), so guest has e1000+SLIRP with real-internet egress on CI runners.
+    qemu: build_bios_cmd argv + "-rtc base=1996-06-15T12:00:00" (:514-516). RAM 64.
+    asserts:
+      -
+        what: "`date +%Y` contains 1996 (not stomped to today)"
+        evidence: ":614-617"
+      -
+        what: "/run/monolith-clock-ignorant absent"
+        how: "test ! -e"
+        evidence: ":618-621"
+    flake_handling: Global launch-flake retry only.
+    ci: 'job.boot-test.clock-1996 (boot-test.yml:824), --mode clock-1996. tier: slow'
+    proves: 'Negative control - a plausible in-era clock is never judged ignorant nor corrected toward the present (invariant: trigger is demonstrated ignorance, never plausibility).'
+  - id: bootmode.persist
+    runner: run_persist (:2196); builder build_persist_cmd (:717) / _persist_qemu_argv (:693); helper make_persist_disk (:673); shared boot _persist_boot_to_shell (:2185)
+    boots: Two sequential boots of the same ISO, BIOS/ISOLINUX label "serial persist". Host creates a 64 MB sparse file, `mkfs.ext4 -F -q -L MONOLITH_PERSIST` (needs mkfs.ext4 on host PATH, :685-690). First boot formats at build_persist_cmd; second boot reuses the file (does NOT reformat).
+    qemu: >
+      qemu-system-i386 -cdrom ISO -drive id=persist,if=none,format=raw,file=<persist_disk> -device
+      virtio-blk-pci,drive=persist -m <ram> -cpu 486 -boot d -nographic -serial mon:stdio -no-reboot (:703-714).
+      RAM 128. --persist-disk default output/monolith-persist-test.img.
+    asserts:
+      -
+        what: "boot 1: /overlay fstype == ext4 (pure-shell /proc/mounts read printing overlay_fstype=ext4)"
+        evidence: ":472-475,2220-2233"
+      -
+        what: "boot 1: `echo MONOLITH_PERSIST_MARK_<hex>` runs"
+        evidence: ":2235-2238"
+      -
+        what: "boot 1: one blank prompt + sleep 1 + `sync`, then QEMU SIGKILLed via child.close(force=True) (unclean)"
+        evidence: ":2252-2262"
+      -
+        what: "boot 2 (fresh pexpect.spawn, log to <log>.boot2): /overlay still ext4"
+        evidence: ":2277-2283"
+      -
+        what: "boot 2: grep -qF marker /root/.bash_history -> FOUND_<marker>"
+        evidence: ":2284-2287"
+    flake_handling: No retry specific to this mode; boot 2 spawned outside _run_once so its init is not tracked by the launch-flake discriminator. Explicit sync is the documented durability boundary (history -a only reaches page cache).
+    ci: 'job.boot-test.persist (boot-test.yml:876), --mode persist. tier: slow'
+    proves: With a labeled MONOLITH_PERSIST ext4 disk, /overlay is the persistent partition and shell history appended per-prompt survives an unclean power-off across a reboot.
+tests:
+  - {id: test.binpkg-store, path: scripts/tests/binpkg-store.test.sh, subject: script.binpkg-store, asserts: ["prune-predicate keeps only newest PVR per CAT/PN", "-rN beats base; _p beats plain; plain beats _rc", "versions.lock pinned older PVR is never deleted", "mixed packages independent; malformed line skipped not fatal", "pull-is-benign-miss classifier: not found/manifest unknown/name unknown/404/401 unauthorized/denied = benign (rc0); connection refused / deadline exceeded = genuine"], runtime: "0.19s", passes: true, tier: fast, note: "Not coupled to live S3/GHCR but is the GHCR binpkg store; shells out to bash (script is bash). 'ok:' lines not printed; only FAIL on error"}
+  - {id: test.boot-test-retry, path: scripts/tests/boot-test-retry.test.sh, subject: script.boot-test, asserts: ["should_retry_launch decision matrix: silent guest w/ attempts left -> retry; final attempt -> stop; reached_init -> never retry; ok -> never retry"], runtime: "0.05s", passes: true, tier: fast, note: "Python heredoc; stubs pexpect module if absent; 6 checks"}
+  - {id: test.ghcr-gc, path: scripts/tests/ghcr-gc.test.sh, subject: script.ghcr-gc, asserts: ["classify(): current epoch KEEP, old 8-digit epoch DELETE, non-epoch tags (latest, v1.2.3, 7/9-digit) KEEP", "dry-run exits 0; abort guard exits 1 when nothing matches keep-list", "404 package listing exits 0; 403 and 401-with-stray-404 are hard failure (exit 1)", "version with mixed DELETE/KEEP tags kept whole", "--apply DELETEs only condemned version id", "empty listing exits 0 with '0 package versions' NOTE"], runtime: "0.13s", passes: true, tier: fast, note: "stubs gh on PATH; no network"}
+  - {id: test.monolith-cnf, path: scripts/tests/monolith-cnf.test.sh, subject: "cfg.overlay/app-misc/monolith-base/files/60-monolith-cnf.bash", asserts: ["unknown command prints \"<cmd>: not on the disc. 'monolith tools' lists what is.\" on stderr only", "exit 127", "existing commands unaffected", "sourcing is silent, rc 0"], runtime: "0.02s", passes: true, tier: fast, note: "7 ok"}
+  - {id: test.monolith-net, path: scripts/tests/monolith-net.test.sh, subject: "cfg.overlay/app-misc/monolith-base/files/monolith-net", asserts: ["status no-NIC prints 'monolith-net probe' incantation; status lists eth0", "autoprobe finds 3c509 via stub modprobe; none -> incantation", "probe finds ne io=0x320 irq=5; none -> 'No ISA card answered' exit 1", "incantation prints 'modprobe ne io=0x300'", "bad subcommand exit 2"], runtime: "0.20s", passes: true, tier: fast, note: "stubs modprobe/ip/dhcpcd, fake sysfs via MONOLITH_NET_SYSCLASS; 10 ok"}
+  - {id: test.monolith-persist-bashrc, path: scripts/tests/monolith-persist-bashrc.test.sh, subject: "cfg.overlay/app-misc/monolith-base/files/50-persist-history.bash", asserts: ["tmpfs overlay: PROMPT_COMMAND untouched, histappend unset", "real fs: histappend set and 'history -a' in PROMPT_COMMAND", "idempotent on double source", "pre-existing PROMPT_COMMAND preserved", "non-interactive: silent no-op", "missing mount table: no wiring, shell survives"], runtime: "0.08s", passes: true, tier: fast, note: "uses bash -i --norc (load-bearing against runner dotfiles, lines 32-37); 11 ok"}
+  - {id: test.monolith-persist-profile, path: scripts/tests/monolith-persist-profile.test.sh, subject: "cfg.overlay/app-misc/monolith-base/files/20-persist.sh", asserts: ["tmpfs -> 'persist: none (see monolith help persist)'", "real fs -> 'persist: mounted (80 MB free)' via df stub", "never touches PROMPT_COMMAND/histappend", "non-interactive silent", "missing mount table -> 'none', shell survives"], runtime: "0.07s", passes: true, tier: fast, note: "9 ok"}
+  - {id: test.monolith-persist, path: scripts/tests/monolith-persist.test.sh, subject: "cfg.overlay/app-misc/monolith-base/files/monolith-persist", asserts: ["usage/exit codes (no args 2, --help 0, unknown cmd 2)", "init <dev> --yes/-y runs `mkfs.ext4 -F -L MONOLITH_PERSIST <dev>`", "interactive confirm names device, warns ERASE ALL DATA, shows blkid contents; 'no'/EOF abort without mkfs", "missing mkfs.ext4 and mkfs failure surfaced non-zero", "--swap N / --swap=N creates swapfile via mkswap with swapon hint; non-numeric and 0 rejected before mkfs", "unknown option / extra positional rejected"], runtime: "0.32s", passes: true, tier: fast, note: "stubs mkfs.ext4/mkswap/blkid/mount/umount/fallocate; 45 ok"}
+  - {id: test.monolith-router, path: scripts/tests/monolith-router.test.sh, subject: "cfg.overlay/app-misc/monolith-base/files/monolith-router", asserts: ["up: nft masquerade on WAN oifname, LAN->WAN forward accept, ip_forward=1", "custom lan-cidr applied; malformed CIDR rejected non-zero", "auto-detect WAN=default-route iface; ambiguous 3-iface rejected", "down deletes table ip monolith_router, ip_forward=0", "status queries table", "nft failure -> 'nft apply failed' non-zero", "stale 169.254 link-local on LAN removed and CIDR still assigned (regression for nat flake)", "exact CIDR already present not re-added", "--dhcp --yes writes hardened dnsmasq conf: interface/bind-interfaces/except-interface WAN/local-service/domain home.arpa/local=/home.arpa//interface-name=monolith.home.arpa/stop-dns-rebind/domain-needed/bogus-priv/dhcp-authoritative/range .50-.200 12h/router+dns option=192.168.99.1/user=nobody", "--domain override", "--dhcp without --yes fails closed, dnsmasq not started", "--dhcp --yes records lecture flag and launches dnsmasq"], runtime: "1.55s (slowest unit test)", passes: true, tier: fast, note: "stubs nft/ip/dnsmasq; fixtures for sysfs and ip_forward; 55 ok"}
+  - {id: test.monolith-time-check, path: scripts/tests/monolith-time-check.test.sh, subject: "cfg.overlay/app-misc/monolith-base/files/monolith-time-check", asserts: ["clock with an opinion (2026): silent, no flag, monolith-time not called", "epoch + iface up + time OK: monolith-time called, no flag", "epoch + iface up + monolith-time fails: flag written, exit 0 (never fails boot)", "epoch, no iface: flag written, monolith-time not called", "1996 clock silent even without iface", "1980-01-01 and 2000-01-01 reset sentinels are ignorance", "+3 days past 1980 sentinel window is an opinion", "kernel cmdline monolith_time_url= reaches monolith-time as MONOLITH_TIME_URL"], runtime: "0.15s", passes: true, tier: fast, note: "stubs date +%s and monolith-time; 18 ok. This is the ONLY coverage of the sentinel/window logic; clock-epoch boot test checks only the epoch case."}
+  - {id: test.monolith-time, path: scripts/tests/monolith-time.test.sh, subject: "cfg.overlay/app-misc/monolith-base/files/monolith-time", asserts: ["curl Date header -> date -s <HTTP date> and hwclock -w; exit 0", "lowercase 'date:' parses", "curl failure -> 'no response from' non-zero, date never set", "missing Date header -> 'no Date header'", "unparseable date -> 'did not parse as a date'", "no hwclock: still sets clock", "positional URL > MONOLITH_TIME_URL env > default; arg overrides env"], runtime: "0.21s", passes: true, tier: fast, note: "stubs curl/date/hwclock; 20 ok. This is the only test of the fetch-and-set half (not covered by any boot mode)."}
+  - {id: test.monolith, path: scripts/tests/monolith.test.sh, subject: "cfg.overlay/app-misc/monolith-base/files/monolith", asserts: ["bare invocation == `help`, exit 0, help < 25 lines", "every topic in the 'topics:' line has a topics/<t>.txt file", "help network mentions monolith-router; tools lists monolith-router", "unknown topic/command nonzero and names the bad topic", "missing tools.txt nonzero"], runtime: "0.04s", passes: true, tier: fast, note: "MONOLITH_SHARE pointed at in-tree files/topics; 20 ok"}
+  - {id: test.pcf-fontname, path: scripts/tests/pcf-fontname.test.sh, subject: script.pcf-fontname, asserts: ["synthetic PCF (LSB and MSB byte order) returns exact FONT XLFD", "misc-fixed style XLFD round-trips", "non-PCF / no-properties input raises cleanly"], runtime: "0.03s", passes: true, tier: fast, note: "python3 heredoc; 4 ok. Note: pcf-fontname.py is Python - AGENTS.md no-Python doctrine applies to the target image, not host tools (open question)"}
+  - {id: test.s3-gc, path: scripts/tests/s3-gc.test.sh, subject: script.s3-gc, asserts: ["classify(): themonolith.iso/semver ISO/current-epoch packages KEEP; validation ISO, old-epoch packages and old build logs DELETE; ambiguous epoch-sha-semver ISO KEEP", "dry-run exits 0 even when last key is DELETE", "abort guard exit 1 when keep-list matches nothing"], runtime: "0.03s", passes: true, tier: fast, note: "stubs aws; tests dead-S3 code - drop with S3 (replace by ghcr-gc coverage)"}
+  - {id: test.savedconfig-cache, path: scripts/tests/savedconfig-cache.test.sh, subject: script.savedconfig-cache, asserts: ["check with no marker purges atom dir", "mark records current hash of tracked sys-apps/busybox savedconfig", "check with matching marker keeps gpkg and marker", "check with stale marker purges whole atom dir", "unknown mode exits 2"], runtime: "0.11s", passes: true, tier: fast, note: "uses REAL tracked savedconfig file for the hash; fabricates only PKGDIR; no S3"}
+  - {id: test.sync-portage, path: scripts/tests/sync-portage.test.sh, subject: script.sync-portage, asserts: ["S3 hit used, upstream not touched, no archive", "S3 miss -> upstream wget -> archived back to S3", "missing everywhere -> non-zero", "no S3_BUCKET -> upstream only, no aws call", "optional .md5sum absent still succeeds and no 0-byte stub left", "webrsync_local uses pinned http://127.0.0.1:8899 mirror, NO distfiles.gentoo.org in GENTOO_MIRRORS, --revert=<BUILD_EPOCH>"], runtime: "0.09s", passes: true, tier: fast, note: "stubs aws and wget; 13 ok. S3-coupled behaviour under test (cases 1,2,4) must be redesigned with the S3 replacement; case 6 (pinned localhost mirror, no upstream drift) is the key invariant to keep."}
+  - {id: test.verify-legacy-fbdev-config, path: scripts/tests/verify-legacy-fbdev-config.sh, subject: "cfg.kernel.config", asserts: ["27 FB_* symbols =m (CIRRUS PM2 PM3 CYBER2000 VGA16 HGA NVIDIA RIVA I740 MATROX RADEON ATY128 ATY S3 SAVAGE SIS NEOMAGIC KYRO 3DFX VOODOO1 VT8623 TRIDENT ARK SM712 GEODE_LX GX GX1)", "FB_GEODE=y gate", "chip sub-options =y (MATROX_MILLENIUM/MYSTIQUE/G, ATY_CT/GX, SIS_300/315); FB_MATROX_I2C=m", "DDC traps '# is not set': FB_RADEON_I2C FB_3DFX_I2C FB_CYBER2000_DDC FB_NVIDIA_I2C FB_SAVAGE_I2C", "excluded symbols stay not set (FB_ASILIANT FB_IMSTT FB_VIRTUAL FB_ARC FB_N411 FB_METRONOME FB_IBM_GXT4500 FB_CARMINE FB_MB862XX FB_OPENCORES FB_S1D13XXX FB_UDL FB_SMSCUFX)", "CONFIG_EXTRA_FIRMWARE not set"], runtime: "0.09s", passes: true, tier: fast, note: "No inputs beyond repo; cwd-relative path configs/kernel.config so MUST run from repo root (pr-validate does)"}
+  - {id: test.verify-netfilter-config, path: scripts/tests/verify-netfilter-config.sh, subject: "cfg.kernel.config", asserts: ["NETFILTER NETFILTER_ADVANCED NF_TABLES_IPV4 =y", "NF_CONNTRACK NF_NAT NF_TABLES NFT_CT NFT_NAT NFT_MASQ NF_DEFRAG_IPV4 =m"], runtime: "0.02s", passes: true, tier: fast, note: "repo-root cwd"}
+  - {id: test.verify-nftables-pkg, path: scripts/tests/verify-nftables-pkg.sh, subject: "cfg.portage/world", asserts: ["net-firewall/nftables listed in configs/portage/world"], runtime: "0.004s", passes: true, tier: fast, note: "repo-root cwd"}
+  - {id: test.verify-nic-zoo-config, path: scripts/tests/verify-nic-zoo-config.sh, subject: "cfg.kernel.config", asserts: ["21 NIC symbols =m (NE2000 WD80x3 ULTRA EL3 LANCE NE2K_PCI PCNET32 TULIP 8139TOO 8139CP E100 VIA_RHINE NATSEMI SIS900 E1000 E1000E IGB R8169 SKY2 VIRTIO_NET VMXNET3 HYPERV_NET)", "vendor gates =y (NET_VENDOR_8390 AMD 3COM INTEL REALTEK NATSEMI SIS VIA MARVELL)", "CONFIG_EXTRA_FIRMWARE not set"], runtime: "0.06s", passes: true, tier: fast, note: "repo-root cwd. 22 symbols listed in want_m by count actually 21; CONFIG_VORTEX=y (built-in, kernel.config:1495) is NOT checked here though README names it"}
+  - {id: test.verify-resolved-i2c-off, path: scripts/tests/verify-resolved-i2c-off.test.sh, subject: script.verify-resolved-i2c-off, asserts: ["missing artifact -> exit 1 'FAIL: <path> not found' + 'kernel build mode: binpkg'", "CONFIG_I2C=y (plain and gzip) -> exit 1 'FAIL: CONFIG_I2C=y'", "clean config plain/gzip -> exit 0 'PASS: CONFIG_I2C not =y' echoing build mode", "no mode arg -> 'kernel build mode: unknown'"], runtime: "0.05s", passes: true, tier: fast, note: "16 ok. Subject script lives at scripts/verify-resolved-i2c-off.sh (not in tests/); CI runs the real script on build.yml:313"}
+  - {id: test.verify-rootfs-net-wiring, path: scripts/tests/verify-rootfs-net-wiring.sh, subject: "script.build-rootfs", asserts: ["monolith-base ebuild has 'exeinto /usr/bin' and installs monolith-net", "files/monolith-net exists", "app-misc/monolith-base in configs/portage/world", "build-rootfs.sh creates init.d/S35netprobe and calls 'monolith-net autoprobe'"], runtime: "0.009s", passes: true, tier: fast, note: "grep-only structural check on repo files; repo-root cwd"}
+  - {id: test.verify-router-wiring, path: scripts/tests/verify-router-wiring.sh, subject: "ebuild.app-misc/monolith-base", asserts: ["ebuild doexe's monolith-router", "files/monolith-router exists", "usr/sbin/monolith-router NOT in attestation unowned-allowlist.yaml"], runtime: "0.005s", passes: true, tier: fast, note: "grep-only; repo-root cwd. Name suggests /usr/sbin but ebuild installs to /usr/bin (exeinto) while allowlist checks usr/sbin path - allowlist check may be vacuous"}
+  - {id: test.pr-validate-inline-checks, path: .github/workflows/pr-validate.yml, subject: "repo-wide", asserts: ["see ci_assertions pr-validate.*"], runtime: "n/a (CI only)", passes: null, tier: fast, note: "pseudo-entry pointing at ci_assertions"}
+ci_assertions:
+  - {id: ci.pr-validate.bash-n, where: ".github/workflows/pr-validate.yml:22-28", condition: "bash -n on scripts/*.sh, scripts/tests/*.sh, monolith-net, monolith-router", tier: fast}
+  - {id: ci.pr-validate.py-compile, where: ".github/workflows/pr-validate.yml:30-31", condition: "python3 -m py_compile scripts/*.py", tier: fast}
+  - {id: ci.pr-validate.yaml, where: ".github/workflows/pr-validate.yml:33-45", condition: "yaml.safe_load on configs/**/*.yaml and .github/workflows/*.yml (needs PyYAML on runner)", tier: fast}
+  - {id: ci.pr-validate.actionlint, where: ".github/workflows/pr-validate.yml:47-53", condition: "actionlint 1.7.7 downloaded via curl from raw.githubusercontent.com (-shellcheck= disabled); network dependency", tier: fast}
+  - {id: ci.pr-validate.shellcheck, where: ".github/workflows/pr-validate.yml:55-56", condition: "shellcheck --severity=error on scripts/*.sh, scripts/tests/*.sh, monolith-net, -router, monolith, -time, -time-check, -persist", tier: fast}
+  - {id: ci.pr-validate.unit-tests, where: ".github/workflows/pr-validate.yml:58-66", condition: "for t in scripts/tests/*.sh: sh $t must exit 0 (runs ALL 23 files including verify-*.sh; cwd = repo root). Note: .py is not run; the pytest-less boot-test-retry runs via .sh wrapper", tier: fast}
+  - {id: ci.build.resolved-i2c, where: ".github/workflows/build.yml:312-313", condition: "sh scripts/verify-resolved-i2c-off.sh configs/kernel.config  - resolved post-olddefconfig config must not have CONFIG_I2C=y (config file is overwritten by the monolith-kernel ebuild/build-packages.sh with the resolved config, so it needs a completed `make build-packages`)", tier: slow}
+  - {id: ci.build.nic-modules, where: ".github/workflows/build.yml:322-354", condition: "find ${MODDIR}/*.ko* exists for 22 modules: ne wd smc-ultra lance 3c509 pcnet32 tulip via-rhine natsemi sis900 e1000 e1000e igb sky2 r8169 vmxnet3 nf_conntrack nf_nat nf_tables nft_ct nft_nat nft_masq nf_defrag_ipv4 (23 names), under output/sysroot/lib/modules/<KVER><LOCALVERSION>; KVER from versions.lock sys-kernel/monolith-kernel stripped of -rN", tier: slow}
+  - {id: ci.build.fbdev-modules, where: ".github/workflows/build.yml:360-422", condition: "27 legacy fbdev .ko present (cirrusfb pm2fb pm3fb cyber2000fb vga16fb hgafb nvidiafb rivafb i740fb matroxfb_base radeonfb aty128fb atyfb s3fb savagefb sisfb neofb kyrofb tdfxfb sstfb vt8623fb tridentfb arkfb sm712fb lxfb gxfb gx1fb) AND `modinfo -F firmware` empty for each (no-blob doctrine); installs kmod via apt if modinfo missing", tier: slow}
+  - {id: ci.boot-test.expected-kernel, where: ".github/workflows/boot-test.yml:41-56", condition: "computes expected uname -r = versions.lock monolith-kernel version (strip -rN) + CONFIG_LOCALVERSION from configs/kernel.config; passed to every job as --kernel-version. Fails only implicitly (grep of empty gives empty version -> boot-test would assert contains('') which always passes: no guard)", tier: slow}
+  - {id: ci.build.boot-test-gate, where: ".github/workflows/build.yml:559-582", condition: "boot-test is a workflow_call of boot-test.yml after `build`; attestation job requires needs.boot-test.result == 'success' (all 17 jobs incl. matrix must pass). Release path via release.yml calls build.yml", tier: slow}
+  - {id: ci.build.attestation-summary, where: ".github/workflows/build.yml:811-821", condition: "attestation-summary.json must exist and overall must pass else exit 1 (out of oracle scope; supplychain area)", tier: slow}
+  - {id: ci.build.cyclonedx-schema, where: ".github/workflows/build.yml:731-743", condition: "SBOM validated against vendored CycloneDX schema for its specVersion; timeout is an error (supplychain area)", tier: slow}
+  - {id: ci.boot-test.iso-cache, where: ".github/workflows/boot-test.yml (every job, e.g. :80-85)", condition: "actions/cache/restore key ci-artifacts-<run_id>-iso with fail-on-cache-miss: true; ISO is handed off in-run via GitHub cache (written build.yml:536-540), NOT via S3", tier: slow}
+harness:
+  summary: >
+    scripts/boot-test.py (2528 lines) is a pexpect-driven QEMU harness. main() parses args, picks a RAM default per
+    mode, requires the ISO to exist (exit 2 if not), and runs up to 3 launch attempts of _run_once. _run_once builds
+    the argv from MODE_BUILDERS[mode], pexpect.spawn()s QEMU with encoding utf-8, optionally tees the serial stream to
+    --log-file, calls MODE_RUNNERS[mode](child, args), converts BootTestError/pexpect errors into FAIL, force-kills
+    QEMU if still alive. All guest interaction is over the serial console (-nographic -serial mon:stdio); there is
+    no login (agetty -n -l monolith-console) and no PS1 matching. Exit 0 = PASS, 1 = FAIL, 2 = ISO missing or pexpect
+    missing (:119-123, :2499). Requires python pexpect, qemu-system-i386 (BIOS modes), qemu-system-x86_64 + OVMF (UEFI
+    modes), mkfs.ext4 (persist). Not runnable from this repo without a built ISO. 17 modes in MODE_RUNNERS (:2323).
+  guest_command_protocol: >
+    run_check(child,name,cmd,validator,timeout=30) sends `cmd; echo MONOLITH_CHECK_<hex>:$?`, expects the sentinel
+    regex, hands (exit_code, output) to a validator; never raises (timeouts/EOF become failed checks). Validators:
+    contains, contains_with_exit, regex_matches, regex_absent, exit_code_only, exact_value, epoch_close_to (the last
+    is DEAD CODE - unused since clock-epoch dropped the fixture server). Results are collected, all printed as
+    [PASS]/[FAIL] lines via report_results, then poweroff.
+  full_smoke_suite:
+    used_by: [bootmode.bios, bootmode.uefi]
+    checks:
+      - "uname -r contains --kernel-version (substring match, so an empty expected version would always pass)"
+      - "lsmod ^e1000 (NIC is a module, coldplugged)"
+      - "ip link show eth0 matches eth0:.*UP"
+      - "DHCP: if udhcpc exists run `udhcpc -i eth0 -n -q -t 5 -T 3`, else assert `ip -4 addr show eth0` has an IPv4 inet (lease from boot-time dhcpcd, S40network)"
+      - "curl --version contains curl"
+      - "sqlite3 :memory: 'select 41+1;' contains 42"
+      - "perl -e 'print $];' contains 5.0 (loose; comment says tighten once major known)"
+      - "perl strict+warnings program prints ok"
+      - "perl -Mutf8 -CS uc(e-acute) exit 0 (unicore tables survived pruning)"
+      - "perl -MCGI CGI->new(q(x=42))->param(q(x)) contains 42"
+      - "guestbook.cgi (REQUEST_METHOD=GET QUERY_STRING name=Ada&message=Hello+from+1996) output contains 'Ada|Hello from 1996', and independent `sqlite3 -list -separator '|'` re-query of /tmp/guestbook.db returns same row"
+      - "mount output matches `type overlay`"
+      - "`MANPAGER=cat PAGER=cat man ls | head -5` matches LS or ls (mandoc)"
+      - "monolith help exit 0; monolith tools contains monolith-router; `notacommand` exits 127 with 'not on the disc'"
+  reduced_smoke_suite: {used_by: [bootmode.toram], checks: [uname -r, e1000 module, eth0 UP, overlay mount]}
+  storage_smoke_suite: {used_by: [bootmode.ahci, bootmode.nvme, bootmode.usb, bootmode.virtio], checks: [uname -r, overlay mount]}
+  retry:
+    mechanism: >
+      STARTUP_FLAKE_MAX_ATTEMPTS = 3 (:2422). should_retry_launch(ok, reached_init, attempt, max) (:2425) retries ONLY
+      if the run failed AND the guest never reached "[init] Starting init..." (flag child._reached_init set in
+      expect_milestone :806-807) AND attempts remain. Any failure after /init is reported without retry. Pure logic,
+      unit-tested by test.boot-test-retry. Retry restarts QEMU from scratch (and for persist reformats the disk because
+      build_persist_cmd re-runs make_persist_disk). No retry wrapper exists in the workflows (grep for retry/nick-fields: none).
+    known_gaps: >
+      A hung bootloader prompt (ISOLINUX 'boot:' not seen) sends label blindly and then fails at the first milestone
+      -> counts as pre-init flake and is retried up to 3x, i.e. 3 x 300 s = 15 min worst case plus 90s/180s bootloader waits.
+      nat: client guest is not covered by the launch-flake discriminator.
+  timeouts_s: {boot_milestone_default: 300, isolinux_prompt: 90, grub_menu: 180, shell_ready: 60, check_default: 30, poweroff: 90 (x2 with -f fallback), qmp_screendump: 25, stele_render: 180, nat_dhcp: 45, nat_curl_poll: 120, router_up: 60, monolith_net_probe: 60}
+  output_files:
+    - "--log-file <path>: full serial transcript (child.logfile). nat adds <path>.client; persist adds <path>.boot2"
+    - "--gui-screendump <path> (default output/gui-screendump.ppm) + <path>.qmp.sock (gui/stele-acid2)"
+    - "--persist-disk <path> (default output/monolith-persist-test.img)"
+    - "CI uploads logs as actions/upload-artifact retention-days 14 (boot-test.yml per job), if: always()"
+  flags:
+    - "--iso PATH (required)"
+    - "--mode {bios,uefi,toram,ahci,nvme,usb,virtio,nicless,nic,vga,fbdev-modprobe,nat,gui,stele-acid2,clock-epoch,clock-1996,persist} (required)"
+    - "--kernel-version STR (required; expected uname -r substring)"
+    - "--ram-mb INT (default per MODE_DEFAULT_RAM :2343: bios64 uefi512 toram512 ahci512 nvme512 usb512 virtio512 nicless64 nic256 vga64 fbdev-modprobe64 nat256 gui128 stele-acid2256 clock-epoch64 clock-1996 64 persist128)"
+    - "--qemu-i386 (default qemu-system-i386), --qemu-x86_64 (default qemu-system-x86_64)"
+    - "--ovmf-code PATH (autodetect: /usr/share/OVMF/OVMF_CODE.fd, OVMF_CODE_4M.fd, /usr/share/edk2/ovmf/OVMF_CODE.fd, /usr/share/edk2-ovmf/OVMF_CODE.fd)"
+    - "--boot-timeout SEC (default 300)"
+    - "--cdrom-monitor-id (default ide1-cd0; toram only)"
+    - "--log-file PATH"
+    - "--nic-model {pcnet,rtl8139,tulip,ne2k_pci,ne2k_isa} (nic mode)"
+    - "--vga-model {cirrus} (vga mode)"
+    - "--gui-screendump PATH"
+    - "--rtc-date STR (QEMU -rtc base=; clock modes default it)"
+    - "--persist-disk PATH"
+  ci_runner_environment: >
+    ubuntu-latest, actions/setup-python@v5 python 3.12, `apt-get install qemu-system-x86` (+ ovmf for ahci/nvme/usb/virtio/uefi),
+    `pip install pexpect` (unpinned), actions/checkout@v4, actions/cache/restore@v4, actions/upload-artifact@v4. No KVM
+    (TCG only; slow). No timeout-minutes set on any job (default 360 min). All 17 jobs repeat the same 6 setup steps (no composite action).
+  ci_job_map:
+    - {job: job.boot-test.expected-kernel, modes: []}
+    - {job: job.boot-test.bios, modes: [bootmode.bios], matrix: "ram_mb [64,256]"}
+    - {job: job.boot-test.uefi, modes: [bootmode.uefi]}
+    - {job: job.boot-test.toram-eject, modes: [bootmode.toram]}
+    - {job: job.boot-test.ahci, modes: [bootmode.ahci]}
+    - {job: job.boot-test.nvme, modes: [bootmode.nvme]}
+    - {job: job.boot-test.usb, modes: [bootmode.usb]}
+    - {job: job.boot-test.virtio, modes: [bootmode.virtio]}
+    - {job: job.boot-test.nicless, modes: [bootmode.nicless]}
+    - {job: job.boot-test.gui, modes: [bootmode.gui]}
+    - {job: job.boot-test.stele-acid2, modes: [bootmode.stele-acid2]}
+    - {job: job.boot-test.nic-models, modes: [bootmode.nic], matrix: "shell loop 5 models"}
+    - {job: job.boot-test.vga-models, modes: [bootmode.vga], matrix: "shell loop 1 model"}
+    - {job: job.boot-test.fbdev-modprobe, modes: [bootmode.fbdev-modprobe]}
+    - {job: job.boot-test.nat-router, modes: [bootmode.nat]}
+    - {job: job.boot-test.clock-epoch, modes: [bootmode.clock-epoch]}
+    - {job: job.boot-test.clock-1996, modes: [bootmode.clock-1996]}
+    - {job: job.boot-test.persist, modes: [bootmode.persist]}
+  workflow_wiring: >
+    boot-test.yml is `on: workflow_call` only (input build-version). build.yml job `boot-test` (build.yml:559) calls it
+    with needs: build and passes `secrets: inherit` (the callee uses no secrets). The build.yml `attestation` job and the
+    release path hang off needs.boot-test.result == success. pr-validate.yml never boots anything. Trigger conditions
+    for build.yml: push / schedule / PR with label 'full-ci' (build.yml:18-60).
+  s3_coupling: >
+    boot-test.yml and boot-test.py have NO S3 dependency: the ISO is passed via the GitHub Actions cache (key
+    ci-artifacts-<run_id>-iso). The coupling is upstream: the ISO is produced by build.yml `build` job which also uploads
+    to S3 (build.yml:~540). test.sync-portage and test.s3-gc exercise S3 behaviours (stubbed aws).
+  gotchas_for_rebuild:
+    - "The ISO file name must be themonolith-<BUILD_VERSION>.iso under output/ (boot-test.yml paths); the harness itself takes any --iso path."
+    - "Boot flow depends on exact serial strings from rootfs/init and build-rootfs.sh (:135-140). Any init rewrite must keep them or update the constants."
+    - "Boot flow depends on isolinux label names (serial) and GRUB menu index 2 = (serial) (build-iso.sh:305-344)."
+    - "Guest-side expectations: /usr/sbin/monolith-console lazy shell, bash with PROMPT_COMMAND chain, busybox applets hostname/nslookup in the booted rootfs (nat), netstat (net-tools), dhcpcd, nft, dnsmasq, sqlite3, perl+CGI, man/mandoc, /usr/lib/cgi-bin/guestbook.cgi, /usr/share/stele/acid2.html, startx, Xfbdev/dwm/st."
+    - "Busybox in booted rootfs has no awk applet (comment :2222-2227)."
+    - "QEMU TCG emulation of -cpu 486 with 64 MB RAM is slow: 300 s per milestone budget."
+gaps:
+  - "Hyper-V Gen 1 / Gen 2 boot: README.md:167 claims '-iso_mbr_part_type 0x00 targets Hyper-V Gen 1' and Hyper-V paravirtual NICs (HYPERV_NET=m, kernel.config:1731); no QEMU test can emulate Hyper-V; no test of the hybrid MBR type or hv_netvsc/hv_storvsc."
+  - "Real-disk persistence: persist mode uses a host-formatted virtio-blk file. Nothing boots the guest and runs `monolith-persist init` against a block device end to end (unit test is stubbed), nor the GRUB 'persistent' entry (UEFI), nor swapfile creation/swapon."
+  - "ISOLINUX labels linux, fb, fb800 (the DEFAULT, 30s timeout), fb640, vga (vga=ask), debug, persist(without serial), rescue are never selected by any test; only 'serial', 'serial toram', 'serial vga=788', 'serial persist'. The default boot path real users hit (fb800 with no keypress, TIMEOUT 300) is untested."
+  - "GRUB menu entries plain (default), framebuffer, debug, rescue, toram, persistent are never selected; only entry 2 (serial). GRUB toram is not tested at all (README.md:154 documents it)."
+  - "Rescue shell (`rescue` kernel param / label / GRUB entry) boot behaviour untested."
+  - "`root=/dev/sdXN` real-root boot (README.md:157-163) untested."
+  - "UEFI 32-bit is documented as not built; no negative test or placeholder. UEFI toram, UEFI persist, UEFI+nicless etc. not covered."
+  - "BIOS boot from USB/AHCI/NVMe/virtio: the storage-controller variants are UEFI-only; BIOS-from-hybrid-disk (the 'Hybrid USB' row, README:136) is never booted as a disk (only as -cdrom)."
+  - "Minimum RAM claim: only bios mode at 64 MB is tested (README does not state a minimum). No test at a smaller RAM or 32 MB / 486 real-hardware-ish limits; toram needs 512 MB in tests."
+  - "Networking promises (README:280-300): SLIP (slattach), PPP/pppd, dropbear SSH + S20keygen host key generation, iperf3/mtr/tcpdump/socat/whois/iftop/ethtool, wget, udhcpc in initrd - none exercised. NIC drivers named in README (3Com Vortex CONFIG_VORTEX=y built-in, e100, 8139cp, r8169, virtio_net, tulip variants) only partly boot-tested: e1000 (default), pcnet, rtl8139, tulip, ne2k_pci, ne2k_isa; e100/e1000e/igb/r8169/sky2/virtio_net/vmxnet3/hyperv_net/3c509/wd/smc-ultra/lance etc. only checked as .ko existence in build.yml (config presence in verify-nic-zoo)."
+  - "NIC rtl8139 assertion regex ^8139(too|cp) is satisfied by either driver; does not prove which was intended."
+  - "Package set (99 world atoms): smoke suite exercises only curl, sqlite3, perl/CGI, man, monolith tools, startx stack, stele, nft, dnsmasq, dhcpcd; no execution test of the other ~80 packages (bash, util-linux, procps, tar, gawk, lynx, rl144 game, dropbear, ppp, etc.). Static-link claim is checked by scripts/static-audit.sh (not in this scope) not by boot."
+  - "Dashboard/web demo (v86 browser boot, boot.html, web/) has no automated test of any kind; the hosted ISO is streamed via HTTP range requests (no test)."
+  - "Release verification promises (README 'Verify a release': attestation, cosign/SLSA) not covered by boot-test or tests/ (supplychain area)."
+  - "Reproducibility (same BUILD_EPOCH gives same toolchain/tree) has no test beyond sync-portage pin test."
+  - "Stele Acid2: gate is exit 0 + non-black framebuffer, never compares to the Acid2 reference smiley; a wrong-but-nonblack render passes."
+  - "GUI: the 'dwm bar + terminal drawn' claim (:1827) is asserted only as >0.5% non-black pixels (a gray stipple root alone would also satisfy it)."
+  - "Clock: fetch-and-set correction never exercised under QEMU (only unit test with stubs); the login hint (30-clock-hint.sh) has no unit test or boot test; S45 hook ordering in rcS untested beyond flag existence."
+  - "No unit tests for: 40-advisory.sh / monolith-advisory-check, 30-clock-hint.sh, 99-monolith-square.bash, monolith-console (lazy shell), startx, which, topics content beyond file existence, guestbook.cgi directly, rootfs/init, build-iso.sh, build-rootfs.sh, build-initrd.sh (only grep-based wiring checks)."
+  - "No fast test for check-licenses.py, check-unowned.py, enrich-sbom.py, generate-provenance.py, generate-dashboard.py, nightly-cve-monitor.py, check-cves.sh, attestation.sh, update-build-pins.sh, update-versions.sh, extract-packages.sh, run-cve-canary.sh (scripts/fixtures has only canary-sbom.cdx.json). cve-canary workflow is the only exercise of the CVE gate."
+  - "Kernel tier invariants: no test checks Tier-0 size (bzImage size budget) or that kernel config has no unexpected =y growth other than CONFIG_I2C."
+  - "boot-test.py has no unit tests besides should_retry_launch: ppm_not_black, validators, qemu cmd builders, QMP client untested."
+contradictions:
+  - {claim: "boot-test.py module docstring (:36-42) says clock-epoch uses a host fixture HTTP server and asserts 'the automatic boot hook corrects the clock to ~now and the ignorance flag clears'", where: "scripts/boot-test.py:36-42", fact: "run_clock_epoch asserts the OPPOSITE: flag /run/monolith-clock-ignorant IS present and year is still 1970; NIC is removed (-nic none) so no server is reachable. epoch_close_to() (:519) is leftover dead code.", evidence: "scripts/boot-test.py:488-509,543-585"}
+  - {claim: "boot-test.yml clock-epoch job starts a host http.server fixture 'monolith-time reads its Date header from' and step is named 'RTC at epoch + fixture server'", where: ".github/workflows/boot-test.yml:796-805", fact: "Guest has -nic none and can never reach it; the server step is dead.", evidence: "scripts/boot-test.py:507-509"}
+  - {claim: "README Testing section says CI runs boot-test across bios, uefi, toram, ahci, nvme, usb, virtio and a nicless control", where: "README.md:340-344", fact: "CI also runs nic (5 models), vga (cirrus), fbdev-modprobe, nat, gui, stele-acid2, clock-epoch, clock-1996, persist (17 jobs total); README list is stale. The bios job also runs a 64M and 256M matrix.", evidence: ".github/workflows/boot-test.yml job list"}
+  - {claim: "boot-test.py module docstring (:5-14 and :89-98) lists only bios/uefi/toram + storage + nicless and GRUB menu '0-5'", where: "scripts/boot-test.py:144-148", fact: "17 modes exist; GRUB menu has 7 entries (0..6, persistent added) as correctly stated at :760-761. Docstring header :144-146 says 0..5.", evidence: "scripts/build-iso.sh:305-344"}
+  - {claim: "boot-test.py docstring (:100-102) says it 'cannot be exercised on the authoring machine ... meant to be proven out by CI logs'", where: "scripts/boot-test.py:100-102", fact: "stale; harness has been run in CI for many modes and carries many CI-derived fixes in comments.", evidence: "comments throughout, e.g. :628-634, :2077-2082"}
+  - {claim: "gui helper comments and workflow comment say the screendump uses QEMU HMP (--gui-screendump help: 'QEMU's HMP screendump'; boot-test.yml:422 'HMP screendump')", where: "scripts/boot-test.py:2401, .github/workflows/boot-test.yml:422", fact: "Implementation uses QMP over a dedicated unix socket (qemu_qmp_screendump :1444, -qmp :413).", evidence: "scripts/boot-test.py:1444-1514"}
+  - {claim: "boot-test.yml header says the workflow covers 'BIOS (ISOLINUX), UEFI (GRUB + OVMF), and the toram path'", where: ".github/workflows/boot-test.yml:3-6", fact: "It now has 17 jobs; also the `release.yml`/`build.yml` comment (build.yml:551) says 'BIOS, UEFI, and toram+eject'.", evidence: ".github/workflows/boot-test.yml"}
+  - {claim: "Plan/spec docs and code comments cite .superpowers/sdd/2026-08-19-monolith-ux-pass/task-2-brief.md and docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md", where: "scripts/boot-test.py:208,452,1920, boot-test.yml:768", fact: ".superpowers/ does not exist in the repo checkout (ls fails); docs/superpowers/plans/ exists. Referenced brief is unavailable.", evidence: "ls .superpowers -> no such file"}
+  - {claim: "build.yml NIC-module assertion comment says boot-test NIC matrix 'only proves 6 of the 21 new symbols'", where: ".github/workflows/build.yml:316", fact: "5 models are boot-tested (pcnet, rtl8139[8139too/cp], tulip, ne2k_pci, ne2k_isa) plus default e1000; count in comment is loose. The MODULES list in the same step has 23 names, not 21.", evidence: ".github/workflows/build.yml:337-341"}
+  - {claim: "README says kernel ships 3Com Vortex (CONFIG_VORTEX), Intel e100 ...", where: "README.md:167", fact: "CONFIG_VORTEX=y (built-in), CONFIG_E100=m; verify-nic-zoo-config.sh checks E100 =m but never VORTEX; build.yml module list lacks vortex (built-in).", evidence: "configs/kernel.config:1495,1545; scripts/tests/verify-nic-zoo-config.sh:12-13"}
+open_questions:
+  - "Real runtimes of boot modes in CI (TCG on ubuntu-latest) are unknown from the repo; only the 300 s per-milestone budget and 180 s stele render window are known. Need a CI log sample to size the rebuild's job timeouts."
+  - "Is the 'serial warmup' race (first command output lost) reproducible only on storage jobs (comment :2030-2033 says 'storage jobs') yet warmup is only wired into _boot_isolinux_to_shell (fbdev-modprobe, nat) and not into run_uefi_driver_variant or run_bios? Unclear whether UEFI/bios modes are exposed to the race."
+  - "ci.boot-test.expected-kernel has no guard against an empty version string; with empty --kernel-version smoke_kernel_version passes trivially. Intentional?"
+  - "Whether any workflow other than build.yml (release.yml calls build.yml?) invokes boot-test.yml directly; grep shows only build.yml:562 uses it."
+  - "scripts/tests/verify-router-wiring.sh greps the allowlist for usr/sbin/monolith-router while the ebuild installs via exeinto /usr/bin (per verify-rootfs-net-wiring.sh); path in the allowlist check may be vacuous - not verified against the ebuild (recipes area)."
+  - "pcf-fontname.test.sh and boot-test-retry.test.sh require python3 on the PR runner; PyYAML also needed by pr-validate - are these meant to be kept given the no-Python doctrine (doctrine is for target image only)?"
+  - "Which tests can be skipped for the rebuild vs kept: s3-gc.test.sh and the S3 half of sync-portage.test.sh test dead-S3 code."

@@ -1,0 +1,1120 @@
+area: supplychain
+scope_note: >
+  Read in full: scripts/attestation.sh, check-cves.sh, check-licenses.py, check-unowned.py,
+  enrich-sbom.py, generate-provenance.py, generate-dashboard.py, nightly-cve-monitor.py,
+  run-cve-canary.sh, configs/attestation/*.yaml, web/index.html + web/app/*.js, boot.html,
+  docs/cve-gate.md, docs/releasing.md. Skimmed: canary-sbom.cdx.json, web/styles.css (no external URLs in it),
+  schemas (listed only). Cross-read (not my area, only to establish callers/consumers): Makefile 440-500,
+  build.yml 640-830, release.yml 60-280, nightly-cve-scan.yml, cve-gate-canary.yml,
+  configs/overlay/app-misc/monolith-base/files/monolith-advisory-check.
+  No tests exist for any of these scripts (grep of scripts/tests for check-licenses/check-unowned/enrich/etc = none).
+  The whole supply-chain is Python3 + pyyaml + bash + syft + grype; no extra Python deps (stdlib only).
+
+components:
+  # ───────────────────────── scripts ─────────────────────────
+  - id: script.attestation
+    kind: script
+    path: scripts/attestation.sh
+    purpose: >
+      Orchestrator. Runs ALL pillars to completion (set -uo pipefail, no -e), writes every artifact, then writes
+      attestation-summary.json and exits 1 if any pillar failed.
+    triggers: ["called by make.attestation / make.attest-builder inside the builder container (Makefile:452,466)"]
+    invokes:
+      - script.enrich-sbom
+      - script.check-licenses
+      - script.check-cves
+      - script.check-unowned
+      - script.generate-provenance
+      - "tool syft, grype, python3 (inline python heredocs), curl, sha256sum"
+    invoked_by: [make.attestation, make.attest-builder, "job.build.attestation (via make attestation, build.yml ~L660)"]
+    inputs:
+      - what: "sysroot dir with /var/db/pkg (extracted rootfs sysroot)"
+        from: "--sysroot, /output/sysroot"
+        evidence: "scripts/attestation.sh:18,133"
+      - what: "ISO file (for sha256sum; may be absent)"
+        from: "--iso /output/themonolith-$BUILD_VERSION.iso"
+        evidence: "scripts/attestation.sh:188-195"
+      - what: "policy/config files"
+        from: "/configs/attestation/{cpe-overrides,license-policy,cve-policy,unowned-allowlist}.yaml (container bind mount), fallback ./config/*.yaml"
+        evidence: "scripts/attestation.sh:66-69,150-161"
+      - what: "cpe-exclusions.yaml"
+        from: "${SCRIPT_DIR}/../configs/attestation/cpe-exclusions.yaml (hard-wired, NOT overridable by flag)"
+        evidence: "scripts/attestation.sh:307,553"
+      - what: "world, versions.lock, kernel Manifest"
+        from: "${SCRIPT_DIR}/../configs/portage/{world,versions.lock}, ../configs/overlay/sys-kernel/monolith-kernel/Manifest"
+        evidence: "scripts/attestation.sh:311-314"
+      - what: "host portage vdb (to propagate musl/grub/syslinux) and portage tree"
+        from: "/var/db/pkg, /var/db/repos/gentoo inside builder container"
+        evidence: "scripts/attestation.sh:306,312"
+      - what: "portage snapshot tarball (streamed, only to hash it)"
+        from: "ext.gentoo-distfiles https://distfiles.gentoo.org/snapshots/gentoo-$BUILD_EPOCH.tar.xz"
+        evidence: "scripts/attestation.sh:650-656"
+      - what: "grype vulnerability DB (already updated upstream)"
+        from: "ext.grype-db via make grype-db-update / GRYPE_CACHE_DIR"
+        evidence: "scripts/check-cves.sh:120-130"
+    outputs:
+      - what: "sbom.cdx.json (raw Syft CycloneDX), sbom.syft.json (Syft native, large), bom.cdx.json (enriched)"
+        to: "$OUTPUT_DIR (/output/attestation)"
+        evidence: "scripts/attestation.sh:36-48,232-234"
+      - what: "license-report.json, cve-report.cdx.json, cve-report.grype.json, cve-report-coverage.json, unowned-report.json, cpe-gap-count.txt, cpe-exclusions-count.txt, cpe-exclusions.json"
+        to: "$OUTPUT_DIR"
+        evidence: "scripts/attestation.sh:364,383,470; scripts/check-cves.sh:100-103; scripts/enrich-sbom.py:1301-1324"
+      - what: "builder-sbom.cdx.json, builder-bom.cdx.json, builder-cve-report.cdx.json (+ .grype.json, -coverage.json), builder-cpe-gap-count.txt, builder-cpe-exclusions-count.txt"
+        to: "$OUTPUT_DIR"
+        evidence: "scripts/attestation.sh:500-501,582-585,562-565"
+      - what: "slsa-provenance.json"
+        to: "$OUTPUT_DIR"
+        evidence: "scripts/attestation.sh:678"
+      - what: "attestation-summary.json"
+        to: "$OUTPUT_DIR"
+        evidence: "scripts/attestation.sh:722-807"
+    secrets: []
+    external: [ext.gentoo-distfiles, ext.grype-db]
+    pins: []
+    env:
+      - "BUILD_STARTED_ON (default: now) attestation.sh:59"
+      - "BUILD_EPOCH (empty ok; also recorded as builder.epoch, stage3 epoch, portage snapshot epoch) attestation.sh:315,643"
+      - "STAGE3_DIGEST (set by build.yml:596-599, forwarded by Makefile:152) attestation.sh:316,687"
+      - "CROSS_TARGET (-> --arch, builder.cross_target) attestation.sh:302,505"
+      - "S3_BUCKET (only used to fabricate s3:// distribution externalReference) attestation.sh:202-204"
+      - "GITHUB_REF, GITHUB_REPOSITORY, GITHUB_SERVER_URL, GITHUB_SHA, GITHUB_RUN_ID (tag build => release-asset URL) attestation.sh:218-220,300-301,308"
+      - "SYFT_FILE_METADATA_SELECTION=all (set inline for syft) attestation.sh:259"
+    s3_coupling: soft
+    s3_detail: >
+      Never touches S3 itself. S3_BUCKET only feeds a *string* (s3://$S3_BUCKET/themonolith-$TAG.iso) into the SBOM
+      distribution externalReference; omitted when unset (attestation.sh:198-204). With S3 gone this reference is dead/misleading.
+    pillars:
+      - n: "1"
+        name: "SBOM generation + CPE enrichment"
+        what: "syft dir:SYSROOT with --override-default-catalogers portage-cataloger emitting cyclonedx-json + syft native json; then enrich-sbom.py. Fail if syft rc!=0 OR enrich rc!=0 (enrich failure is rolled into SBOM_RC)"
+        evidence: "scripts/attestation.sh:246-347"
+      - n: "2"
+        name: "License compliance"
+        what: "check-licenses.py on enriched SBOM vs license-policy.yaml; any component status=fail => pillar fail"
+        evidence: "scripts/attestation.sh:359-364"
+      - n: "3"
+        name: "CVE scan"
+        what: "check-cves.sh on enriched SBOM vs cve-policy.yaml; folds coverage JSON into summary"
+        evidence: "scripts/attestation.sh:378-429"
+      - n: "4"
+        name: "Unowned files audit"
+        what: "check-unowned.py on sbom.syft.json + sysroot CONTENTS; skipped with WARN (and UNOWNED_RC stays 0 => PASS!) if sbom.syft.json missing"
+        evidence: "scripts/attestation.sh:461-473"
+      - n: "5"
+        name: "Builder environment SBOM + CVE"
+        what: "syft dir:/ of the running builder container (excludes /proc /sys /dev /run /output /configs /scripts /rootfs /build /var/db/repos /var/cache/distfiles /var/log/portage /root/.cache), enrich, grype via check-cves.sh. Both builder sbom rc and builder cve rc gate overall"
+        evidence: "scripts/attestation.sh:488-637"
+      - n: "6"
+        name: "SLSA v1 provenance"
+        what: "generate-provenance.py; hard-fails (rc=1) if ISO sha is '(not computed)' i.e. ISO absent. Not a *pillar* in the header (header says five pillars)"
+        evidence: "scripts/attestation.sh:639-695"
+    notes:
+      - "INCLUDE_BUILDER defaults to 1 (attestation.sh:70) although header/help call it 'Pillar 5 (--include-builder only)' (L9,L27). make.attestation does NOT pass --include-builder yet builder pillar always runs. make.attest-builder is therefore redundant except it passes --builder-digest."
+      - "make.attestation never passes --builder-digest (Makefile:452-459) so summary builder.image_digest and provenance builder-digest are empty in CI (only make.attest-builder passes it, L475, and CI calls make attestation, build.yml ~L664)."
+      - "Builder enrichment run reuses output dir and enrich-sbom.py writes fixed names cpe-gap-count.txt / cpe-exclusions-count.txt / cpe-exclusions.json. The target's values were already read into shell vars (L351-357) but then the files are mv'd to builder-* names (L562-565) => the target's cpe-gap-count.txt is OVERWRITTEN/renamed away; and cpe-exclusions.json in the output dir ends up being the BUILDER's report, the target's is lost. Dashboard docs say cpe-exclusions.json is surfaced per build; it is not fetched by web/ at all."
+      - "Pillar-5 enrichment is called WITHOUT --sysroot, --world, --versions-lock, --kernel-manifest, --host-vdb, --iso-sha256, --arch, --stage3-*: builder SBOM has no dep graph, no purl arch qualifiers, no formulation."
+      - "attestation-summary.json 'builder.attested' is the shell int ${INCLUDE_BUILDER} => JSON number 1, not boolean true (L781)."
+      - "Summary python heredoc interpolates shell variables directly into python source (${BUILD_TAG}, ${CVE_FAILURES} ...). A BUILD_TAG or package name containing a quote breaks it. Optional strings were moved to MONO_* env to mitigate (L724-733) but build_tag/epoch/cross_target/image_digest/CVE_POLICY_PATH/CVE_SCANNER_VERSION are still interpolated."
+      - "KERNEL_SHA512 read from hard-coded /configs/overlay/sys-kernel/monolith-kernel/Manifest (L667) whereas enrich-sbom gets ${SCRIPT_DIR}/../configs/... (L314): two different paths for the same file; works only because both resolve inside the container."
+      - "Portage snapshot sha256 is obtained by re-downloading ~60-100MB tarball from distfiles at attestation time (L650-656) because emerge-webrsync discards it. Silently dropped on failure (L658-659). Comment in generate-provenance.py:62 claims it comes from a .sha256 sidecar (stale)."
+      - "SYFT_VERSION/GRYPE_VERSION use `|| ... || echo ''` fallbacks that mask failure (L278-283). DB metadata parsed from `grype db status` text with regexes (Built:/Version:/Checksum:) => brittle to grype output format changes; check-cves.sh repeats the same parsing (L271-274)."
+      - "overall gating: sbom, license, cve, unowned, provenance, builder_sbom, builder_cve each flips overall=fail (L698-718). cve_scanner/db/policy keys are informational only."
+      - "A pass requires NO gating CVE in the *builder* image too: builder CVEs fail the whole build (L717). Builder image is a stock Gentoo stage3 + crossdev so this is a standing source of failures independent of the shipped ISO."
+    rebuild_notes:
+      - "Preserve: run-all-then-fail-at-end semantics; single sha256sum of ISO feeding SBOM+provenance+summary; summary schema (see data_contracts)."
+      - "Redesign: S3_BUCKET-derived distribution URL; the builder-image pillar needs a new definition of 'builder' if the Docker factory changes; stop mv-ing shared fixed filenames (parametrise enrich-sbom output names)."
+      - "Replace shell->python heredoc interpolation with a real summary writer (e.g. one python script taking JSON of pillar results)."
+
+  - id: script.check-cves
+    kind: script
+    path: scripts/check-cves.sh
+    purpose: "Grype wrapper: records DB status, runs grype twice (native json + cyclonedx-json), applies cve-policy.yaml, writes <base>-coverage.json, exit code = policy verdict"
+    triggers: []
+    invokes: ["tool grype (db status, version, sbom:<file> -o json, sbom:<file> -o cyclonedx-json)", "inline python3 + pyyaml"]
+    invoked_by: [script.attestation, script.run-cve-canary]
+    inputs:
+      - what: "enriched CycloneDX SBOM"
+        from: "--sbom"
+        evidence: "scripts/check-cves.sh:22,82"
+      - what: "cve-policy.yaml"
+        from: "--policy default /configs/attestation/cve-policy.yaml, fallback configs/attestation/cve-policy.yaml"
+        evidence: "scripts/check-cves.sh:106-118"
+      - what: "grype DB (local cache, not updated here)"
+        from: "ext.grype-db (updated by make.grype-db-update)\""
+        evidence: "scripts/check-cves.sh:120-130"
+    outputs:
+      - what: "cve-report.cdx.json (grype CycloneDX VEX), cve-report.grype.json (native), cve-report-coverage.json"
+        to: "dirname(--output); names derived by stripping .cdx.json (builder-cve-report* for pillar 5)"
+        evidence: "scripts/check-cves.sh:100-103"
+    secrets: []
+    external: [ext.grype-db, ext.nvd]
+    pins: []
+    env: []
+    s3_coupling: none
+    notes:
+      - "Exit 1 on: gating finding, fail_on_unscanned && unscanned>0, grype rc!=0, SBOM parse error, native JSON parse error (L172-184,211,225,434)."
+      - "POLICY MISSING => WARNING and built-in default (Critical/High/Unknown, no allowlist, policy sha empty). NOT a failure (L113-118)."
+      - "POLICY PARSE ERROR => WARNING + built-in default (L249-251) also not a failure. Missing pyyaml => exit 1 (L246)."
+      - "policy.update({k:v}) merges loaded YAML over the default; keys consumed: gating_severities, informational_severities (reported only), fail_on_unscanned, allowlist. `fix_state_gates` in cve-policy.yaml is documentation only - NOT read by code (L231-253)."
+      - "allowlist entry `expires` is recorded in findings (waiver_expires, L333) but NEVER enforced: an expired waiver still waives. cve-policy.yaml:81-90 says `expires` is required and 'forces a fresh look' - not true in code. `justification`/`approved_by` presence is also not validated."
+      - "waiver_for matches by cve id (case-insens) and optional exact `component` == grype artifact.name (L256-264)."
+      - "DB age >3 days => age_warning string only (L290-296); unparseable build time => warning too. Never a failure (docs/cve-gate.md:225-232 admits; no max_db_age_days key)."
+      - "Pre-scan 'unscanned' = components with no `cpe` field, type!=file. This INCLUDES acct-*/virtual/* excluded components, so cve_coverage.unscanned >= unmapped_cpe_count (which excludes policy-exempt ones). Two different 'gap' numbers on the dashboard."
+      - "matched_count counts distinct (name,version) from grype matches; clean = max(scanned - matched, 0): matches against components without a CPE (e.g. via purl) would make clean undercount."
+      - "grype is run twice (native, then cyclonedx) for 'cross-version stability'; second pass overwrites GRYPE_RC=$? (L179) fine."
+      - "Verdict printout says 'See cve-coverage.json' (L428) but file is *-coverage.json."
+    rebuild_notes:
+      - "Keep gating_severities {Critical,High,Unknown}, fail_on_unscanned=false, fix_state_gates=always semantics, coverage file schema (consumed by web)."
+      - "Decide: enforce waiver `expires` and required fields (currently dead promise), add max_db_age_days if DB freshness should gate."
+      - "grype install is `curl .../main/install.sh | sh` unpinned in nightly-cve-scan.yml:43 and cve-gate-canary.yml:37-38; the builder image's grype version comes from the Dockerfile (not my area)."
+
+  - id: script.check-licenses
+    kind: script
+    path: scripts/check-licenses.py
+    purpose: "Evaluate each SBOM component (and metadata.component) license expression against license-policy.yaml allowlist; DNF semantics"
+    triggers: []
+    invokes: []
+    invoked_by: [script.attestation]
+    inputs:
+      - what: "enriched SBOM bom.cdx.json"
+        from: "--sbom"
+        evidence: "scripts/check-licenses.py:285,300"
+      - what: "license-policy.yaml (allowed_spdx, gentoo_to_spdx, denied_spdx)"
+        from: "--policy"
+        evidence: "scripts/check-licenses.py:48-55"
+    outputs:
+      - what: "license-report.json {build_tag,timestamp,sbom_path,policy_path,policy_sha256,summary{total,pass,fail,unknown},components[{name,version,raw_license,normalized[],status,reason}]}"
+        to: "$OUTPUT_DIR/license-report.json"
+        evidence: "scripts/check-licenses.py:327-346"
+    secrets: []
+    external: []
+    pins: []
+    env: []
+    s3_coupling: none
+    notes:
+      - "Exit 1 iff n_fail>0 (L362). `unknown` (no license field) is NOT a failure (L17-18, L227-235)."
+      - "denied_spdx wins over allowed_spdx (L208-211); currently denied_spdx: [] (license-policy.yaml:134)."
+      - "Unmapped license names are matched literally against allowed_spdx; gentoo_to_spdx maps e.g. GPL-2 -> GPL-2.0-or-later (note: Gentoo 'GPL-2' is really GPL-2.0-only; policy over-approximates but both are allowed)."
+      - "Failure reason only reports the FIRST conjunction's failing licenses (L259) even when other alternatives exist."
+      - "Compound SPDX expression 'GPL-2.0-only WITH Font-exception-2.0' is allow-listed as a literal string with spaces (license-policy.yaml:62) but the tokenizer splits on whitespace (L87), so the string can never match as a single token; works only through the Gentoo alias GPL-2-with-font-exception."
+      - "Policy is a flat allowlist of ~54 ids: permissive + copyleft all allowed (GPL/LGPL/MPL/EUPL/CC-BY-SA/OFL/etc.). No copyleft deny. Non-SPDX tokens (openssl, curl, nethack, netcat, Toyoda, lsof, man-pages, tcp_wrappers_license, BEER-WARE...) are allowed by literal name."
+      - "Includes metadata.component (product, MIT) in the report; dedupes by name (L312-317)."
+    rebuild_notes:
+      - "Any new package whose Portage LICENSE is not covered fails the build; the allowlist grows by hand. Keep gentoo_to_spdx table with the recipes."
+
+  - id: script.check-unowned
+    kind: script
+    path: scripts/check-unowned.py
+    purpose: "Pillar 4: files on disk (Syft files[]) minus Portage-owned paths (Syft installedFiles + direct CONTENTS parse of sym/dir/obj) minus allowlist globs = unowned; fail if any"
+    triggers: []
+    invokes: []
+    invoked_by: [script.attestation]
+    inputs:
+      - what: "sbom.syft.json (native Syft JSON with files[] and artifacts[].metadata.installedFiles)"
+        from: "--syft-json"
+        evidence: "scripts/check-unowned.py:198,217"
+      - what: "sysroot (prefix to strip + /var/db/pkg/**/CONTENTS)"
+        from: "--sysroot"
+        evidence: "scripts/check-unowned.py:58-82,223"
+      - what: "unowned-allowlist.yaml (key: allowlist)\""
+        from: "--allowlist (optional; missing file => WARN, empty allowlist)"
+        evidence: "scripts/check-unowned.py:209-215"
+    outputs:
+      - what: "unowned-report.json {timestamp,syft_schema,sysroot,summary{total_files,owned,allowlisted,unowned},unowned_files[]}"
+        to: "$OUTPUT_DIR/unowned-report.json"
+        evidence: "scripts/check-unowned.py:272-283"
+    secrets: []
+    external: []
+    pins: []
+    env: []
+    s3_coupling: none
+    notes:
+      - "Exit 1 iff n_unowned>0 (L308)."
+      - "Ownership precedence: exact path in owned set > path+'.bz2' in owned (extract-packages.sh bunzips man pages, L259-263) > allowlist glob > unowned."
+      - "Matching uses fnmatch.fnmatch, where `*` matches across `/` (fnmatch has no path-segment semantics) so `**` == `*`; unowned-allowlist.yaml:7 documents '* matches within a path segment' which is false. usr/share/fonts/*/fonts.dir etc. are looser than documented. `?` also matches '/'."
+      - "If files[] is empty (file cataloger not enabled) it WARNs but does NOT fail: total=0 => unowned=0 => PASS (L246-250). SYFT_FILE_METADATA_SELECTION=all must stay set in attestation.sh:259 or pillar 4 silently passes."
+      - "get_owned_paths only warns if portage pkgs exist but no file list found (L116-127); falls back to CONTENTS so still works."
+      - "Directories: only paths that Syft's file cataloger lists are checked; dir entries owned via CONTENTS dir lines."
+      - "Allowlist is ~103 entries (hand-authored rootfs files, shadow backups, binutils eselect symlinks, nethack state, ld.so.cache, kmod runlevels, nftables state ...). Header says list should shrink as files move into ebuilds (app-misc/monolith-base owns many already, allowlist.yaml:89-95)."
+    rebuild_notes:
+      - "Allowlist content is tied to what build-rootfs.sh writes by hand; every new hand-installed rootfs file requires an entry (AGENTS.md rootfs trap). Rebuild should prefer owning files via ebuilds and delete allowlist entries; keep the test (it is a strong oracle that the rootfs == packages)."
+
+  - id: script.enrich-sbom
+    kind: script
+    path: scripts/enrich-sbom.py
+    purpose: "Turn raw Syft CycloneDX into the published bom.cdx.json: product component + ISO hash, CPE overrides, license normalisation, dep graph, propagated builder components, formulation, tools"
+    triggers: []
+    invokes: ["subprocess version probes: i486-linux-musl-gcc, i486-linux-musl-ld, gcc, portageq/emerge, crossdev (5s timeout, fail-silent)"]
+    invoked_by: [script.attestation]
+    inputs:
+      - what: "raw Syft CycloneDX SBOM"
+        from: "--sbom"
+        evidence: "scripts/enrich-sbom.py:1053"
+      - what: "cpe-overrides.yaml (key `overrides`: bare-name -> full CPE 2.3 template with * version)"
+        from: "--overrides"
+        evidence: "scripts/enrich-sbom.py:60-63"
+      - what: "license-policy.yaml gentoo_to_spdx; spdx-license-ids.txt next to the policy (fallback /configs/attestation/spdx-license-ids.txt)"
+        from: "--license-policy"
+        evidence: "scripts/enrich-sbom.py:211-225,557-572"
+      - what: "cpe-exclusions.yaml (`exclusions[{pattern,justification,detail}]`)"
+        from: "--cpe-exclusions"
+        evidence: "scripts/enrich-sbom.py:1237-1239"
+      - what: "sysroot var/db/pkg RDEPEND/DEPEND/HOMEPAGE"
+        from: "--sysroot"
+        evidence: "scripts/enrich-sbom.py:275-346,702-708"
+      - what: "host vdb: cross-i486-linux-musl/musl, sys-boot/grub, sys-boot/syslinux (PVR, LICENSE)"
+        from: "--host-vdb /var/db/pkg"
+        evidence: "scripts/enrich-sbom.py:779-827"
+      - what: "portage tree metadata.xml (<upstream><maintainer>) and sys-apps/busybox/Manifest"
+        from: "--portage-tree /var/db/repos/gentoo"
+        evidence: "scripts/enrich-sbom.py:387-419,887-901"
+      - what: "configs/portage/world, versions.lock, monolith-kernel Manifest"
+        from: "--world --versions-lock --kernel-manifest"
+        evidence: "scripts/enrich-sbom.py:737-750,856-883"
+    outputs:
+      - what: "bom.cdx.json (enriched)"
+        to: "--output"
+        evidence: "scripts/enrich-sbom.py:1292-1298"
+      - what: "cpe-gap-count.txt, cpe-exclusions-count.txt, cpe-exclusions.json {build_tag,timestamp,excluded_count,genuine_gap_count,exclusions[]}"
+        to: "dirname(--output) fixed names"
+        evidence: "scripts/enrich-sbom.py:1301-1324"
+    secrets: []
+    external: []
+    pins:
+      - thing: "tool version string recorded in metadata.tools"
+        value: "enrich-sbom.py 2.0"
+        evidence: "scripts/enrich-sbom.py:1020-1025"
+      - thing: "specVersion floor"
+        value: "1.6 (never caps; Syft currently emits 1.7)"
+        evidence: "scripts/enrich-sbom.py:471-476; configs/attestation/schemas/README"
+    env: []
+    s3_coupling: none
+    enrichments:
+      - "metadata.component: type operating-system, bom-ref themonolith-<tag>, supplier 'Tucker McLean', license MIT, hashes[0]=SHA-256 of ISO (only if sha given and != '(not computed)'), externalReferences vcs/build-system/distribution(s3)/distribution(release) (L484-541)"
+      - "drops Syft's OS distro component (properties syft:distro:*) (L545-551); drops type=file components (L581-589); drops binary-cataloger bare-name dupes of portage entries and shell-quoted junk names (L598-608)"
+      - "assigns bom-ref to all components (L611-624)"
+      - "CPE: skip categories acct-group/ acct-user/ app-alternatives/ virtual/ (strip cpe, L640-653); override via bare_name lookup; else strip synthetic Syft slug CPE (vendor/product containing '/') (L659-662); version in CPE has -rN, _pN, _preN stripped and '_'->'.' (L86-135)"
+      - "supplier 'Gentoo Linux'; authors from metadata.xml upstream maintainers; website externalReference from vdb HOMEPAGE (L684-708)"
+      - "component type reclass by category (acct-=>data, virtual/dev-/lib-=>library, app-/net-/sys-/www-/mail-/x11-/media-/games-=>application) (L161-182,712-713)"
+      - "purl gets ?arch=<CROSS_TARGET>&distro=gentoo (L716-717); license ids not in spdx-license-ids.txt moved to license.name; compound names -> {expression} (L228-263)"
+      - "dependencies[]: from vdb RDEPEND+DEPEND atoms, best-effort; root entry product->world atoms; deduped (L726-773)"
+      - "propagated components musl/grub/syslinux from host vdb with properties syft:monolith:source=builder and bom-ref propagated-<pkg>-<ver> (L779-827)"
+      - "formulation[0] bom-ref monolith-build-formula: gentoo/stage3 container (epoch+digest), versions.lock sha256, kernel tarball SHA-512 from Manifest, busybox tarball SHA-512, properties monolith:workflow:{path,commit,run_id} (L837-921). workflow_path default .github/workflows/build.yml (L1213-1217)"
+      - "metadata.tools.components: syft, grype (with cdx:tool:db:{built,schema,checksum} properties), enrich-sbom.py, + build toolchain probes (L923-1026); metadata.authors, lifecycles[build] (L554-555)"
+    notes:
+      - "Exit code ALWAYS 0 on success path; CPE gaps are informational (L31,1326). Only exits 1 on missing --sbom or missing pyyaml."
+      - "Missing overrides file only WARNs and proceeds with {} (L1226-1233) => every package becomes a CPE gap and CVE scanning degrades silently (cve-policy fail_on_unscanned=false)."
+      - "metadata.component.hashes[0] is the digest-chain anchor; it is only written if --iso-sha256 valid. If ISO absent, release.yml:157 would KeyError => release blocked (fail closed)."
+      - "bare_name() strips version via regex -\\d.*$ ; packages whose name contains '-<digit>' (e.g. 'gtk-3', 'lib32-foo') collide/mis-key (L82). Matching to overrides is by bare name only so category is ignored (hence _NO_CPE_CATEGORIES guard)."
+      - "The formulation cannot be validated against anything; the hashes are read from the ebuild Manifest (SHA512 of upstream tarball), not recomputed."
+      - "cpe-overrides.yaml has 87 override entries (header comment in docs/cve-gate.md:25 says ~50)."
+      - "builder pass (pillar 5) re-runs this script with a subset of flags; see script.attestation notes about fixed output names being overwritten."
+    rebuild_notes:
+      - "Output contract (bom.cdx.json) is consumed by web/ (components[].name/version/cpe/purl/licenses), release.yml (metadata.component.hashes[0].content), check-cves (components[].cpe), check-licenses. Keep these paths stable."
+      - "Largest single piece of logic in the supply chain (1330 lines). Candidate for splitting; Syft-specific workarounds (binary-cataloger dupes, quoted names, slug CPEs) are there because of portage-cataloger quirks."
+
+  - id: script.generate-provenance
+    kind: script
+    path: scripts/generate-provenance.py
+    purpose: "Emit an in-toto Statement v1 with SLSA Build v1 predicate (self-generated) for the ISO"
+    triggers: []
+    invokes: []
+    invoked_by: [script.attestation]
+    inputs:
+      - what: "--iso-sha256 --iso-name --build-tag --output (+optional epochs, digests, kernel version/sha512, builder digest, started/finished)"
+        from: "attestation.sh args"
+        evidence: "scripts/generate-provenance.py:52-74; scripts/attestation.sh:674-691"
+      - what: "GitHub Actions env: GITHUB_SERVER_URL, GITHUB_REPOSITORY, _ID, _OWNER_ID, _VISIBILITY, REF, SHA, RUN_ID, RUN_NUMBER, RUN_ATTEMPT, EVENT_NAME, WORKFLOW_REF, WORKFLOW_SHA, ACTOR, ACTOR_ID, SOURCE_DATE_EPOCH"
+        from: "forwarded into container via Makefile GITHUB_ENV"
+        evidence: "scripts/generate-provenance.py:88-105,254"
+      - what: "sibling attestation files to hash as byproducts"
+        from: "dirname(--output)"
+        evidence: "scripts/generate-provenance.py:190-211"
+    outputs:
+      - what: "slsa-provenance.json (in-toto Statement; subject[0]={name: themonolith-<tag>.iso, digest.sha256}; predicate used by actions/attest)"
+        to: "$OUTPUT_DIR/slsa-provenance.json"
+        evidence: "scripts/generate-provenance.py:214-279"
+    secrets: []
+    external: [ext.github-api, ext.gentoo-distfiles, ext.kernel-org, ext.dockerhub, ext.ghcr]
+    pins:
+      - thing: "buildType"
+        value: "https://actions.github.io/buildtypes/workflow/v1 (GitHub Attestations API rejects others)"
+        evidence: "scripts/generate-provenance.py:113"
+      - thing: "workflow_path"
+        value: ".github/workflows/build.yml (hard-coded)"
+        evidence: "scripts/generate-provenance.py:108"
+    env: ["see inputs"]
+    s3_coupling: none
+    notes:
+      - "Exit 1 only if iso-sha256 empty/'(not computed)' (L77-83)."
+      - "Defaults when env missing: repository 'unknown/unknown', sha 'unknown', run_id '0' — provenance is still written with placeholders (local dev). Fine locally; in CI a missing env would produce a bogus-but-signed statement. No guard."
+      - "Only the `predicate` (not the full statement) is used by CI: build.yml read-predicate step extracts d['predicate'] and passes to actions/attest@v2 with subject-path=ISO; GitHub builds the real signed statement. The `subject` here and slsa-provenance.json itself are NOT what is signed - they are an informational copy."
+      - "SOURCE_DATE_EPOCH recorded (L254) but this is the Dockerfile ENV value (1786406400 = 2026-08-10) - not per-build."
+      - "Kernel URL assumes cdn.kernel.org/pub/linux/kernel/v<major>.x/linux-<ver>.tar.xz (L166-172); resolvedDependencies is descriptive only (nothing verifies it)."
+      - "builder digest is `docker inspect .Id` (image config ID), not a registry manifest digest; uri pkg:docker/ghcr.io/<owner>/monolith-builder."
+    rebuild_notes:
+      - "If the new factory is not GitHub Actions, buildType/builder.id/workflow_ref semantics and the 'actions/attest' signing path must be redesigned; digest-chain step 5 (docs/releasing.md:161-166) depends on actions/attest verifying subject-path hash."
+
+  - id: script.generate-dashboard
+    kind: script
+    path: scripts/generate-dashboard.py
+    purpose: "Aggregate every <tag>/attestation-summary.json under --input-dir into builds-index.json (+ latest-build.json); sort by timestamp desc; compute cpeDelta"
+    triggers: []
+    invokes: []
+    invoked_by: [make.dashboard, script.nightly-cve-monitor, "job.build.attestation (via make dashboard ATTEST_INPUT_DIR=output/all-attestation, build.yml ~L790)"]
+    inputs:
+      - what: "attestation-summary.json files (rglob)"
+        from: "--input-dir (CI: output/all-attestation synced from s3://$S3_BUCKET/attestation/*/attestation-summary.json)"
+        evidence: "scripts/generate-dashboard.py:43; build.yml:~795-800"
+    outputs:
+      - what: "builds-index.json (array, newest first) and latest-build.json (1-element array)"
+        to: "--output-dir (CI: output/web -> aws s3 sync to bucket root)"
+        evidence: "scripts/generate-dashboard.py:94-103"
+    secrets: []
+    external: []
+    pins: []
+    env: []
+    s3_coupling: soft
+    s3_detail: "Pure local transform, but the only production input is the S3 attestation/ prefix and the only consumer is web/ reading S3 root."
+    notes:
+      - "Entry keys: tag,timestamp,date,packages,unmappedCPEs,excludedCPEs,cpeDelta,licenses,cves,unowned,overall (uppercased),cveScanner,cveScannerVer,cveDbBuilt,cveDbAgeWarning,cveScanned,cveMatched,cveClean,cveUnscanned,cveTotalFindings,cveWaivedFindings,cvePolicyPath (L51-76)."
+      - "Does NOT include sbom_check or builder status; web/view-index.js hard-codes pillarRow('SBOM','PASS') (view-index.js:63)."
+      - "tag = s['build_tag'] else parent dir name (L47); a nightly-monitor-rewritten summary keeps build_tag."
+      - "cpeDelta compares to the chronologically previous entry regardless of build type (tagged vs CI)."
+      - "Entries are whatever summaries exist: old schema summaries lacking new fields default to 0/''."
+    rebuild_notes:
+      - "builds-index.json is the SPA's single entry point; rebuild must keep these key names or update web/ in lockstep. Consider emitting it from CI as a release asset / Pages artifact instead of S3 root."
+
+  - id: script.nightly-cve-monitor
+    kind: script
+    path: scripts/nightly-cve-monitor.py
+    purpose: "Re-scan every historical build SBOM with a fresh grype DB; mark builds with any CVE as revoked; write status/<tag>.json for the on-ISO advisory check; regenerate builds-index"
+    triggers: ["wf.nightly-cve-scan cron 0 4 * * * + dispatch (.github/workflows/nightly-cve-scan.yml:17-20)"]
+    invokes: [script.generate-dashboard, "tool grype (db update; sbom:<f> -o json)", "tool aws (s3 sync)"]
+    invoked_by: [wf.nightly-cve-scan]
+    inputs:
+      - what: "per-build dirs with bom.cdx.json (fallback sbom-enriched.cdx.json, sbom.cdx.json) + attestation-summary.json"
+        from: "ext.aws-s3 s3://$S3_BUCKET/attestation/ synced to --data-dir"
+        evidence: "scripts/nightly-cve-monitor.py:54-78,238-240"
+      - what: "prior status files"
+        from: "ext.aws-s3 s3://$S3_BUCKET/status/"
+        evidence: "scripts/nightly-cve-monitor.py:241-242"
+    outputs:
+      - what: "status/<tag>.json {build_tag,checked, status: revoked|clean, advisories[], details_url https://themonolith.org/builds/<tag>}"
+        to: "ext.aws-s3 s3://$S3_BUCKET/status/<tag>.json"
+        evidence: "scripts/nightly-cve-monitor.py:133-150,314-315"
+      - what: "rewritten attestation-summary.json (cve_check->revoked|fail, overall->fail, cve_failures += 'retroactive: <CVE>')"
+        to: "s3://$S3_BUCKET/attestation/<tag>/attestation-summary.json (in place)"
+        evidence: "scripts/nightly-cve-monitor.py:153-183,317-319"
+      - what: "builds-index.json + latest-build.json"
+        to: "s3://$S3_BUCKET/ (bucket root)"
+        evidence: "scripts/nightly-cve-monitor.py:321-329"
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.S3_BUCKET]
+    external: [ext.aws-s3, ext.grype-db]
+    pins: []
+    env: []
+    s3_coupling: hard
+    notes:
+      - "Has NO relationship to cve-policy.yaml: ANY grype match of ANY severity (even Negligible) => revoked (L278-291). Disagrees with the build-time gate (docs/cve-gate.md:209-217 admitted this; still true)."
+      - "State machine bug: a build previously 'revoked' with unchanged CVEs gets cve_check='fail' on the next night (prior_status=='clean' is the only path to 'revoked', L291). status/<tag>.json stays revoked. Flip-flops 'revoked' -> 'fail'."
+      - "A build whose CVEs disappear gets status/<tag>.json=clean but the attestation-summary.json is never reverted from revoked/fail."
+      - "Newly-found CVEs are appended into cve_failures but summary.cve_check for a build that ALREADY failed build-time gate (never would have been published as tag release though) is also rewritten."
+      - "s3_sync(data_dir -> attestation/) uploads data_dir's status/ and dashboard/ subdirs INTO the attestation/ prefix (L319) - junk objects attestation/status/*, attestation/dashboard/*. (find_sboms skips them as no SBOM but generate-dashboard rglob does not matter.)"
+      - "Scans ALL builds (every CI build dir), not just 'tagged release SBOMs' as docstring/doc claim. Whole attestation/ prefix incl. large syft json is synced down nightly (egress cost)."
+      - "Fails (exit 1) only if zero builds scanned & errors>0; old SBOM formats are skipped (L346-355)."
+      - "The ISO side consumer is configs/overlay/app-misc/monolith-base/files/monolith-advisory-check: GET ${ADVISORY_BASE_URL:-https://themonolith.s3.amazonaws.com}/status/<BUILD_TAG>.json, greps '\"status\"...\"revoked\"', copies JSON to /run/monolith-advisory. BUILD_TAG from /etc/monolith-release."
+      - "details_url points to a different domain (themonolith.org) than anything else (S3 website)."
+      - "Wired to cron since after docs were written; docs/cve-gate.md:209 and README.md ~L185 still say it is orphaned (see contradictions)."
+    rebuild_notes:
+      - "Whole thing is S3-hard-coupled; needs a new store for status/<tag>.json that the ISO can fetch with plain HTTP from i486 (curl/wget, 5s timeout) and a new place for rewritten summaries."
+      - "Decide whether revocation should honour cve-policy.yaml (it currently does not)."
+
+  - id: script.run-cve-canary
+    kind: script
+    path: scripts/run-cve-canary.sh
+    purpose: "Prove the scanner is alive: scan fixture SBOM (openssl 1.0.1) and assert raw summary.total_findings>0 and CVE-2014-0160 present"
+    triggers: ["wf.cve-gate-canary: push/PR on gate paths, cron 30 4 * * *, dispatch"]
+    invokes: [script.check-cves, "python3 inline"]
+    invoked_by: [wf.cve-gate-canary]
+    inputs:
+      - what: "scripts/fixtures/canary-sbom.cdx.json (CycloneDX 1.5; metadata.component cve-gate-canary; 1 component openssl 1.0.1 with cpe:2.3:a:openssl:openssl:1.0.1)"
+        from: "repo"
+        evidence: "scripts/run-cve-canary.sh:34"
+      - what: "cve-policy.yaml"
+        from: "../configs/attestation/cve-policy.yaml"
+        evidence: "scripts/run-cve-canary.sh:66"
+    outputs:
+      - what: "exit 0/1 only (temp workdir deleted)"
+        to: "CI log"
+        evidence: "scripts/run-cve-canary.sh:54-55,113-123"
+    secrets: []
+    external: [ext.grype-db, ext.nvd]
+    pins: [{thing: "expected CVE", value: "CVE-2014-0160", evidence: "scripts/run-cve-canary.sh:35"}]
+    env: []
+    s3_coupling: none
+    notes:
+      - "Deliberately ignores check-cves.sh's exit code (|| true, L67) and asserts on coverage JSON total_findings and finding id set (L85-111)."
+      - "Runs in its own workflow, NOT as a gate inside build.yml: a neutered scanner does not block a release unless a human watches the canary; docs/cve-gate.md:178-185 says the schedule can go silent after 60 days of repo inactivity."
+      - "Docstring says it asserts on 'cve-coverage.json' (L22) - actual file is *-coverage.json."
+      - "Needs live network (grype db update) so cannot be a hermetic unit test; for a hermetic test mock grype (docs/cve-gate.md:272-290 describes a throw-away mock that was never committed)."
+    rebuild_notes:
+      - "Keep; make it a required gate before attestation PASS is trusted (or run it inside the attestation job with the same grype DB the build used)."
+
+  # ───────────────────────── configs ─────────────────────────
+  - id: cfg.attestation/cve-policy.yaml
+    kind: config
+    path: configs/attestation/cve-policy.yaml
+    purpose: "CVE gate policy: gating_severities [Critical,High,Unknown], informational [Medium,Low,Negligible], fail_on_unscanned false, fix_state_gates always, allowlist []"
+    invoked_by: [script.check-cves, script.run-cve-canary]
+    notes:
+      - "Only gating_severities, informational_severities (display), fail_on_unscanned and allowlist are read (check-cves.sh:231-253). fix_state_gates is prose-only."
+      - "Policy SHA-256 recorded in cve-report-coverage.json and attestation-summary.cve_policy.sha256 and shown in the SPA."
+      - "allowlist is empty today. Heartbleed CVE-2014-0160 must never be allowlisted (comment L92-99)."
+    evidence: "configs/attestation/cve-policy.yaml:37-100"
+
+  - id: cfg.attestation/license-policy.yaml
+    kind: config
+    path: configs/attestation/license-policy.yaml
+    purpose: "allowed_spdx (54 lines incl. non-SPDX names), gentoo_to_spdx map (~55 entries), denied_spdx []"
+    invoked_by: [script.check-licenses, script.enrich-sbom]
+    notes:
+      - "gentoo_to_spdx is shared: check-licenses.py normalises with it and enrich-sbom.py rewrites SBOM licenses with it (so published SBOM carries SPDX ids)."
+    evidence: "configs/attestation/license-policy.yaml:16-134"
+
+  - id: cfg.attestation/cpe-overrides.yaml
+    kind: config
+    path: configs/attestation/cpe-overrides.yaml
+    purpose: "overrides: bare-package-name -> CPE 2.3 template ('*' version replaced by enrich-sbom). 87 entries (counted grep '\"cpe:2.3')."
+    invoked_by: [script.enrich-sbom]
+    notes: ["Packages absent from this file (and not excluded) become CPE gaps = never CVE-scanned."]
+    evidence: "configs/attestation/cpe-overrides.yaml:1-201"
+
+  - id: cfg.attestation/cpe-exclusions.yaml
+    kind: config
+    path: configs/attestation/cpe-exclusions.yaml
+    purpose: "fnmatch patterns on 'category/name' excluded from gap counting: acct-group/*, acct-user/*, virtual/*, app-alternatives/* (justification component_not_present)"
+    invoked_by: [script.enrich-sbom]
+    notes:
+      - "Exclusion only moves a package from 'gap' to 'excluded' in counts. It does NOT make the package 'scanned'; check-cves still lists it as UNSCANNED."
+      - "Header says written to cpe-exclusions.json per build and surfaced on dashboard (L13-14): written yes, but web/ never fetches it."
+      - "Hard-coded path ${SCRIPT_DIR}/../configs/attestation/cpe-exclusions.yaml in attestation.sh (no CLI flag)."
+    evidence: "configs/attestation/cpe-exclusions.yaml:16-41"
+
+  - id: cfg.attestation/unowned-allowlist.yaml
+    kind: config
+    path: configs/attestation/unowned-allowlist.yaml
+    purpose: "fnmatch globs (paths relative to rootfs, no leading /) of files allowed to be unowned; ~103 entries"
+    invoked_by: [script.check-unowned]
+    notes:
+      - "Categories: shadow backups; font index (usr/share/fonts/*/fonts.dir, usr/share/fonts/monolith*); FHS dirs; portage dirs and var/db/pkg/** etc.; /etc config files from build-rootfs.sh; init scripts etc/init.d/{rcS,rcK,S20keygen,S30gpm,S35netprobe,S40network,S45monolith-time,S50advisory}; root skel; bin/sh, usr/bin/more, usr/share/terminfo/?; ld.so.cache; var/run,var/lock; /etc postinst artifacts; binutils eselect symlinks; binutils info/dir; nethack state; kmod runlevels; gentoo news; nftables state."
+      - "Rebuild coupling: this list is the contract between build-rootfs.sh (hand-written files) and Pillar 4. Whoever owns build-rootfs must keep them in sync."
+    evidence: "configs/attestation/unowned-allowlist.yaml:11-192"
+
+  - id: cfg.attestation/spdx-license-ids.txt
+    kind: config
+    path: configs/attestation/spdx-license-ids.txt
+    purpose: "810 SPDX ids (CycloneDX license.id enum) used by enrich-sbom.py to decide id vs name"
+    invoked_by: [script.enrich-sbom]
+    notes: ["Looked up as <dirname(license-policy)>/spdx-license-ids.txt then /configs/attestation/ (enrich-sbom.py:216-218). Missing => id sanitisation silently skipped => schema validation may fail later."]
+    evidence: "scripts/enrich-sbom.py:211-225"
+
+  - id: cfg.attestation/schemas
+    kind: config
+    path: configs/attestation/schemas/
+    purpose: "Vendored CycloneDX JSON schemas ($id stripped to force local $ref resolution): bom-1.6.schema.json, bom-1.7.schema.json, spdx.schema.json, jsf-0.82.schema.json, cryptography-defs.schema.json (+README)"
+    invoked_by: ["job.build.attestation step 'Validate CycloneDX SBOM schema' (check-jsonschema==0.38.0, --base-uri file://schemas/, build.yml ~L690-745)"]
+    notes:
+      - "Validates ONLY bom.cdx.json and builder-bom.cdx.json (build.yml validate_sbom). No schema validation of attestation-summary.json, builds-index.json, license/unowned/coverage reports or slsa-provenance.json."
+      - "Schema chosen by SBOM specVersion; missing vendored schema => fail loud (no network fallback). Today Syft emits 1.7 (schemas/README)."
+      - "check-jsonschema install is runner-side `pip install --user` (not in builder image), pip cache key pip-check-jsonschema-0.38.0."
+    evidence: "configs/attestation/schemas/README; .github/workflows/build.yml:691-745"
+
+  - id: cfg.scripts/fixtures/canary-sbom.cdx.json
+    kind: config
+    path: scripts/fixtures/canary-sbom.cdx.json
+    purpose: "Canary fixture: CycloneDX 1.5, one component openssl 1.0.1 cpe:2.3:a:openssl:openssl:1.0.1:*..., timestamp 2014-04-07"
+    invoked_by: [script.run-cve-canary]
+    notes: ["Description says 'Do not update this version'."]
+    evidence: "scripts/fixtures/canary-sbom.cdx.json (structure only)"
+
+  # ───────────────────────── web ─────────────────────────
+  - id: web.index.html
+    kind: web
+    path: web/index.html
+    purpose: "SPA shell; loads Google Fonts, v86 (libv86.js) from jsDelivr, then app/*.js in order"
+    external: [ext.google-fonts, ext.jsdelivr]
+    pins:
+      - thing: "libv86.js"
+        value: "https://cdn.jsdelivr.net/npm/v86/build/libv86.js  (NO version pin = latest npm)"
+        evidence: "web/index.html:16"
+      - thing: "Google Fonts css2"
+        value: "Inter 400/500/600 + JetBrains Mono 400/500/600, display=swap; preconnect fonts.googleapis.com, fonts.gstatic.com"
+        evidence: "web/index.html:8-10"
+    notes:
+      - "Script order: data, charts, ui, view-landing, view-boot, view-downloads, view-index, view-build, view-compare, view-package, router (index.html:17-27). No bundler, no module system, globals MonolithData/MonolithUI/MonolithCharts/MonolithViews."
+      - "v86 loaded on EVERY page load, not only #/boot ('loaded once for the boot page' comment is wrong, L15)."
+      - "No CSP, no SRI on any third-party resource."
+    s3_coupling: hard
+    s3_detail: "Hosted from the S3 bucket root (index.html + styles.css + app/*) by `aws s3 sync output/web/ s3://$S3_BUCKET/` (build.yml ~L802-806); every data URL is absolute to the bucket."
+
+  - id: web.styles.css
+    kind: web
+    path: web/styles.css
+    purpose: "Single stylesheet (29.6KB), CSS vars for dark/light theme (data-theme attr), accent via oklch; fonts via var(--sans)=Inter, var(--mono)=JetBrains Mono. No @import/url() to external hosts."
+    external: []
+    notes: ["boot.html background image is configs/bootbg.png (relative) - not in web/."]
+
+  - id: web.app/data.js
+    kind: web
+    path: web/app/data.js
+    purpose: "Data layer: all fetches, in-memory promise cache (cache:'no-store' per fetch), summary->pageMeta mapping"
+    external: [ext.aws-s3]
+    pins:
+      - thing: "S3_ROOT / ISO_BASE"
+        value: "https://themonolith.s3.us-west-2.amazonaws.com (bucket 'themonolith', region us-west-2 HARD-CODED)"
+        evidence: "web/app/data.js:135,137"
+      - thing: "ATTEST_ROOT"
+        value: "https://themonolith.s3.us-west-2.amazonaws.com/attestation"
+        evidence: "web/app/data.js:136"
+    s3_coupling: hard
+    notes:
+      - "fetchBuild uses Promise.allSettled over 9 files so any missing file degrades gracefully (older builds)."
+      - "pageMeta 'Build Type': tag.includes('-') => 'CI build (master)' else 'tagged release' (data.js:217). WRONG for prerelease tags like 0.1.0-rc1 (labelled CI build) - and tags are `<epoch>-<sha>` vs semver."
+      - "ISO Download link = ISO_BASE/themonolith-<tag>.iso for ANY tag; tagged release ISO is themonolith-<version>.iso (no v, matches release.yml). OK."
+      - "Hard-coded 'tuckermclean' owner in view-build.js verify commands and GitHub policy link."
+
+  - id: web.app/router.js
+    kind: web
+    path: web/app/router.js
+    purpose: "Hash router + topbar + theme/density/accent tweaks (localStorage 'monolith.theme'); only keyboard shortcut 't' toggles theme"
+    notes:
+      - "postMessage '__edit_mode_*' to window.parent is leftover tooling from a design-tool prototype (router.js:104-110) - dead in production."
+      - "TWEAKS.showBuilderCard unused."
+    routes:
+      - route: "#/"
+        view: "renderLanding"
+        data: "builds-index.json (latest) + attestation/<latest>/attestation-summary.json"
+      - route: "#/boot"
+        view: "renderBoot"
+        data: "no JSON; ISO via range requests (see below)"
+      - route: "#/downloads"
+        view: "renderDownloads"
+        data: "builds-index.json + attestation-summary.json per build (lazy, N fetches)"
+      - route: "#/builds"
+        view: "renderIndex"
+        data: "builds-index.json only"
+      - route: "#/build/<tag>[?tab=overview|sbom|cves|licenses|unowned|provenance|builder|verify]"
+        view: "renderBuild"
+        data: "attestation/<tag>/{bom.cdx.json, cve-report.cdx.json, cve-report-coverage.json, license-report.json, unowned-report.json, builder-bom.cdx.json, builder-cve-report.cdx.json, builder-cve-report-coverage.json, attestation-summary.json}"
+      - route: "#/compare/<a>/<b> (a or b may be _prev)"
+        view: "renderCompare"
+        data: "builds-index.json + full fetchBuild for both tags (all 9 files each)"
+      - route: "#/package/<name>"
+        view: "renderPackage"
+        data: "builds-index.json + full fetchBuild for the 8 newest builds (up to 72 requests, multi-MB SBOMs)"
+      - route: "(unknown)"
+        view: "renderLanding"
+        data: "fallback"
+
+  - id: web.app/view-boot.js
+    kind: web
+    path: web/app/view-boot.js
+    purpose: "In-browser boot of the ISO with v86 (WebAssembly x86 emulator)"
+    external: [ext.aws-s3, ext.jsdelivr]
+    pins:
+      - thing: "ISO_URL"
+        value: "https://themonolith.s3.us-west-2.amazonaws.com/themonolith.iso  (moving 'latest' pointer, copied server-side in build.yml:546)"
+        evidence: "web/app/view-boot.js:5"
+      - thing: "V86_CDN"
+        value: "https://cdn.jsdelivr.net/npm/v86/   (unpinned) -> build/v86.wasm"
+        evidence: "web/app/view-boot.js:6,93"
+      - thing: "V86_BIOS_CDN"
+        value: "https://cdn.jsdelivr.net/gh/copy/v86@master/  (branch master, unpinned) -> bios/seabios.bin, bios/vgabios.bin"
+        evidence: "web/app/view-boot.js:7,97-98"
+    s3_coupling: hard
+    notes:
+      - "v86 config: memory_size 256MiB, vga_memory 8MiB, cdrom {url: ISO_URL, async:true}, boot_order 0x132 (CD first), autostart true (view-boot.js:92-102)."
+      - "REQUIREMENTS on the ISO host: (1) CORS: Access-Control-Allow-Origin for the page origin AND Access-Control-Expose-Headers: Content-Length/Content-Range/Accept-Ranges so v86 can read sizes; (2) HTTP Range support (206 partial content) - async cdrom issues Range GETs per chunk and also needs a HEAD or a first range probe for the file size; (3) CORS must allow the Range request header (non-simple header => preflight OPTIONS). The UI's own error text: 'The S3 bucket must allow GET requests with Range headers from this origin' (view-boot.js:70). The exact CORS rule on the bucket is not in the repo (no put-bucket-cors anywhere) - UNKNOWN/ manual console config."
+      - "Because v86 and the page are both served from the bucket root, same-origin applies when the page is served from the S3 bucket's REGIONAL endpoint; but the README advertises the global host themonolith.s3.amazonaws.com while data.js uses s3.us-west-2.amazonaws.com => cross-origin fetches (hence CORS needed even for JSON)."
+      - "~135MB ISO (UI text) vs 131MB (README:22) vs reality unknown."
+      - "setInterval(flushSerial,100) never cleared; navigating away and back leaks timers and re-adds pointerlock listeners (view-boot.js:134-136)."
+      - "download-error handler shows 'CORS error' notice for any download failure, including 404."
+      - "Uses window.V86 || window.V86Starter, so works across v86 versions only because unpinned/untested; wasm_path is explicit so wasm and libv86.js can mismatch if jsDelivr 'latest' changes between them."
+
+  - id: web.boot.html
+    kind: web
+    path: boot.html
+    purpose: "Standalone (non-SPA) copy of the same v86 boot demo; README says to open it locally. The SPA's view-boot.js is the maintained version ('migrated verbatim from boot.html')."
+    external: [ext.aws-s3, ext.jsdelivr]
+    pins:
+      - thing: "ISO_URL"
+        value: "https://themonolith.s3.us-west-2.amazonaws.com/themonolith.iso"
+        evidence: "boot.html:289"
+      - thing: "libv86.js"
+        value: "https://cdn.jsdelivr.net/npm/v86/build/libv86.js (unpinned)"
+        evidence: "boot.html:285"
+      - thing: "V86_CDN / V86_BIOS_CDN"
+        value: "https://cdn.jsdelivr.net/npm/v86/  and  https://cdn.jsdelivr.net/gh/copy/v86@master/"
+        evidence: "boot.html:290-291"
+      - thing: "background image"
+        value: "configs/bootbg.png (relative URL; works only if served from repo root; 1.9MB; fails to load when boot.html is opened from file:// elsewhere or hosted standalone)"
+        evidence: "boot.html:22"
+    s3_coupling: hard
+    notes:
+      - "Opened from file:// the page origin is null => CORS wildcard needed on the bucket; boot.html:277-281 suggests hosting boot.html in the same bucket (same origin) as the alternative."
+      - "CSS `header, div.notice {display:none}` at the end (L217-219) hides the header and notice divs, which makes the .notice.warn CORS notice (class notice) permanently hidden even when JS sets display:block? JS sets inline style display:block on #cors-notice which wins over the stylesheet rule, so it does show; the plain .notice help text stays hidden."
+      - "Duplicate logic with web/app/view-boot.js: two copies to maintain; only the SPA is deployed (to bucket root)."
+      - "No workflow or Makefile deploys boot.html (grep: only README mentions it)."
+    rebuild_notes:
+      - "Either drop boot.html or generate it; v86 and BIOS must be pinned to a version/commit (or vendored with SRI) so the demo does not drift; the CDN dependency on ext.jsdelivr and ext.google-fonts is the only third-party runtime dependency."
+
+  - id: web.app/view-landing.js
+    kind: web
+    path: web/app/view-landing.js
+    purpose: "Landing page + live strip with latest build tag, status, ISO sha (from summary)"
+    external: [ext.aws-s3]
+    notes: ["Marketing copy claims: 'The same commit always produces the same ISO' (L407) - not asserted anywhere in the code (no reproducible-build check). Claims 'Grype CVE scan with named CPEs'."]
+
+  - id: web.app/view-downloads.js
+    kind: web
+    path: web/app/view-downloads.js
+    purpose: "Downloads: latest hero + table of ALL builds; N parallel attestation-summary.json fetches for sha256; ISO link ISO_BASE/themonolith-<tag>.iso"
+    external: [ext.aws-s3]
+    notes:
+      - "Labels builds[0] 'LATEST RELEASE' regardless of whether it is a tagged release or a CI build, and lists every CI build as a 'release'."
+      - "Does not offer SHA256SUMS or GitHub Release links."
+
+  - id: web.app/view-index.js
+    kind: web
+    path: web/app/view-index.js
+    purpose: "Attestation index: KPIs, sparkline of packages/unmapped CPE, pass/fail timeline, donut, filterable table, compare-mode picker"
+    external: [ext.aws-s3]
+    notes:
+      - "pillarRow('SBOM','PASS') hard-coded (view-index.js:63): SBOM status never read."
+      - "failCount = builds.length - passCount (view-index.js:30): REVOKED counted as FAIL; timeline colours revoked as warn; donut has only PASS/FAIL."
+      - "Footer links builds-index.json on S3_ROOT; header pill says 'LIVE · S3'."
+      - "Dead imports: barList, normStatus."
+
+  - id: web.app/view-build.js
+    kind: web
+    path: web/app/view-build.js
+    purpose: "Per-build deep dive with 8 tabs (Overview, SBOM, CVEs, Licenses, Unowned, Provenance, Builder Env, Verify)"
+    external: [ext.aws-s3, ext.github-attestations]
+    notes:
+      - "Never fetches or links slsa-provenance.json, SHA256SUMS, cpe-exclusions.json, sbom.cdx.json, sbom.syft.json, *.grype.json; 'BYPRODUCT DIGESTS' table shows every file as 'PINNED' without comparing digests to anything (view-build.js:261-262,569). The claim 'SHA-256 hashes pinned inside the signed SLSA provenance' is only true of what generate-provenance.py writes as byproducts; SPA does not verify."
+      - "Builder tab reads pm keys 'stage3 digest','Portage snapshot SHA-256','Kernel source SHA-512' that summaryToPageMeta never sets => those rows never render (view-build.js:587)."
+      - "Verify tab step 4 references a `<tag>.rekor.json` bundle that no workflow produces."
+      - "Policy link -> https://github.com/tuckermclean/linux-live-iso-factory/blob/master/<policy path> (L362)."
+      - "Fallback ISO URLs use https://themonolith.s3.amazonaws.com (global) while data.js uses us-west-2 regional (inconsistent hostnames)."
+      - "SBOM tab caps at 2000 rows; compare/package filter regex /^[a-z-]+\\/[a-z0-9._+-]+$/i drops names containing digits in category or uppercase etc."
+      - "Verify commands hard-code `--owner tuckermclean --predicate-type https://slsa.dev/provenance/v1` and `gh extension install github/gh-attestation` (deprecated; gh attestation is built-in)."
+
+  - id: web.app/view-compare.js
+    kind: web
+    path: web/app/view-compare.js
+    purpose: "Side-by-side added/removed/version-changed packages + deltas (pkgs, unmapped CPE, CVE findings, license fail/unknown)"
+    external: [ext.aws-s3]
+    notes: ["Awaits fetchBuild for both builds with Promise.all but fetchBuild never rejects (allSettled), so an unknown tag renders empty rather than an error."]
+
+  - id: web.app/view-package.js
+    kind: web
+    path: web/app/view-package.js
+    purpose: "One package across the 8 newest builds"
+    external: [ext.aws-s3]
+    notes: ["Downloads up to 8 full builds (bom + cve + license + unowned + builder*) = ~72 requests just to read one component; comment says '6 builds' but code uses 8."]
+
+  - id: web.app/ui.js
+    kind: web
+    path: web/app/ui.js
+    purpose: "DOM helper h(), chips, hashCell (clipboard), cards, tabs"
+    notes: ["h() supports `html:` attr => innerHTML; used only with static strings. All dynamic data goes through textContent/createTextNode (no XSS from SBOM strings) except showError in view-boot which writes via h()."]
+
+  - id: web.app/charts.js
+    kind: web
+    path: web/app/charts.js
+    purpose: "Hand-rolled SVG sparkline/timeline/donut/barList; no deps"
+
+contradictions:
+  - claim: "Pillar 5 (builder attestation) runs only with --include-builder"
+    where: "scripts/attestation.sh:9,27 (header, comment)"
+    fact: "INCLUDE_BUILDER=1 is the default; the flag is a no-op; builder pillar always runs and its failure fails overall"
+    evidence: "scripts/attestation.sh:70,507,713-718"
+  - claim: "Five-pillar pipeline (Pillars 1-5)"
+    where: "scripts/attestation.sh:3-9"
+    fact: "A sixth step 'Pillar 6 SLSA provenance' exists and gates overall (provenance_check); header and Makefile comments ('three-pillar') are stale"
+    evidence: "scripts/attestation.sh:639-695,711; Makefile:447"
+  - claim: "nightly-cve-monitor.py is orphaned / not wired to any workflow"
+    where: "docs/cve-gate.md:138,209-217 and README.md (~L185 'not currently wired into a scheduled GitHub Actions job')"
+    fact: ".github/workflows/nightly-cve-scan.yml runs it daily 04:00 UTC (cron '0 4 * * *') with S3 sync"
+    evidence: ".github/workflows/nightly-cve-scan.yml:17-20,57-62"
+  - claim: "nightly monitor re-scans 'tagged release' SBOMs and honours the policy 'reconciling its Grype invocation with cve-policy.yaml' is future work"
+    where: "scripts/nightly-cve-monitor.py:4-6; docs/cve-gate.md:213-216"
+    fact: "It scans every dir under attestation/ (CI builds and tags) and revokes on ANY grype match of any severity; cve-policy.yaml unused"
+    evidence: "scripts/nightly-cve-monitor.py:63-78,278-291"
+  - claim: "Allowlist entries require `expires`; re-review forces a fresh look"
+    where: "configs/attestation/cve-policy.yaml:81-90"
+    fact: "expires is copied into the finding but never compared to today; justification/approved_by not validated. Expired waivers keep waiving"
+    evidence: "scripts/check-cves.sh:256-264,333"
+  - claim: "fix_state_gates: always is a policy key"
+    where: "configs/attestation/cve-policy.yaml:63-71"
+    fact: "Key is never read; behaviour 'always gate' is simply the absence of fix-state logic"
+    evidence: "scripts/check-cves.sh:231-253,319"
+  - claim: "unowned-allowlist `*` matches within a path segment, `**` across"
+    where: "configs/attestation/unowned-allowlist.yaml:7"
+    fact: "Matching is Python fnmatch.fnmatch: `*` already matches '/'; `**` is equivalent to `*`"
+    evidence: "scripts/check-unowned.py:170-179"
+  - claim: "~50 Portage packages are mapped in cpe-overrides.yaml"
+    where: "docs/cve-gate.md:25"
+    fact: "87 CPE override entries"
+    evidence: "configs/attestation/cpe-overrides.yaml (grep -c '\"cpe:2.3' = 87)"
+  - claim: "cve-coverage.json (name used in docs/comments)"
+    where: "docs/cve-gate.md:78,195,309; scripts/run-cve-canary.sh:22; scripts/check-cves.sh:428"
+    fact: "Actual file names are cve-report-coverage.json and builder-cve-report-coverage.json (derived from --output by stripping .cdx.json)"
+    evidence: "scripts/check-cves.sh:100-103; web/app/data.js:167,172"
+  - claim: "Dashboard on the SPA lives at themonolith.s3.amazonaws.com (README, docs/releasing.md:56, view-build.js fallbacks, monolith-advisory-check default)"
+    where: "README.md:7-9,20,51; docs/releasing.md:56; configs/overlay/app-misc/monolith-base/files/monolith-advisory-check:17"
+    fact: "web/app/data.js, view-boot.js, boot.html and scripts/build-rootfs.sh:266 use the regional host themonolith.s3.us-west-2.amazonaws.com. Two hostnames for the same bucket; both die with the AWS account"
+    evidence: "web/app/data.js:135-137; web/app/view-boot.js:5"
+  - claim: "Release flow: attestation chain sha256(ISO)==SBOM hash==SLSA subject digest verified before publishing (docs/releasing.md:140-175, release.yml comment)"
+    where: "docs/releasing.md:142-175"
+    fact: "release.yml verifies ISO == attestation-summary.iso_sha256 == SBOM hashes[0] only (release.yml:149-162). The SLSA subject equality is guaranteed upstream by actions/attest (it hashes subject-path) not re-checked at release; `gh attestation verify` is a manual step. AGENTS.md's 'recovery pattern' adds the gh verify."
+    evidence: ".github/workflows/release.yml:136-164"
+  - claim: "Per-release S3 prefix and tagged ISO name `themonolith-<version>.iso` with `themonolith.iso` always the newest build"
+    where: "docs/releasing.md:55-67"
+    fact: "Consistent with build.yml:540-546 (versioned upload + server-side copy to themonolith.iso) only when publish-latest=true (master/tag). Validation builds leave no S3 footprint (build.yml:783-791)."
+    evidence: ".github/workflows/build.yml:469-487,540-546"
+  - claim: "docs/cve-gate.md: 'Dashboard CVE tab... scanner/DB/policy banner... rendered even when finding count is zero'"
+    where: "docs/cve-gate.md:136"
+    fact: "True for banner and coverage; the findings table itself is NOT rendered when there are zero findings (an early return shows a 'Zero findings' callout instead)"
+    evidence: "web/app/view-build.js:409-420"
+  - claim: "v86 'loaded once for the boot page'"
+    where: "web/index.html:15"
+    fact: "Loaded synchronously on every page load of the SPA"
+    evidence: "web/index.html:16"
+  - claim: "Dashboard nav 'SBOM' pillar status reflects the build"
+    where: "web/app/view-index.js:63"
+    fact: "Hard-coded 'PASS'"
+    evidence: "web/app/view-index.js:63"
+  - claim: "Build Type = 'CI build (master)' if tag contains '-' else 'tagged release'"
+    where: "web/app/data.js:217"
+    fact: "Prerelease tags such as 0.1.0-rc1 (the first and a currently published release per AGENTS.md) are labelled CI build"
+    evidence: "web/app/data.js:217; docs/releasing.md:49"
+  - claim: "provenance --portage-snapshot-sha256 comes from distfiles .sha256 sidecar"
+    where: "scripts/generate-provenance.py:61-62"
+    fact: "attestation.sh streams the whole snapshot tarball and hashes it itself"
+    evidence: "scripts/attestation.sh:645-661"
+  - claim: "cpe-exclusions.json written 'per build' and 'surfaced on the dashboard'"
+    where: "configs/attestation/cpe-exclusions.yaml:13-14; docs/cve-gate.md:330"
+    fact: "Written, but the builder pass overwrites it (same fixed filename) and web/ never fetches it; only the *counts* via attestation-summary excluded_cpe_count"
+    evidence: "scripts/enrich-sbom.py:1322; scripts/attestation.sh:544-565; web/app/data.js:162-175"
+  - claim: "Attestation job: 'continue-on-error' gate, signing only if PASS"
+    where: "build.yml L664 (cross-read)"
+    fact: "make attestation runs with continue-on-error: true; the verdict is read from the summary and a final step fails the job. Order matters: S3 upload of attestation artifacts is 'if publish-latest' and NOT conditioned on PASS, so FAILED builds are still published to S3 and show on the dashboard (by design: dashboard shows FAIL builds)"
+    evidence: ".github/workflows/build.yml:~663-668,782-786,820-830"
+
+open_questions:
+  - "Exact CORS configuration of the themonolith bucket (AllowedOrigins/Headers/ExposeHeaders for Range) is not in the repo; need to define it for the new host. The v86 async CDROM needs Range + exposed Content-Range/Content-Length/Accept-Ranges."
+  - "Does the new design keep a public dashboard at all, and where (GitHub Pages? release assets?). Everything in web/ assumes absolute S3 URLs and index at bucket root."
+  - "Who is the 'themonolith.org' domain (details_url in status JSON)? Not referenced elsewhere and not verified to exist."
+  - "Is the builder-image pillar (Pillar 5) wanted in the rebuild? It gates overall on CVEs in the Gentoo stage3/crossdev builder (not shipped), and requires per-container-run semantics."
+  - "Was docs/cve-gate.md's mocked-grype harness (a ~30-line bash stub) ever committed? Not found under scripts/ or scripts/tests; there are no unit tests for any attestation script."
+  - "Real value of attestation-summary.json 'builder.image_digest' in CI: Makefile attestation target omits --builder-digest, so likely empty; confirm from a published summary (S3 unreachable)."
+  - "Is there a current published SBOM specVersion? schemas/README says Syft emits 1.7; enrich floors to 1.6. If new Syft emits 1.8 the schema-validation step fails by design."
+  - "grype/syft versions in the builder image are installed via an unpinned install.sh (per cve-gate.md/check-cves comments); Dockerfile not in my scope - check build area for pins."
+  - "Whether SOURCE_DATE_EPOCH-based reproducibility is ever verified (landing page claims 'same commit always produces the same ISO'); no rebuild-and-compare job seen in my scope."
+
+# ───────────────────────── invariants ─────────────────────────
+invariants:
+  - id: INV-DIGEST-1
+    statement: "sha256sum(ISO) is computed exactly once, inside attestation.sh, and that single value is written to attestation-summary.iso_sha256, SBOM metadata.component.hashes[0].content (+ both distribution externalReferences' hashes), and slsa-provenance subject digest"
+    enforced_by: "scripts/attestation.sh:188-195,305,675; scripts/enrich-sbom.py:539-541"
+    failure_mode: "n/a (construction); if ISO missing: ISO_SHA256='(not computed)', SBOM gets NO hashes, provenance step FAILS (pillar fail => overall fail)"
+    tier: slow
+  - id: INV-DIGEST-2
+    statement: "Provenance cannot be generated without a real ISO digest"
+    enforced_by: "scripts/attestation.sh:641,693-694; scripts/generate-provenance.py:77-83"
+    failure_mode: "fail build (provenance_check=fail, overall=fail, exit 1)"
+    tier: fast
+  - id: INV-DIGEST-3
+    statement: "At release time the ISO downloaded from S3 re-hashes to attestation-summary.iso_sha256, and SBOM metadata.component.hashes[0].content equals it"
+    enforced_by: ".github/workflows/release.yml:149-162"
+    failure_mode: "fail release (exit 1 before gh release create); SLSA subject equality is NOT re-checked here"
+    tier: slow
+  - id: INV-DIGEST-4
+    statement: "The signed SLSA attestation's subject is the ISO file at subject-path (Sigstore/GitHub computes the digest from the file), and signing happens only when attestation overall == pass"
+    enforced_by: ".github/workflows/build.yml:~778 (actions/attest@v2 subject-path + if verdict=='pass'); docs/releasing.md:161-166"
+    failure_mode: "skip signing on FAIL; job still fails in final step"
+    tier: slow
+  - id: INV-PILLAR-ALL
+    statement: "Every pillar runs to completion regardless of earlier failures; every artifact is always written; exit 1 iff any of sbom, license, cve, unowned, provenance, builder_sbom, builder_cve failed"
+    enforced_by: "scripts/attestation.sh:11-12,54,697-718,877-880"
+    failure_mode: "fail build (after all artifacts exist)"
+    tier: slow
+  - id: INV-SBOM-1
+    statement: "Syft SBOM generation of the sysroot must succeed (portage-cataloger only) and enrich-sbom.py must exit 0; otherwise pillars 2-3 use the raw SBOM and the SBOM pillar fails"
+    enforced_by: "scripts/attestation.sh:259-263,293-347"
+    failure_mode: "fail build (sbom_check=fail)"
+    tier: slow
+  - id: INV-SBOM-2
+    statement: "Published SBOM (bom.cdx.json, builder-bom.cdx.json) validates against the vendored CycloneDX schema matching its specVersion, offline"
+    enforced_by: ".github/workflows/build.yml:~700-745 (check-jsonschema 0.38.0, schemas in configs/attestation/schemas/)"
+    failure_mode: "fail build (step exit; missing schema for new specVersion also fails)"
+    tier: slow
+  - id: INV-SBOM-3
+    statement: "SBOM is a package SBOM: file-type components dropped; synthetic Syft slug CPEs removed; license.id only holds real SPDX ids"
+    enforced_by: "scripts/enrich-sbom.py:581-589,659-662,228-263"
+    failure_mode: "n/a transform; violation would surface as schema-validation failure (INV-SBOM-2)"
+    tier: fast
+  - id: INV-SBOM-4
+    statement: "Musl (static libc), GRUB and syslinux, which are embedded in the ISO but absent from the sysroot vdb, are propagated into the target SBOM from the host vdb so license/CVE checks cover them"
+    enforced_by: "scripts/enrich-sbom.py:779-827 (called with --host-vdb /var/db/pkg at attestation.sh:306)"
+    failure_mode: "silent skip if host vdb entry not found"
+    tier: slow
+  - id: INV-CPE-1
+    statement: "CPE mapping is an exception list: packages in cpe-overrides.yaml get a CPE (revision -rN and _pN/_preN stripped); acct-*/virtual/app-alternatives never get a CPE; every other package without a CPE is a counted 'genuine gap' (unmapped_cpe_count), excluded ones counted separately"
+    enforced_by: "scripts/enrich-sbom.py:640-666,1256-1304; configs/attestation/cpe-exclusions.yaml"
+    failure_mode: "warn / count only (enrich exit 0 always)"
+    tier: fast
+  - id: INV-LIC-1
+    statement: "Every non-file component and metadata.component must have a license expression that is satisfiable (DNF over Portage || ( ) / SPDX OR/AND) using only licenses in allowed_spdx (after gentoo_to_spdx), none in denied_spdx"
+    enforced_by: "scripts/check-licenses.py:200-267,319-362; configs/attestation/license-policy.yaml:16-134"
+    failure_mode: "fail build (license_check=fail, exit 1)"
+    tier: fast
+  - id: INV-LIC-2
+    statement: "Components with NO license info are 'unknown', never failed"
+    enforced_by: "scripts/check-licenses.py:17-18,227-235,362"
+    failure_mode: "warn (counted as unknown in report)"
+    tier: fast
+  - id: INV-LIC-3
+    statement: "Policy file identity (sha256) is recorded in license-report.json"
+    enforced_by: "scripts/check-licenses.py:325-332"
+    failure_mode: "n/a record"
+    tier: fast
+  - id: INV-CVE-1
+    statement: "CVE gate threshold: any grype finding with severity in {Critical,High,Unknown} that is not waived fails the scan; Medium/Low/Negligible are informational only; fix state never downgrades a finding"
+    enforced_by: "scripts/check-cves.sh:253,319,343-353,434; configs/attestation/cve-policy.yaml:37-71"
+    failure_mode: "fail build (cve_check=fail; also builder: builder_cve fail) - both target AND builder image are gated"
+    tier: fast
+  - id: INV-CVE-2
+    statement: "Waiver exception: allowlist entry matching (cve id, optional component name) marks a finding WAIVED (not gating) but it is still listed and counted (waived_findings). allowlist is currently empty. `expires`/approver are NOT enforced"
+    enforced_by: "scripts/check-cves.sh:256-264,318-319,344"
+    failure_mode: "skip (finding waived)"
+    tier: fast
+  - id: INV-CVE-3
+    statement: "fail_on_unscanned (default false): when true, any component with no CPE fails the gate. Unscanned components are always reported as UNSCANNED, never counted clean"
+    enforced_by: "scripts/check-cves.sh:216-219,351-353; configs/attestation/cve-policy.yaml:56"
+    failure_mode: "default: warn/note; if flag true: fail build"
+    tier: fast
+  - id: INV-CVE-4
+    statement: "No CVE verdict is emitted without recording scanner name+version, grype DB built/schema/checksum, policy path+sha256 and scanned/matched/clean/unscanned counts; DB older than 3 days or unparseable sets age_warning"
+    enforced_by: "scripts/check-cves.sh:120-130,266-303,355-394; scripts/attestation.sh:404-429,754-772"
+    failure_mode: "warn (age_warning string on dashboard); missing policy => WARNING + built-in default gate"
+    tier: fast
+  - id: INV-CVE-5
+    statement: "Scanner liveness canary: grype scanning the OpenSSL 1.0.1 fixture must report >0 raw findings and include CVE-2014-0160 (CVE-2014-0160 must never be in the allowlist)"
+    enforced_by: "scripts/run-cve-canary.sh:97-111; .github/workflows/cve-gate-canary.yml"
+    failure_mode: "fail the canary workflow only (not a gate in build.yml)"
+    tier: slow
+  - id: INV-CVE-6
+    statement: "grype DB is refreshed (make grype-db-update, weekly-keyed cache) immediately before every attestation run; check-cves.sh itself never updates it"
+    enforced_by: ".github/workflows/build.yml:~650-662; Makefile:491-494; scripts/check-cves.sh:120-126"
+    failure_mode: "warn (stale DB only flagged)"
+    tier: slow
+  - id: INV-CVE-7
+    statement: "Retroactive revocation: every nightly run re-scans all synced build SBOMs with a fresh DB; any match => status/<tag>.json status=revoked and summary cve_check revoked/fail, overall fail; the live ISO fetches status/<tag>.json and shows a banner if revoked"
+    enforced_by: "scripts/nightly-cve-monitor.py:278-296; configs/overlay/app-misc/monolith-base/files/monolith-advisory-check:29-60"
+    failure_mode: "advisory only (workflow only fails if nothing could be scanned); S3-hard"
+    tier: slow
+  - id: INV-OWN-1
+    statement: "Every file on the sysroot disk (Syft file cataloger) must be owned by a Portage package (Syft installedFiles + CONTENTS obj/sym/dir, with .bz2 alias) or match a unowned-allowlist glob; otherwise unowned"
+    enforced_by: "scripts/check-unowned.py:243-269,308; configs/attestation/unowned-allowlist.yaml"
+    failure_mode: "fail build (unowned_check=fail)"
+    tier: fast
+  - id: INV-OWN-2
+    statement: "Pillar 4 only works if Syft is run with SYFT_FILE_METADATA_SELECTION=all (files[] populated); otherwise it warns and trivially passes with 0 files"
+    enforced_by: "scripts/attestation.sh:259; scripts/check-unowned.py:246-250"
+    failure_mode: "warn (SILENT PASS) - weak invariant"
+    tier: slow
+  - id: INV-OWN-3
+    statement: "If sbom.syft.json is missing, pillar 4 is skipped with a warning and counts as PASS"
+    enforced_by: "scripts/attestation.sh:463-473"
+    failure_mode: "skip (warn)"
+    tier: slow
+  - id: INV-PROV-1
+    statement: "SLSA provenance uses GitHub canonical buildType (https://actions.github.io/buildtypes/workflow/v1), records resolvedDependencies (git commit, stage3 epoch+digest, portage snapshot epoch+sha256, kernel tarball url+sha512, builder image), byproduct sha256 of the other attestation files, and real started/finished timestamps"
+    enforced_by: "scripts/generate-provenance.py:113,128-211,121-123"
+    failure_mode: "n/a record; missing optional inputs silently omitted (never fabricated)"
+    tier: fast
+  - id: INV-PIN-1
+    statement: "Build inputs are recorded in the SBOM formulation: stage3 (epoch+digest), versions.lock sha256, kernel tarball SHA-512, busybox tarball SHA-512 (from signed Portage Manifests)"
+    enforced_by: "scripts/enrich-sbom.py:837-921"
+    failure_mode: "silently omitted if inputs unresolved (never fabricated)"
+    tier: slow
+  - id: INV-DASH-1
+    statement: "builds-index.json is sorted newest-first by attestation timestamp (not tag) and cpeDelta is computed vs the previous entry"
+    enforced_by: "scripts/generate-dashboard.py:78-91"
+    failure_mode: "n/a"
+    tier: fast
+  - id: INV-REL-1
+    statement: "A release is published only if the Build run for that exact tag commit succeeded (workflow_run conclusion success, event push, head_branch starts with 'v') and the tag resolves to the built SHA"
+    enforced_by: ".github/workflows/release.yml:55-60,88-97"
+    failure_mode: "skip publish / fail"
+    tier: slow
+  - id: INV-REL-2
+    statement: "Tag builds publish SHA256SUMS (iso + bom.cdx.json) to the GitHub Release and mirror it to s3://$S3_BUCKET/attestation/<version>/SHA256SUMS"
+    enforced_by: ".github/workflows/release.yml:166-170,265-278"
+    failure_mode: "fail release"
+    tier: slow
+
+# ───────────────────────── data contracts ─────────────────────────
+data_contracts:
+  - name: attestation-summary.json
+    producer: script.attestation
+    consumers: "script.generate-dashboard, script.nightly-cve-monitor (rewrites), job.build.attestation (reads .overall), wf.release (reads .iso_sha256), web.app/data.js (fetchBuild/fetchSummary), web.app/view-downloads.js, web.app/view-landing.js"
+    location: "build artifact dir output/attestation/ -> s3://$S3_BUCKET/attestation/<BUILD_VERSION>/attestation-summary.json (public-read, no-store fetch)"
+    key_fields:
+      - "build_tag, timestamp (ISO8601Z), iso_sha256, package_count, unmapped_cpe_count, excluded_cpe_count"
+      - "sbom_check, license_check, cve_check, unowned_check, provenance_check, overall: 'pass'|'fail' (cve_check may become 'revoked' via nightly)"
+      - "cve_scanner{name,version}, cve_db{built,schema_version,checksum,age_warning}, cve_policy{path,sha256}, cve_coverage{scanned,matched,clean,unscanned,total_findings,waived_findings}"
+      - "unowned_count, cve_failures[] ('pkg-ver: CVE,..'), license_failures[], unowned_files[]"
+      - "builder{attested(int 1),epoch,cross_target,image_digest,package_count,unmapped_cpe_count,excluded_cpe_count,cve_scanner,cve_db_built,cve_coverage{scanned,matched,clean,unscanned,total_findings},sbom_check,cve_check,cve_failures[]} - builder.cve_check/sbom_check are 'not_run' when not attested"
+    evidence: "scripts/attestation.sh:744-801"
+    notes:
+      - "Hand-assembled by a python heredoc with shell interpolation; no schema."
+      - "NOT validated by any JSON schema; web code defensively handles missing keys (older builds lack cve_* fields)."
+  - name: builds-index.json (+ latest-build.json)
+    producer: script.generate-dashboard (also regenerated nightly by script.nightly-cve-monitor)
+    consumers: "web.app/data.js fetchBuildIndex -> landing, downloads, index, compare, package views"
+    location: "s3://$S3_BUCKET/builds-index.json and latest-build.json (bucket ROOT), https://themonolith.s3.us-west-2.amazonaws.com/builds-index.json; also make dashboard -> output/web/"
+    key_fields: "array newest-first of {tag,timestamp,date,packages,unmappedCPEs,excludedCPEs,cpeDelta,licenses,cves,unowned,overall(UPPERCASE),cveScanner,cveScannerVer,cveDbBuilt,cveDbAgeWarning,cveScanned,cveMatched,cveClean,cveUnscanned,cveTotalFindings,cveWaivedFindings,cvePolicyPath}"
+    evidence: "scripts/generate-dashboard.py:51-103"
+  - name: bom.cdx.json (enriched SBOM, CycloneDX >=1.6, today 1.7)
+    producer: script.enrich-sbom (via script.attestation); input is Syft sbom.cdx.json
+    consumers: "script.check-licenses, script.check-cves, script.nightly-cve-monitor (grype rescans it), wf.release (metadata.component.hashes[0].content; also attached to GitHub Release + SHA256SUMS), job.build.attestation (schema validation), web view-build/compare/package (components[].name/version/cpe/purl/licenses)"
+    location: "output/attestation/bom.cdx.json -> s3://$S3_BUCKET/attestation/<tag>/bom.cdx.json -> GitHub Release asset bom.cdx.json (tags)"
+    key_fields: "metadata.component{type:operating-system,bom-ref:themonolith-<tag>,name,version,hashes[0]{alg:SHA-256,content=ISO sha},externalReferences[vcs,build-system,distribution(s3),distribution(release)]}; components[]{name 'cat/pkg',version,cpe,purl pkg:ebuild/...?arch=&distro=gentoo,licenses,supplier,authors,type,bom-ref}; dependencies[]; formulation[0]{components,properties}; metadata.tools.components[]; metadata.authors, lifecycles"
+    evidence: "scripts/enrich-sbom.py:454-1028"
+  - name: builder-bom.cdx.json (+ builder-sbom.cdx.json raw)
+    producer: script.enrich-sbom (--product-name themonolith-builder) via script.attestation Pillar 5
+    consumers: "script.check-cves, web view-build Builder tab, job.build.attestation schema validation"
+    location: "s3://$S3_BUCKET/attestation/<tag>/builder-bom.cdx.json"
+    key_fields: "same shape as bom.cdx.json but metadata.component.name=themonolith-builder, no hashes, no dependency graph, no formulation"
+    evidence: "scripts/attestation.sh:544-556"
+  - name: sbom.cdx.json / sbom.syft.json (raw Syft)
+    producer: syft in script.attestation
+    consumers: "script.enrich-sbom (cdx), script.check-unowned (syft native)"
+    location: "output/attestation/ -> synced to s3 attestation/<tag>/ (sbom.syft.json is huge: files[] of whole rootfs). Not fetched by web."
+    key_fields: "syft native: artifacts[].type=='portage' .metadata.installedFiles[].path, files[].location.{realPath,path}, schema.version"
+    evidence: "scripts/attestation.sh:259-263; scripts/check-unowned.py:85-155"
+  - name: cve-report.cdx.json (+ builder-cve-report.cdx.json)
+    producer: grype -o cyclonedx-json via script.check-cves
+    consumers: "web view-build (vulnerabilities[].id, ratings[0].severity, affects[].ref, source.url, analysis.response), attestation.sh (cve_failures), script.generate-provenance (byproduct hash)"
+    location: "s3://$S3_BUCKET/attestation/<tag>/cve-report.cdx.json"
+    key_fields: "vulnerabilities[]{id,ratings[0].severity,affects[].ref,source.url}"
+    evidence: "scripts/check-cves.sh:178-184; scripts/attestation.sh:434-458; web/app/view-build.js:403-452"
+  - name: cve-report.grype.json (+ builder-)
+    producer: grype -o json via script.check-cves
+    consumers: "script.check-cves coverage builder only"
+    location: "output/attestation/ (also synced to S3; not fetched by web)"
+    key_fields: "matches[]{vulnerability{id,severity,fix{state,versions},dataSource},artifact{name,version,cpes}}"
+    evidence: "scripts/check-cves.sh:171,228,308-335"
+  - name: cve-report-coverage.json (+ builder-cve-report-coverage.json)
+    producer: script.check-cves
+    consumers: "script.attestation (folds into summary), script.run-cve-canary (summary.total_findings, findings[].cve), web view-build CVEs tab"
+    location: "s3://$S3_BUCKET/attestation/<tag>/cve-report-coverage.json"
+    key_fields: "timestamp, sbom_path, cve_report_path, native_report_path, scanner{name,version}, db{built,schema_version,checksum,status,age_days,age_warning}, policy{path,sha256,loaded,gating_severities,informational_severities,fail_on_unscanned,allowlist_size}, coverage{total_components,scanned,unscanned,matched,clean}, unscanned_components[{name,version}], findings[{cve,severity,component,version,cpe,fix_state,fix_versions,gating,waived,waiver_justification,waiver_approved_by,waiver_expires,url}], summary{total_findings,gating_findings,waived_findings}, verdict, verdict_reasons[]"
+    evidence: "scripts/check-cves.sh:355-394"
+  - name: license-report.json
+    producer: script.check-licenses
+    consumers: "script.attestation (license_failures), web view-build Licenses tab + overview donut + compare, script.generate-provenance (byproduct)"
+    location: "s3://$S3_BUCKET/attestation/<tag>/license-report.json"
+    key_fields: "build_tag,timestamp,sbom_path,policy_path,policy_sha256,summary{total,pass,fail,unknown},components[{name,version,raw_license,normalized[],status pass|fail|unknown,reason}]"
+    evidence: "scripts/check-licenses.py:327-346"
+  - name: unowned-report.json
+    producer: script.check-unowned
+    consumers: "script.attestation (unowned_count/unowned_files), web view-build Unowned tab/overview, script.generate-provenance (byproduct)"
+    location: "s3://$S3_BUCKET/attestation/<tag>/unowned-report.json"
+    key_fields: "timestamp,syft_schema,sysroot,summary{total_files,owned,allowlisted,unowned},unowned_files[]"
+    evidence: "scripts/check-unowned.py:272-283"
+  - name: slsa-provenance.json
+    producer: script.generate-provenance
+    consumers: "\"job.build.attestation: 'Read SLSA predicate' extracts .predicate and passes to actions/attest@v2 (predicate-type https://slsa.dev/provenance/v1, subject-path ISO)\", \"NOT consumed by web/ or release.yml\""
+    location: "output/attestation/slsa-provenance.json -> s3 attestation/<tag>/; signed copy lives in GitHub's attestation store (ext.github-attestations / ext.sigstore) keyed by ISO sha256"
+    key_fields: "_type in-toto Statement v1; subject[0]{name themonolith-<tag>.iso,digest.sha256}; predicateType https://slsa.dev/provenance/v1; predicate.buildDefinition{buildType,externalParameters.workflow,internalParameters{github{...},build{tag,source_date_epoch}},resolvedDependencies[git repo, gentoo-stage3, gentoo-portage-snapshot, linux-kernel-source, monolith-builder]}; runDetails{builder.id,metadata{invocationId,startedOn,finishedOn},byproducts[{name,mediaType,digest.sha256}]}"
+    evidence: "scripts/generate-provenance.py:214-279"
+  - name: cpe-gap-count.txt / cpe-exclusions-count.txt / cpe-exclusions.json
+    producer: script.enrich-sbom (fixed names, overwritten by builder pass; attestation.sh then mv's to builder-*)
+    consumers: "script.attestation (reads counts), none for json"
+    location: "output/attestation/ and s3 attestation/<tag>/"
+    key_fields: "int; int; {build_tag,timestamp,excluded_count,genuine_gap_count,exclusions[{name,version,pattern,justification,detail}]}"
+    evidence: "scripts/enrich-sbom.py:1301-1324; scripts/attestation.sh:349-357,561-574"
+  - name: status/<tag>.json (retroactive advisory)
+    producer: script.nightly-cve-monitor
+    consumers: "monolith-advisory-check on the live ISO (POSIX sh, curl/wget, 5s timeout), none in web/"
+    location: "s3://$S3_BUCKET/status/<tag>.json, fetched at https://themonolith.s3.amazonaws.com/status/<BUILD_TAG>.json (BUILD_TAG from /etc/monolith-release)"
+    key_fields: "{build_tag, checked, status: clean|revoked, advisories[CVE ids] (revoked only), details_url (revoked only, https://themonolith.org/builds/<tag>)}"
+    evidence: "scripts/nightly-cve-monitor.py:133-150; configs/overlay/app-misc/monolith-base/files/monolith-advisory-check:17-60"
+  - name: SHA256SUMS
+    producer: wf.release (job publish) - `sha256sum *.iso bom.cdx.json`
+    consumers: "humans, GitHub Release asset, s3 mirror"
+    location: "GitHub Release asset SHA256SUMS; s3://$S3_BUCKET/attestation/<version>/SHA256SUMS (release.yml:277-278)"
+    key_fields: "two lines: sha256 themonolith-<version>.iso ; sha256 bom.cdx.json"
+    evidence: ".github/workflows/release.yml:166-170,273-278"
+  - name: ISO objects
+    producer: job.build.build (not my area)
+    consumers: "wf.release, web view-downloads/view-build (ISO_BASE/themonolith-<tag>.iso), web view-boot + boot.html (themonolith.iso)"
+    location: "s3://$S3_BUCKET/themonolith-<BUILD_VERSION>.iso and themonolith.iso (latest pointer, server-side copy), https://themonolith.s3.us-west-2.amazonaws.com/..."
+    key_fields: "binary; must be range-readable + CORS-open for v86"
+    evidence: ".github/workflows/build.yml:540-546; web/app/data.js:137; web/app/view-boot.js:5"
+  - name: dashboard site (web/**)
+    producer: make.dashboard (cp -r web/. output/web/) + generate-dashboard
+    consumers: "browsers"
+    location: "s3 bucket root: index.html, styles.css, app/*.js, builds-index.json, latest-build.json (aws s3 sync output/web/ s3://$S3_BUCKET/ --exclude attestation/* packages/* builds/*)"
+    key_fields: "static"
+    evidence: "Makefile:480-490; .github/workflows/build.yml:~802-806"
+
+# ───────────────────────── web runtime dependencies ─────────────────────────
+web_runtime_fetches:
+  s3_data:
+    root: "https://themonolith.s3.us-west-2.amazonaws.com   (bucket themonolith, region us-west-2; data.js:135-137)"
+    urls:
+      - "GET {S3_ROOT}/builds-index.json  (cache:no-store)  [landing, downloads, index, compare, package]"
+      - "GET {S3_ROOT}/attestation/<tag>/attestation-summary.json  [landing, downloads (N+1), build, compare, package]"
+      - "GET {S3_ROOT}/attestation/<tag>/bom.cdx.json"
+      - "GET {S3_ROOT}/attestation/<tag>/cve-report.cdx.json"
+      - "GET {S3_ROOT}/attestation/<tag>/cve-report-coverage.json"
+      - "GET {S3_ROOT}/attestation/<tag>/license-report.json"
+      - "GET {S3_ROOT}/attestation/<tag>/unowned-report.json"
+      - "GET {S3_ROOT}/attestation/<tag>/builder-bom.cdx.json"
+      - "GET {S3_ROOT}/attestation/<tag>/builder-cve-report.cdx.json"
+      - "GET {S3_ROOT}/attestation/<tag>/builder-cve-report-coverage.json"
+      - "link/download {ISO_BASE}/themonolith-<tag>.iso  (anchor download)"
+      - "link only (not fetched): {S3_ROOT}/builds-index.json footer; byproduct downloads of bom/builder-bom/cve-report/license-report/unowned-report"
+  isos_for_boot:
+    - "GET https://themonolith.s3.us-west-2.amazonaws.com/themonolith.iso via v86 async cdrom (HTTP Range chunks)"
+  cdn_libs:
+    - "https://cdn.jsdelivr.net/npm/v86/build/libv86.js     (UNPINNED latest; index.html:16, boot.html:285)"
+    - "https://cdn.jsdelivr.net/npm/v86/build/v86.wasm       (UNPINNED; view-boot.js:93, boot.html:290+wasm_path)"
+    - "https://cdn.jsdelivr.net/gh/copy/v86@master/bios/seabios.bin   (branch ref 'master'; view-boot.js:97)"
+    - "https://cdn.jsdelivr.net/gh/copy/v86@master/bios/vgabios.bin   (branch ref 'master'; view-boot.js:98)"
+  fonts:
+    - "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap (index.html:10) + gstatic font files; boot.html uses system monospace only"
+  other_links:
+    - "https://github.com/tuckermclean/linux-live-iso-factory/blob/master/<policy> (view-build.js:362)"
+    - "GitHub attestation docs/commands only in text (gh attestation verify --owner tuckermclean)"
+  other_origins_on_iso: "monolith-advisory-check -> https://themonolith.s3.amazonaws.com/status/<tag>.json; scripts/build-rootfs.sh:266 HOME_URL https://themonolith.s3.us-west-2.amazonaws.com (not my area)"
+  cors_and_range_requirements: >
+    Every JSON fetch is cross-origin unless the page is served from the exact same regional S3 host, so the bucket
+    needs CORS (GET, HEAD; origin of the dashboard; for v86 also allowed request header Range and exposed headers
+    Content-Length, Content-Range, Accept-Ranges, ETag). v86 async CDROM streams the ISO with Range requests (partial 206),
+    so the ISO host MUST support byte ranges (S3 does natively) and must NOT use a transfer that strips Content-Length.
+    COOP/COEP are NOT required (no SharedArrayBuffer use in repo code; unverified for current v86 builds).
+    No put-bucket-cors/CORS rule file is in the repo: configuration lives only in the AWS console (UNKNOWN).
+  per_view_data_needs:
+    landing: ["builds-index.json[0]", "attestation/<latest>/attestation-summary.json (iso_sha256)"]
+    boot: ["themonolith.iso (ranges)", "v86 libv86.js + v86.wasm + seabios.bin + vgabios.bin"]
+    downloads: ["builds-index.json", "attestation-summary.json for EVERY build (lazy, parallel)", "ISO links"]
+    builds_index: ["builds-index.json"]
+    build_detail: ["all 9 attestation files; Overview/SBOM/Licenses/Unowned/CVEs/Builder tabs derive from them; Provenance + Verify tabs use pageMeta only"]
+    compare: ["builds-index.json", "all 9 files x 2 builds"]
+    package: ["builds-index.json", "all 9 files x 8 builds"]

@@ -1,0 +1,1030 @@
+area: workflows
+scope_note: >
+  10 files in .github/workflows/ read in full (3165 lines). Line numbers are per-file.
+  No `vars.*` anywhere (grep). No `workflow_call` secrets declared (boot-test uses `secrets: inherit` but its jobs use no secrets).
+  Only 2 timeouts set (pin-bump 280, toolchain-bump 355); every other job runs on the 360-min default.
+  All runners are ubuntu-latest. No concurrency on boot-test/regen except where noted.
+secrets_inventory:
+  - {id: secret.AWS_ACCESS_KEY_ID, used_by: [job.build.build, job.build.attestation, job.release.publish, job.gc.gc, job.nightly-cve-scan.rescan, job.pin-bump.bump-and-validate, job.regen-pins.regen]}
+  - {id: secret.AWS_ACCESS_KEY_SECRET, used_by: "same set as AWS_ACCESS_KEY_ID"}
+  - {id: secret.AWS_REGION, used_by: "same set as AWS_ACCESS_KEY_ID"}
+  - {id: secret.S3_BUCKET, used_by: [job.build.build, job.build.attestation, job.release.publish, job.gc.gc, job.nightly-cve-scan.rescan, job.pin-bump.bump-and-validate], note: "bucket name also interpolated into public URL https://$S3_BUCKET.s3.amazonaws.com/#/build/<ver> in release notes (release.yml:230)"}
+  - {id: secret.GITHUB_TOKEN, used_by: "docker/login-action to ghcr.io (build-image, build, attestation, toolchain-bump, pin-bump, regen-pins), gh CLI as GH_TOKEN (release, pin-bump, toolchain-bump, gc ghcr-gc)"}
+  - {id: "secret.<none: PAT>", note: "No PAT secret. Pushes of pin branches use GITHUB_TOKEN; pushes by GITHUB_TOKEN do not trigger workflows (regen-pins.yml:9-13) - this is why pin-bump/toolchain-bump explicitly `gh workflow run build.yml --ref branch`."}
+pins_summary:
+  actions:
+    - {thing: actions/checkout, value: "@v4 (floating major tag, 31 uses)", flag: unpinned-to-sha}
+    - {thing: actions/setup-python, value: "@v5 (18 uses)", flag: unpinned-to-sha}
+    - {thing: actions/upload-artifact, value: "@v4 (25 uses)", flag: unpinned-to-sha}
+    - {thing: actions/cache, value: "@v4 (cache, cache/restore x19, cache/save x2)", flag: unpinned-to-sha}
+    - {thing: actions/attest, value: "@v2 (build.yml:772)", flag: "unpinned-to-sha; the SLSA signing action"}
+    - {thing: aws-actions/configure-aws-credentials, value: "@v4 (7 uses)", flag: unpinned-to-sha}
+    - {thing: docker/login-action, value: "@v3 (6 uses)", flag: unpinned-to-sha}
+    - {thing: dorny/paths-filter, value: "@v3 (build.yml:66)", flag: "unpinned-to-sha; third-party"}
+    - {thing: "./.github/workflows/boot-test.yml", value: local reusable workflow (build.yml:562)}
+  tools_fetched_at_runtime:
+    - {thing: oras, value: "1.2.0 tarball from github.com/oras-project releases (build.yml:234)", flag: pinned-version-no-checksum}
+    - {thing: grype, value: "install.sh from raw.githubusercontent.com/anchore/grype/main (cve-gate-canary.yml:56-57, nightly-cve-scan.yml:43-44)", flag: "UNPINNED - curl|sh of main-branch script, latest grype"}
+    - {thing: actionlint, value: "v1.7.7 download script + version 1.7.7 (pr-validate.yml:53)", flag: pinned}
+    - {thing: check-jsonschema, value: "0.38.0 pip (build.yml:708); pip cache key pip-check-jsonschema-0.38.0", flag: pinned}
+    - {thing: qemu-system-x86, ovmf, pexpect, squashfs-tools, kmod, value: "apt/pip latest of ubuntu-latest runner (unpinned)"}
+    - {thing: python, value: "3.12 via setup-python (boot-test jobs, nightly-cve-scan); system python3 elsewhere"}
+    - {thing: "ubuntu-latest", value: floating runner image, flag: unpinned}
+    - {thing: pyyaml, value: "pip3 install --user pyyaml unpinned (cve-gate-canary.yml:61); pr-validate relies on preinstalled yaml"}
+caches_summary:
+  - {key: "ci-artifacts-${{ github.run_id }}-squashfs", path: "output/themonolith-$BUILD_VERSION.squashfs", saved_by: "job.build.build (build.yml:509-512)", restored_by: "job.build.attestation (build.yml:626-630, fail-on-cache-miss)"}
+  - {key: "ci-artifacts-${{ github.run_id }}-iso", path: "output/themonolith-$BUILD_VERSION.iso", saved_by: "job.build.build (build.yml:536-539)", restored_by: "job.build.attestation (641) + every boot-test job (19 restores incl. attestation; boot-test.yml:80-85 etc.)", note: "in-run handoff of ISO between jobs via the Actions cache (not artifacts); run_id is the caller's run_id when boot-test is workflow_call"}
+  - {key: "grype-db-<YYYY-VV>", restore-keys: "grype-db-", path: output/grype-db, job: job.build.attestation, evidence: build.yml:643-659}
+  - {key: "pip-check-jsonschema-0.38.0", path: "~/.cache/pip", job: job.build.attestation, evidence: build.yml:699-703}
+artifacts_summary:
+  - {name: "crossdev-logs-${run_id}", path: output/portage-logs/, retention: 7d, by: [job.build.build-image, job.toolchain-bump.bump-and-validate], evidence: "build.yml:148-152; toolchain-bump.yml:146-150"}
+  - {name: "package-build-logs-${run_id}", path: output/logs/, retention: 7d, by: job.build.build, evidence: build.yml:296-303}
+  - {name: "boot-test-<mode>-${run_id} (bios-64m,bios-256m,uefi,toram,ahci,nvme,usb,virtio,nicless,gui,gui-screendump,stele-acid2,stele-acid2-screendump,nic,vga,fbdev-modprobe,nat,clock-epoch,clock-1996,persist)", retention: 14d, by: boot-test jobs}
+  - {name: nightly-cve-data, path: nightly-data/, retention: 14d, by: job.nightly-cve-scan.rescan, evidence: nightly-cve-scan.yml:64-70}
+  - {name: "regen-crossdev-logs-${run_id}", retention: 7d, by: job.regen-pins.regen}
+  - {name: "regenerated-locks-${run_id}", paths: [Dockerfile, configs/portage/versions.lock, configs/portage/crossdev.lock], retention: 14d, by: job.regen-pins.regen}
+  - {note: "No artifact is DOWNLOADED anywhere (no actions/download-artifact); all inter-job file handoff is via actions/cache save/restore or S3."}
+
+cross_workflow_graph:
+  triggers:
+    - {from: "git push tag v*.*.*", to: wf.build, evidence: build.yml:21}
+    - {from: wf.build (conclusion=completed), to: wf.release, via: workflow_run, filter: "conclusion==success && workflow_run.event==push && head_branch startsWith 'v'", evidence: release.yml:32-34,57-60}
+    - {from: wf.build job.build.boot-test, to: wf.boot-test, via: workflow_call with build-version input, secrets inherit, evidence: build.yml:559-565}
+    - {from: wf.pin-bump, to: wf.build, via: "gh workflow run build.yml --ref pins/bump-OLD-NEW then polls gh run view up to 240 min", evidence: pin-bump.yml:245,268-295}
+    - {from: wf.toolchain-bump, to: wf.build, via: "gh workflow run build.yml --ref toolchain/bump-OLD-NEW, polls 240 min", evidence: toolchain-bump.yml:188,211-238}
+    - {from: "push to pins/** or integration/** touching Dockerfile/locks", to: wf.regen-pins, evidence: regen-pins.yml:21-28, note: "pin-bump pushes pins/bump-* with GITHUB_TOKEN => does NOT trigger regen-pins (GitHub rule); human pushes do"}
+    - {thing: "qemu-system-x86, ovmf, pexpect, squashfs-tools, kmod", value: "apt/pip latest on ubuntu-latest runner (unpinned)"}
+    - {from: pull_request, to: [wf.pr-validate, wf.build (only if label full-ci), wf.cve-gate-canary (path filtered)]}
+  produced_consumed:
+    - {artifact: "S3 themonolith-$VER.{iso,squashfs,initrd,vmlinuz} + unversioned themonolith.{iso,squashfs,initrd,vmlinuz} (server-side copy)", producer: job.build.build (master+tag only), consumers: [job.release.publish (iso only), public dashboard/web UI]}
+    - {artifact: "S3 attestation/$VER/* (aws s3 sync of output/attestation/: bom.cdx.json, builder-bom.cdx.json, slsa-provenance.json, attestation-summary.json, ...)", producer: job.build.attestation, consumers: [job.release.publish (bom.cdx.json, attestation-summary.json), job.build.attestation dashboard step (attestation-summary.json of all builds), job.nightly-cve-scan.rescan (via scripts/nightly-cve-monitor.py aws s3 sync), job.gc.gc]}
+    - {artifact: "S3 attestation/$VER/SHA256SUMS", producer: job.release.publish, consumers: public}
+    - {artifact: "S3 builds/$VER/logs/", producer: job.build.build, consumers: none visible}
+    - {artifact: "S3 bucket-root SPA files (index/web assets, builds-index.json)", producer: job.build.attestation 'Generate and upload site' (excludes attestation/*, packages/*, builds/*), consumers: public dashboard}
+    - {artifact: "S3 portage-snapshots/ (gentoo-$BUILD_EPOCH.tar.xz)", producer: "scripts/sync-portage.sh via make sync-portage (job.build.build) and fetch-only (job.pin-bump)", consumers: job.build.build, evidence: "build.yml:250-253; pin-bump.yml:200 (key path inferred from brief; script not in scope)"}
+    - {artifact: "S3 packages/<epoch> binpkg tree", status: "RETIRED for build.yml - replaced by GHCR OCI artifact; but build.yml:809 and gc still exclude/reference packages/*", note: "see contradictions"}
+    - {artifact: "GHCR ghcr.io/<owner>/monolith-builder:<REGISTRY_TAG> and :latest, monolith-builder-base-tools:latest", producer: [job.build.build-image (make push-image), job.toolchain-bump, job.regen-pins], consumers: [build, attestation, pin-bump(make pull-image), regen-pins, toolchain-bump (cache pull)], tag_source: "make print-registry-tag / Makefile REGISTRY_TAG (build.yml:109)"}
+    - {artifact: "GHCR ghcr.io/<owner_lowercase>/monolith-binpkgs:<BUILD_EPOCH> (OCI artifact via oras)", producer: "job.build.build 'Save binary package cache to GHCR' (always(), non-fatal) via scripts/binpkg-store.sh prune/pack/push", consumers: "job.build.build pull (non-tag builds only)", note: "GHCR-only: survives the S3 account death. Tag builds never pull but DO push (build.yml:448-466 has no tag guard)."}
+    - {artifact: "GitHub Release assets: themonolith-$VER.iso, SHA256SUMS, bom.cdx.json", producer: job.release.publish, source: "S3 round trip", evidence: release.yml:265-271}
+    - {artifact: "GitHub attestation (Sigstore SLSA provenance v1, subject=ISO)", producer: job.build.attestation (actions/attest@v2), consumers: "users via gh attestation verify --owner tuckermclean (release.yml:216 hard-codes owner)"}
+  tag_release_flow:
+    - "1. human pushes tag vX.Y.Z[-suffix] -> build.yml (push tags v*.*.*). BUILD_VERSION = tag minus leading v (build.yml:204). Non-tag: BUILD_VERSION=<BUILD_EPOCH>-<short sha>."
+    - "2. build-image(gate on docker manifest inspect) -> build (from source, MONOLITH_USEPKG=n, no binpkg pull/purge; uploads to S3; PUBLISH_LATEST=true for master and tags) -> boot-test (workflow_call, 20 jobs) -> attestation (OIDC id-token+attestations; grype; SBOM schema validate; attest@v2 only if verdict==pass; S3 attestation/ sync; dashboard regen; final fail if overall!=pass)."
+    - "3. release.yml fires on workflow_run completed; publish job only if conclusion==success && event==push && head_branch startsWith 'v'. Checks tag exists and tag commit == head_sha; downloads ISO+bom+summary from S3 by BUILD_VERSION; re-hashes ISO vs attestation-summary.json iso_sha256 and vs bom hashes[0]; builds SHA256SUMS; changelog from git log PREV_TAG..TAG; gh release create (hyphen in tag => --prerelease --latest=false); uploads SHA256SUMS back to S3."
+    - "4. Master push also runs build.yml fully and overwrites unversioned latest pointers + dashboard. PR builds only with label full-ci; they write nothing to S3 except... NOTHING (PUBLISH_LATEST false => all S3 write steps skipped) but they still pull/push GHCR."
+    - "5. Scheduled Monday 03:00 build is a master-ref build => publishes latest (build.yml:481)."
+  weekly_cron_map:
+    - "Mon 03:00 UTC build.yml; Mon 06:00 pin-bump; Sun 04:00 gc; daily 04:00 nightly-cve-scan; daily 04:30 cve-gate-canary"
+
+current_health_gh_run_list:
+  checked: "2026-10-27, gh run list --limit 40/300 (read-only)"
+  summary:
+    - "Build (schedule Mon): FAILED 10-12, 10-19, 10-26 (last success 10-05). Each fails in ~2m at the build job step 'Configure AWS credentials' (run 40291231581: failed steps = Configure AWS credentials, Take ownership of binpkg tree, Save build logs to S3); boot-test + attestation skipped. build-image/changes succeed."
+    - "Release: all 'skipped' (workflow_run on non-tag Builds), expected."
+    - "Nightly CVE re-scan: failing every day; last success 2026-10-07. Failure step = Configure AWS credentials (run 40480843916, ~10s)."
+    - "S3 GC: failing weekly 10-11, 10-18, 10-25 (last success 10-04). Failure = configure-aws-credentials (run 40178059352)."
+    - "Pin Bump: 10-19 FAILED at bump-and-validate 'Configure AWS credentials' (run 39244866368); 10-12 and 10-26 'success' only because check job found no update / skipped bump (8s)."
+    - "CVE Gate Canary: green daily through 2026-10-27 (needs no AWS)."
+    - "PR Validate: green, last run 2026-09-24 (13 runs total)."
+    - "boot-test.yml/regen-pins/toolchain-bump: no recent runs in the listing (boot-test not directly triggered; others dispatch/push-only)."
+  root_cause: "All failures are AWS credential configuration (disabled account) - consistent with brief. Everything NOT touching AWS is green."
+  important_corollary: "Because build.job fails at AWS creds BEFORE Build packages, no ISO has been built since 2026-10-05, so boot-test/attestation/release have not exercised the DCX-99 / legacy-fbdev assertions on master since then."
+
+components:
+# ===================================================================== build.yml
+  - id: wf.build
+    kind: workflow
+    path: .github/workflows/build.yml
+    purpose: "Single definition of build + boot-test + SLSA attest; entry point (OIDC) for releases and pin-bump validation."
+    triggers:
+      - "push branches [master] (build.yml:20)"
+      - "push tags ['v*.*.*'] (21)"
+      - "pull_request types opened/reopened/synchronize/labeled (28) - only runs if label full-ci (gated in job changes, 58-60)"
+      - "workflow_dispatch (29) - used by pin-bump/toolchain-bump via gh workflow run"
+      - "schedule cron '0 3 * * 1' (31) Mondays 03:00 UTC"
+    invokes: [job.build.changes, job.build.build-image, job.build.build, job.build.boot-test, job.build.attestation]
+    invoked_by: [wf.pin-bump, wf.toolchain-bump]
+    permissions: "workflow-level contents:read, packages:write (33-35); job-level overrides below"
+    env: ["REGISTRY=ghcr.io/${{ github.repository_owner }} (49) - NOT lowercased here; build job separately lowercases for GHCR_OWNER (199)"]
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.S3_BUCKET, secret.GITHUB_TOKEN]
+    external: [ext.ghcr, ext.aws-s3, ext.github-attestations, ext.sigstore, ext.github-api, ext.dockerhub]
+    s3_coupling: hard
+    notes:
+      - "concurrency group: PRs 'build-pr-<n>' cancel-in-progress; all other events get unique group build-<run_id> so never cancel (41-46). cancel-in-progress is true but only effective for PRs."
+      - "Header comment (3-17) documents why build.yml must be OIDC entry point (attest persist fails with 'build.yml != release.yml' when run via workflow_call). This is a hard constraint for the rebuild's signing design."
+      - "No timeout-minutes on any job: default 360."
+      - "Comment at 553-558 says release.yml calls this ENTIRE workflow via workflow_call - STALE; release.yml no longer does (see contradictions)."
+    rebuild_notes:
+      - "Preserve: tag build = from-source/no binpkg; PUBLISH_LATEST only on master/tag; attestation signs only if gate verdict pass; ISO handed to boot-test via cache (any replacement store must be per-run)."
+      - "Rebuild must replace: S3 (iso/squashfs/initrd/vmlinuz/attestation/dashboard/portage snapshot) - e.g. GHCR OCI artifacts + GitHub Release/Pages."
+      - "The build job needs ~2h+ and 2 jobs / load 2; JOBS=2 LOAD_AVG=2 hard-coded for 4-vCPU runner (288, 506)."
+
+  - id: job.build.changes
+    kind: job
+    path: .github/workflows/build.yml:52
+    purpose: "paths-filter to decide whether packages/Dockerfile changed; also gate (label full-ci) for PRs."
+    triggers: [push, pull_request(label full-ci), workflow_dispatch, schedule]
+    needs: []
+    if: "github.event_name != 'pull_request' || contains(labels.*.name,'full-ci') (58-60)"
+    runner: ubuntu-latest
+    permissions: "inherited: contents:read packages:write"
+    timeout: default-360
+    invokes: []
+    outputs: ["dockerfile", "packages"]
+    pins:
+      - {thing: actions/checkout, value: "@v4", evidence: build.yml:65}
+      - {thing: dorny/paths-filter, value: "@v3 (third-party, tag-pinned)", evidence: build.yml:66}
+    inputs:
+      - {what: "path filters: dockerfile=[Dockerfile]; packages=[configs/portage/world, configs/portage/versions.lock, configs/overlay/**, scripts/**, rootfs/**]", evidence: "build.yml:69-77"}
+    secrets: []
+    external: [ext.github-api]
+    s3_coupling: none
+    notes:
+      - "Filter for 'packages' does NOT include configs/kernel.config, configs/portage/{make.conf,package.*,savedconfig}, web/ - config-only changes on a push to master do not trigger the build job unless image-changed/dispatch/schedule/tag/PR (see build job `if`)."
+      - "On tag/schedule/dispatch the filter's value is irrelevant as the build job `if` is OR'd."
+
+  - id: job.build.build-image
+    kind: job
+    path: .github/workflows/build.yml:79
+    purpose: "Build+push the builder (crossdev toolchain) Docker image only when Dockerfile changed or registry tag missing."
+    triggers: [push, pull_request, workflow_dispatch, schedule, tag]
+    needs: [changes]
+    if: "(implicit; skipped if changes skipped)"
+    runner: ubuntu-latest
+    permissions: {contents: read, packages: write, id-token: none, attestations: none}
+    timeout: default-360
+    invokes: [make.print-registry-tag, make.ensure-dirs, make.build-image, make.push-image]
+    outputs: ["image-changed = (gate.image-exists=='true' ? 'false' : 'true')"]
+    commands:
+      - {cmd: "docker login ghcr.io (docker/login-action@v3, user github.actor, GITHUB_TOKEN)", rw: "writes ~/.docker/config.json", evidence: "build.yml:90-95"}
+      - {cmd: "docker manifest inspect $REGISTRY/monolith-builder:$TAG", rw: "reads GHCR manifest only; TAG from `make -s print-registry-tag REGISTRY=...`", evidence: "build.yml:109-112", note: "skip build iff dockerfile filter != true AND tag exists"}
+      - {cmd: "docker pull $REGISTRY/monolith-builder:latest and monolith-builder-base-tools:latest (|| true) then docker tag to local names monolith-builder / monolith-builder-base-tools", rw: "reads GHCR, writes local docker tags to warm --cache-from", evidence: "build.yml:135-138"}
+      - {cmd: "make build-image (REGISTRY env)", evidence: "build.yml:142"}
+      - {cmd: "make push-image (REGISTRY env)", rw: "pushes builder image tags to GHCR", evidence: "build.yml:163"}
+    secrets: [secret.GITHUB_TOKEN]
+    pins:
+      - {thing: actions/checkout, value: "@v4", evidence: build.yml:88}
+      - {thing: docker/login-action, value: "@v3", evidence: build.yml:91}
+      - {thing: actions/upload-artifact, value: "@v4", evidence: build.yml:148}
+    artifacts: [{upload: "crossdev-logs-${run_id}", path: output/portage-logs/, if: "failure() && image not skipped", retention: 7d, evidence: "build.yml:146-152"}]
+    caches: ["docker layer warm via pulled :latest tags (not actions/cache)"]
+    external: [ext.ghcr]
+    s3_coupling: none
+    notes:
+      - "Gate inspects only the manifest tag from Makefile REGISTRY_TAG (hash of Dockerfile etc.). Gate comment 97-103."
+      - "Builds on a hosted runner: crossdev from-scratch is ~50-100 min."
+    rebuild_notes: ["Content-addressed builder-image tag + 'exists? skip' pattern is worth preserving."]
+
+  - id: job.build.build
+    kind: job
+    path: .github/workflows/build.yml:167
+    purpose: "Cross-compile all packages in the builder container, assemble squashfs/initrd/ISO, run in-CI kernel assertions, publish to S3 (master/tag), save binpkg cache to GHCR."
+    triggers: [push master, tag, pull_request(full-ci), workflow_dispatch, schedule]
+    needs: [changes, build-image]
+    if: >-
+      changes.packages=='true' || build-image.image-changed=='true' || event is workflow_dispatch|schedule|pull_request || ref startsWith refs/tags/ (176-182)
+    runner: ubuntu-latest
+    permissions: {contents: read, packages: write (binpkg push to GHCR), id-token: none, attestations: none}
+    timeout: default-360
+    outputs: ["build-started-on", "build-version", "publish-latest"]
+    invokes: [make.pull-image, make.ensure-dirs, make.ensure-volume, make.sync-portage, script.binpkg-store, script.savedconfig-cache, make.build-packages, script.verify-resolved-i2c-off, make.build-rootfs, make.iso]
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.S3_BUCKET, secret.GITHUB_TOKEN]
+    env_vars_derived:
+      - "BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2) (193) -> GITHUB_ENV"
+      - "GHCR_OWNER=${GITHUB_REPOSITORY_OWNER,,} (199)"
+      - "BUILD_STARTED_ON=date -u (200)"
+      - "BUILD_VERSION = tag minus 'v' | '<BUILD_EPOCH>-<git short HEAD>' (203-207)"
+      - "MONOLITH_USEPKG = 'n' on tag else 'y' (285)"
+      - "PUBLISH_LATEST = true iff ref==refs/heads/master or any tag (481)"
+    steps_ordered:
+      - {n: 1, name: Set build version, line: 190}
+      - {n: 2, name: Configure AWS credentials, line: 211, note: "THIS is the step failing in all current Build failures (S3 account disabled) - fails the job before anything is built"}
+      - {n: 3, name: Log in to GHCR, line: 218}
+      - {n: 4, name: Install oras 1.2.0, line: 231}
+      - {n: 5, name: "make pull-image", line: 243}
+      - {n: 6, name: "make ensure-dirs ensure-volume", line: 248}
+      - {n: 7, name: "make sync-portage (S3_BUCKET)", line: 250, note: "S3 HARD: scripts/sync-portage.sh reads portage snapshot from S3 (script in other area)"}
+      - {n: 8, name: "Pull binary package cache from GHCR (non-tag)", line: 267}
+      - {n: 9, name: "Purge stale savedconfig binpkgs (non-tag)", line: 271}
+      - {n: 10, name: "Build packages: make build-packages JOBS=2 LOAD_AVG=2 MONOLITH_USEPKG=...; background `while true; do date; df -h; free -h; sleep 60; done &` monitor", line: 281}
+      - {n: 11, name: "Upload package build logs on failure", line: 296}
+      - {n: 12, name: "ASSERT resolved kernel config no CONFIG_I2C", line: 312}
+      - {n: 13, name: "ASSERT NIC kernel modules built and shipped", line: 323}
+      - {n: 14, name: "ASSERT legacy fbdev modules built/shipped + no firmware", line: 362}
+      - {n: 15, name: "chown output/packages (always)", line: 425}
+      - {n: 16, name: "savedconfig-cache.sh mark (always)", line: 435}
+      - {n: 17, name: "Save binary package cache to GHCR (always, non-fatal)", line: 448}
+      - {n: 18, name: "Determine publish-latest (always)", line: 468}
+      - {n: 19, name: "Save build logs to S3 (always && PUBLISH_LATEST)", line: 491}
+      - {n: 20, name: "Save kernel image to S3", line: 495}
+      - {n: 21, name: "make build-rootfs JOBS=2 LOAD_AVG=2", line: 505}
+      - {n: 22, name: "cache/save squashfs", line: 508}
+      - {n: 23, name: "Save squashfs to S3", line: 514}
+      - {n: 24, name: "Save initrd to S3", line: 523}
+      - {n: 25, name: "make iso", line: 532}
+      - {n: 26, name: "cache/save ISO", line: 535}
+      - {n: 27, name: "Upload ISO to S3", line: 541}
+    commands:
+      - {cmd: "aws-actions/configure-aws-credentials@v4 with static keys (not OIDC)", evidence: "build.yml:211-216"}
+      - {cmd: "curl -fsSL -o oras.tar.gz https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz; tar; sudo mv oras /usr/local/bin", rw: "network read; no checksum verify", evidence: "build.yml:235-241"}
+      - {cmd: "bash scripts/binpkg-store.sh pull $GHCR_OWNER $BUILD_EPOCH output/packages", rw: "reads oras ghcr.io/<owner>/monolith-binpkgs:<epoch> -> output/packages (fails open); skipped on tags", evidence: "build.yml:269"}
+      - {cmd: "bash scripts/savedconfig-cache.sh check output/packages", rw: "deletes stale savedconfig-governed binpkgs; non-tag only", evidence: "build.yml:279"}
+      - {cmd: "bash scripts/savedconfig-cache.sh mark output/packages", rw: "writes hash markers into binpkg tree (if: always())", evidence: "build.yml:440"}
+      - {cmd: "bash scripts/binpkg-store.sh prune output/packages ; ... pack output/packages ; ... push $GHCR_OWNER $BUILD_EPOCH", rw: "prune superseded gpkgs (keeps newest PVR + versions.lock pins), pack, oras push to GHCR monolith-binpkgs:<epoch>; each failure -> ::warning only, never fails job; also runs on TAG builds", evidence: "build.yml:455-466"}
+      - {cmd: "aws s3 sync output/logs/ s3://$S3_BUCKET/builds/$BUILD_VERSION/logs/", rw: "WRITE S3; if always()&&PUBLISH_LATEST", evidence: "build.yml:493"}
+      - {cmd: "aws s3 cp output/themonolith-$BV.vmlinuz s3://$S3_BUCKET/themonolith-$BV.vmlinuz then server-side cp to s3://.../themonolith.vmlinuz", rw: "WRITE S3 versioned + latest; output/vmlinuz copied to versioned name first; kernel uploaded BEFORE build-rootfs/iso (so a failed ISO build still leaves a new 'latest' vmlinuz)", evidence: "build.yml:498-503"}
+      - {cmd: "aws s3 cp squashfs -> s3://$S3_BUCKET/themonolith-$BV.squashfs then cp to themonolith.squashfs", rw: "WRITE S3", evidence: "build.yml:517-521"}
+      - {cmd: "aws s3 cp initrd -> s3://$S3_BUCKET/themonolith-$BV.initrd then cp to themonolith.initrd", rw: "WRITE S3; initrd produced by build-rootfs", evidence: "build.yml:526-530"}
+      - {cmd: "aws s3 cp iso -> s3://$S3_BUCKET/themonolith-$BV.iso then cp to themonolith.iso", rw: "WRITE S3 (release.yml reads the versioned ISO)", evidence: "build.yml:544-546"}
+    pins:
+      - {thing: oras, value: "1.2.0", evidence: build.yml:234}
+      - {thing: actions/checkout, value: "@v4", evidence: build.yml:188}
+      - {thing: aws-actions/configure-aws-credentials, value: "@v4", evidence: build.yml:212}
+      - {thing: docker/login-action, value: "@v3", evidence: build.yml:219}
+      - {thing: actions/upload-artifact, value: "@v4", evidence: build.yml:298}
+      - {thing: actions/cache/save, value: "@v4", evidence: "build.yml:509,536"}
+    caches:
+      - {action: cache/save, key: "ci-artifacts-${{github.run_id}}-squashfs", path: "output/themonolith-$BUILD_VERSION.squashfs", evidence: build.yml:508-512}
+      - {action: cache/save, key: "ci-artifacts-${{github.run_id}}-iso", path: "output/themonolith-$BUILD_VERSION.iso", evidence: build.yml:535-539}
+    artifacts: [{upload: "package-build-logs-${run_id}", path: output/logs/, if: failure(), retention: 7d, evidence: "build.yml:296-303"}]
+    external: [ext.ghcr, ext.aws-s3, ext.github-api]
+    s3_coupling: hard
+    s3_detail: "Hard: configure-aws-credentials (211) and sync-portage (250) must succeed; S3 uploads gated on PUBLISH_LATEST (master/tag only). PR/dispatch builds still hard-fail at AWS cred step and sync-portage because both are unconditional."
+    ci_assertions:
+      - id: assert.i2c-off
+        step: "Assert resolved kernel config did not escalate CONFIG_I2C"
+        location: build.yml:312-313
+        condition: "sh scripts/verify-resolved-i2c-off.sh configs/kernel.config (single arg => mode label 'unknown'). Fails if file missing, or `gunzip -c|cat cfg | grep -q '^CONFIG_I2C=y$'` matches (scripts/verify-resolved-i2c-off.sh:36-48)."
+        reads: "configs/kernel.config on the runner AFTER build-packages overwrote it with the resolved post-olddefconfig config (bind-mounted at /configs; copied out by scripts/build-packages.sh from /usr/share/monolith-kernel/resolved-kernel.config.gz shipped by the monolith-kernel ebuild - per script header, DCX-99)."
+        oracle_note: "Only CONFIG_I2C=y is checked; =m or unset passes."
+      - id: assert.nic-modules
+        step: "Assert NIC kernel modules built and shipped"
+        location: build.yml:323-353
+        condition: >-
+          KVER = field 2 of line '^sys-kernel/monolith-kernel:' in configs/portage/versions.lock with '-rN' suffix stripped (326);
+          LOCALVERSION = value of '^CONFIG_LOCALVERSION="..."' in configs/kernel.config (327);
+          MODDIR=output/sysroot/lib/modules/${KVER}${LOCALVERSION}; fail if dir missing (330-333);
+          for each of 23 names find "$MODDIR" -name "<m>.ko*" must return a hit (345): ne wd smc-ultra lance 3c509 pcnet32 tulip via-rhine natsemi sis900 e1000 e1000e igb sky2 r8169 vmxnet3 nf_conntrack nf_nat nf_tables nft_ct nft_nat nft_masq nf_defrag_ipv4.
+          Fail (exit 1) listing missing.
+        module_list: [ne, wd, smc-ultra, lance, 3c509, pcnet32, tulip, via-rhine, natsemi, sis900, e1000, e1000e, igb, sky2, r8169, vmxnet3, nf_conntrack, nf_nat, nf_tables, nft_ct, nft_nat, nft_masq, nf_defrag_ipv4]
+        note: "Comment says '21 new symbols' but list is 23 incl. 7 netfilter. Runs after build-packages and BEFORE build-rootfs: relies on output/sysroot/ from build-packages."
+      - id: assert.fbdev-modules
+        step: "Assert legacy fbdev kernel modules built and shipped"
+        location: build.yml:362-423
+        condition: >-
+          same KVER/LOCALVERSION/MODDIR derivation (365-368); installs kmod via apt if `modinfo` absent (373-375);
+          all 27 names must exist as <m>.ko* under MODDIR (388-399); then for each found path `modinfo -F firmware <path>` must succeed (nonzero exit => fail with stderr, 404-413) and must print EMPTY (non-empty => FIRMWARE_HITS => fail 'violates the no-blob doctrine', 415-422).
+        module_list: [cirrusfb, pm2fb, pm3fb, cyber2000fb, vga16fb, hgafb, nvidiafb, rivafb, i740fb, matroxfb_base, radeonfb, aty128fb, atyfb, s3fb, savagefb, sisfb, neofb, kyrofb, tdfxfb, sstfb, vt8623fb, tridentfb, arkfb, sm712fb, lxfb, gxfb, gx1fb]
+        note: "Comment (376-379) says names resolved at kernel v6.12.80; module names are coupled to kernel version. Firmware doctrine = no module may declare MODULE_FIRMWARE."
+      - id: assert.attestation-summary-pass
+        step: "(in attestation job, see there)"
+    notes:
+      - "Kernel version/localversion are read from the checked-in files, but configs/kernel.config on the runner is mutated by the build (resolved config copied over it) - the LOCALVERSION grep depends on that file surviving; configs/kernel.config in git is the pinned config."
+      - "Savedconfig + prune + push steps run with if: always() even when build failed (partial cache)."
+      - "Step 'Take ownership' failed in the recorded 10-26 run only because output/packages didn't exist (cascade from AWS failure)."
+      - "Disk-space watchdog loop `while true ... &` (287) is a leftover debugging aid; never killed."
+      - "PUBLISH_LATEST is written to GITHUB_ENV in an always() step AFTER 'Save build logs'? No: step order is publish(468) then logs(491) - OK. But earlier failed steps skip later non-always steps."
+      - "Kernel image uploaded to 'latest' before the ISO is built/tested => 'latest' vmlinuz/squashfs/initrd/iso are overwritten BEFORE boot-test runs on master. Only the attestation/release gate is after boot-test. Public latest is not gated on boot-test."
+      - "No timeout; build step needs 30-60min from source per AGENTS.md."
+    rebuild_notes:
+      - "Oracle: the three assertions above are the CI acceptance conditions for kernel config; module lists are exact."
+      - "Static AWS keys, not OIDC. Replace with GHCR/GitHub-native storage."
+      - "Publishing 'latest' pointers before boot-test is a design smell to fix."
+
+  - id: job.build.boot-test
+    kind: job
+    path: .github/workflows/build.yml:559
+    purpose: "Call reusable boot-test workflow for the freshly built ISO."
+    triggers: [push, pull_request, dispatch, schedule, tag]
+    needs: [build]
+    if: "needs.build.result == 'success'"
+    runner: "n/a (reusable workflow call)"
+    permissions: inherited from workflow (contents:read, packages:write) - callee jobs get no id-token
+    timeout: default-360 per callee job
+    invokes: [wf.boot-test]
+    inputs: [{what: "build-version = needs.build.outputs.build-version", from: job.build.build, evidence: build.yml:563-564}]
+    secrets_passed: "secrets: inherit (565) - unnecessary; callee uses none"
+    s3_coupling: none
+    notes: ["Hands the ISO via actions cache key ci-artifacts-<run_id>-iso."]
+
+  - id: job.build.attestation
+    kind: job
+    path: .github/workflows/build.yml:567
+    purpose: "Generate SBOM/SLSA/CVE/license/unowned attestation for the built ISO, sign provenance with Sigstore, publish attestation + dashboard to S3."
+    triggers: [push, pull_request, dispatch, schedule, tag]
+    needs: [build-image, build, boot-test]
+    if: "always() && build-image.result=='success' && build.result=='success' && boot-test.result=='success' (575-579)"
+    runner: ubuntu-latest
+    permissions: {contents: read, packages: read, id-token: write, attestations: write}
+    timeout: default-360
+    invokes: [make.pull-image, make.ensure-dirs, make.ensure-volume, make.grype-db-update, make.attestation, make.dashboard, script.attestation]
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.S3_BUCKET, secret.GITHUB_TOKEN]
+    commands:
+      - {cmd: "docker pull gentoo/stage3:amd64-openrc-${BUILD_EPOCH} -q 2>/dev/null || true; docker inspect --format '{{index .RepoDigests 0}}' | grep -oP '(?<=@)sha256:\\S+' || echo ''", rw: "reads Docker Hub; STAGE3_DIGEST exported to env for attestation.sh; stderr suppressed (2>/dev/null) and failure swallowed => empty digest silently", evidence: "build.yml:595-599"}
+      - {cmd: "sudo apt-get install -y squashfs-tools", evidence: "build.yml:623"}
+      - {cmd: "unsquashfs -d output/sysroot output/themonolith-$BV.squashfs", rw: "re-extracts sysroot from the cached squashfs (reads cache)", evidence: "build.yml:634"}
+      - {cmd: "make grype-db-update GRYPE_CACHE_DIR=output/grype-db", rw: "downloads Grype DB (ext.grype-db) into cached dir", evidence: "build.yml:662"}
+      - {cmd: "make attestation BUILD_VERSION=$BV GRYPE_CACHE_DIR=output/grype-db  (continue-on-error: true; env S3_BUCKET)", rw: "writes output/attestation/{bom.cdx.json,builder-bom.cdx.json,slsa-provenance.json,attestation-summary.json,...}; S3_BUCKET only used to build SBOM distribution URL", evidence: "build.yml:668-673"}
+      - {cmd: "python3 -m pip install --user check-jsonschema==0.38.0 (fallback --break-system-packages); timeout 180 python3 -m check_jsonschema --base-uri file://configs/attestation/schemas/ --schemafile bom-<specVersion>.schema.json <sbom>", rw: "validates output/attestation/bom.cdx.json and builder-bom.cdx.json offline", evidence: "build.yml:708-751"}
+      - {cmd: "python3 -c json.load slsa-provenance.json['predicate'] -> step output predicate", evidence: "build.yml:757-766"}
+      - {cmd: "actions/attest@v2 subject-path output/themonolith-$BV.iso predicate-type https://slsa.dev/provenance/v1 predicate=<json>", rw: "Sigstore sign + persist to GitHub attestations store", evidence: "build.yml:772-777", if: "always() && read-predicate.outcome=='success' && verdict.outputs.overall=='pass'"}
+      - {cmd: "aws s3 sync output/attestation/ s3://$S3_BUCKET/attestation/$BV/", rw: "WRITE S3; only if build.outputs.publish-latest=='true'", evidence: "build.yml:785-786"}
+      - {cmd: "aws s3 sync s3://$S3_BUCKET/attestation/ output/all-attestation/ --exclude '*' --include '*/attestation-summary.json'", rw: "READ S3 all historical summaries", evidence: "build.yml:798-799"}
+      - {cmd: "make dashboard ATTEST_INPUT_DIR=output/all-attestation", rw: "generate-dashboard.py builds builds-index.json + copies SPA to output/web/", evidence: "build.yml:802"}
+      - {cmd: "aws s3 sync output/web/ s3://$S3_BUCKET/ --exclude 'attestation/*' --exclude 'packages/*' --exclude 'builds/*'", rw: "WRITE S3 bucket root (public dashboard SPA)", evidence: "build.yml:808-809"}
+    steps_ordered_names: [Set build version(583), Configure AWS(601), GHCR login(608), make pull-image(615), ensure-dirs/volume(620), squashfs-tools(622), restore squashfs cache(625), unsquashfs(632), restore ISO cache(636), grype cache key(643), grype cache(647), make grype-db-update(661), make attestation(664, continue-on-error), Read verdict(675), pip cache(691), Validate CycloneDX(704), Read SLSA predicate(753), Sign(768), Upload attestation to S3(779), Generate and upload site(788), Fail if attestation failed(811)]
+    pins:
+      - {thing: actions/attest, value: "@v2", evidence: build.yml:772}
+      - {thing: check-jsonschema, value: "0.38.0", evidence: build.yml:708}
+      - {thing: actions/cache, value: "@v4", evidence: "build.yml:654,699; cache/restore 626,637"}
+      - {thing: "gentoo/stage3 tag", value: "amd64-openrc-${BUILD_EPOCH}", evidence: build.yml:595}
+    caches:
+      - {action: cache/restore, key: "ci-artifacts-${run_id}-squashfs", fail-on-cache-miss: true, evidence: build.yml:625-630}
+      - {action: cache/restore, key: "ci-artifacts-${run_id}-iso", fail-on-cache-miss: true, evidence: build.yml:636-641}
+      - {action: cache, key: "grype-db-<date -u +%Y-%V>", restore-keys: "grype-db-", path: output/grype-db, evidence: build.yml:643-659}
+      - {action: cache, key: "pip-check-jsonschema-0.38.0", path: "~/.cache/pip", evidence: build.yml:698-703}
+    external: [ext.ghcr, ext.dockerhub, ext.grype-db, ext.sigstore, ext.github-attestations, ext.aws-s3, ext.nvd]
+    s3_coupling: hard
+    s3_detail: "Hard: Configure AWS credentials unconditional (601); S3 writes gated on publish-latest (master/tag). Final gate does not depend on S3 but job fails earlier at AWS creds today. The SBOM distribution URL embeds S3_BUCKET."
+    ci_assertions:
+      - id: assert.sbom-schema
+        location: build.yml:704-751
+        condition: "Both output/attestation/bom.cdx.json and builder-bom.cdx.json (missing file => skipped with return 0) must validate against vendored configs/attestation/schemas/bom-<specVersion>.schema.json (specVersion default 1.6); missing vendored schema => hard error; 180s timeout."
+      - id: assert.verdict-gates-signing
+        location: build.yml:675-689,773
+        condition: "attestation-summary.json .overall must equal 'pass' for actions/attest to run; missing file => 'fail'."
+      - id: assert.attestation-pass
+        location: build.yml:811-822
+        condition: "output/attestation/attestation-summary.json must exist and .overall == 'pass', else exit 1. This is what makes the Build run (and therefore Release) red when CVE/license/unowned gate fails. `make attestation` itself is continue-on-error so the failure surfaces here."
+    notes:
+      - "Order hazard: 'Upload attestation artifacts to S3' and 'Generate and upload site' run even if overall!=pass (no verdict check on 783/791); only the final step fails. So S3 attestation/<ver>/ and the public dashboard are written for FAILED attestations too, and release.yml would never run (Build red) - OK, but dashboard shows failure by design."
+      - "Signing step and read-predicate use always(); the Validate SBOM step failing does NOT block signing (no dependency) - only the end of job fails after signing."
+      - "STAGE3_DIGEST swallow-errors (595-598) hides pull failure."
+      - "Re-extracts squashfs (unsquashfs) just to give attestation.sh a sysroot - duplicate work."
+      - "Release.yml re-verification relies on this job's S3 output."
+    rebuild_notes:
+      - "Must remain build.yml-entry-point for attest@v2 persist (see header). A reusable design would need the same trigger/cert identity."
+      - "Digest chain: sha256(ISO) computed once in scripts/attestation.sh -> SBOM metadata.component.hashes[0] and SLSA subject."
+
+# ===================================================================== boot-test.yml
+  - id: wf.boot-test
+    kind: workflow
+    path: .github/workflows/boot-test.yml
+    purpose: "Reusable workflow: boot the ISO in QEMU across 20 scenarios (BIOS/UEFI/toram/AHCI/NVMe/USB/virtio/nicless/gui/stele/nic/vga/fbdev/nat/clock/persist). Acceptance oracle for boot."
+    triggers: ["workflow_call input build-version (string, required) (boot-test.yml:25-30)"]
+    invokes: [job.boot-test.expected-kernel, job.boot-test.bios, job.boot-test.uefi, job.boot-test.toram-eject, job.boot-test.ahci, job.boot-test.nvme, job.boot-test.usb, job.boot-test.virtio, job.boot-test.nicless, job.boot-test.gui, job.boot-test.stele-acid2, job.boot-test.nic-models, job.boot-test.vga-models, job.boot-test.fbdev-modprobe, job.boot-test.nat-router, job.boot-test.clock-epoch, job.boot-test.clock-1996, job.boot-test.persist]
+    invoked_by: [job.build.boot-test]
+    permissions: "none declared -> inherits caller's (contents:read, packages:write)"
+    secrets: []
+    external: []
+    s3_coupling: none
+    notes:
+      - "Entire workflow is S3-free: ISO comes from actions cache key ci-artifacts-${{github.run_id}}-iso written by build.job. Fully reusable after S3 loss."
+      - "Every job repeats the same 5 boilerplate steps (checkout, setup-python 3.12, apt install qemu[+ovmf], pip install pexpect, cache restore) ~18x - duplication; pexpect/qemu/ovmf unpinned."
+      - "Header comment (8-22) says a 'future release.yml' will call this; release.yml no longer builds - stale."
+      - "Only build.yml calls it; there is NO workflow_dispatch/direct trigger, so a boot test cannot be run standalone against an arbitrary ISO."
+      - "Cache restore uses fail-on-cache-miss; cache is branch-scoped by run so a re-run of boot-test jobs only (partial re-run) works while cache lives (7-day eviction)."
+      - "No timeout-minutes on any boot job: a hung QEMU relies on boot-test.py's own timeouts."
+    rebuild_notes: ["Per-job (not one job) structure parallelises ~20 boots; the pexpect-driven scripts/boot-test.py --mode X is the real oracle. Preserve: mode list, RAM sizes, args below."]
+
+  - id: job.boot-test.expected-kernel
+    kind: job
+    path: .github/workflows/boot-test.yml:41
+    purpose: "Compute expected `uname -r` = KVER from versions.lock minus -rN + CONFIG_LOCALVERSION from kernel.config."
+    needs: []
+    runner: ubuntu-latest
+    outputs: [version]
+    ci_assertions:
+      - id: expected-uname
+        location: boot-test.yml:53-56
+        condition: "version = ($(grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2 | sed -E 's/-r[0-9]+$//')) + ($(grep '^CONFIG_LOCALVERSION=' configs/kernel.config | sed -E 's/^CONFIG_LOCALVERSION=\"(.*)\"$/\\1/')) e.g. 6.12.80-i486-monolith; passed as --kernel-version to every boot-test.py invocation (CONFIG_LOCALVERSION_AUTO assumed off)."
+    secrets: []
+    s3_coupling: none
+    pins: [{thing: actions/checkout, value: "@v4", evidence: boot-test.yml:46}]
+
+  - id: job.boot-test.bios
+    kind: job
+    path: .github/workflows/boot-test.yml:58
+    purpose: "BIOS/ISOLINUX boot at 64M and 256M RAM."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    strategy: {fail-fast: false, matrix: {ram_mb: [64, 256]}}
+    invokes: [script.boot-test, bootmode.bios]
+    commands:
+      - {cmd: "python3 scripts/boot-test.py --iso output/themonolith-$BV.iso --mode bios --ram-mb {64|256} --kernel-version $expected --log-file output/boot-test-bios-{N}m.log", evidence: boot-test.yml:89-94}
+      - {cmd: "sudo apt-get install -y qemu-system-x86; pip install pexpect", evidence: boot-test.yml:72-78}
+    artifacts: [{upload: "boot-test-bios-{N}m-${run_id}", path: "output/boot-test-bios-{N}m.log", if: always(), retention: 14d}]
+    caches: [{action: cache/restore, key: "ci-artifacts-${run_id}-iso", fail-on-cache-miss: true, evidence: boot-test.yml:80-85}]
+    pins: [{thing: setup-python, value: "@v5, python 3.12", evidence: boot-test.yml:68}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.uefi
+    kind: job
+    path: .github/workflows/boot-test.yml:105
+    purpose: "UEFI (GRUB + OVMF), default RAM."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.uefi]
+    commands: [{cmd: "apt qemu-system-x86 ovmf; boot-test.py --mode uefi --kernel-version X --log-file output/boot-test-uefi.log (no --ram-mb)", evidence: boot-test.yml:118,132-136}]
+    artifacts: [{upload: "boot-test-uefi-${run_id}", retention: 14d, evidence: "boot-test.yml:138-145"}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.toram-eject
+    kind: job
+    path: .github/workflows/boot-test.yml:147
+    purpose: "toram + CD eject survival (BIOS/ISOLINUX only, GRUB toram has no console=ttyS0 - comment 172-174)."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.toram]
+    commands: [{cmd: "boot-test.py --mode toram --kernel-version X --log-file output/boot-test-toram.log", evidence: boot-test.yml:177-181}]
+    artifacts: [{upload: "boot-test-toram-${run_id}", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.ahci
+    kind: job
+    path: .github/workflows/boot-test.yml:201
+    purpose: "AHCI/SATA q35+ich9-ahci UEFI; asserts ahci module coldplug from initrd."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.ahci]
+    commands: [{cmd: "apt qemu-system-x86 ovmf; boot-test.py --mode ahci --ram-mb 512 ...", evidence: boot-test.yml:214,228-233}]
+    artifacts: [{upload: "boot-test-ahci-${run_id}", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.nvme
+    kind: job
+    path: .github/workflows/boot-test.yml:244
+    purpose: "NVMe UEFI."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.nvme]
+    commands: [{cmd: "boot-test.py --mode nvme --ram-mb 512", evidence: boot-test.yml:271-276}]
+    artifacts: [{upload: "boot-test-nvme-${run_id}", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.usb
+    kind: job
+    path: .github/workflows/boot-test.yml:287
+    purpose: "USB mass storage (xHCI) UEFI."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.usb]
+    commands: [{cmd: "boot-test.py --mode usb --ram-mb 512", evidence: boot-test.yml:314-319}]
+    artifacts: [{upload: "boot-test-usb-${run_id}", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.virtio
+    kind: job
+    path: .github/workflows/boot-test.yml:330
+    purpose: "virtio-blk UEFI."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.virtio]
+    commands: [{cmd: "boot-test.py --mode virtio --ram-mb 512", evidence: boot-test.yml:357-362}]
+    artifacts: [{upload: "boot-test-virtio-${run_id}", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.nicless
+    kind: job
+    path: .github/workflows/boot-test.yml:373
+    purpose: "Negative control: -nic none, asserts e1000 NOT coldplugged (BIOS/ISOLINUX)."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.nicless]
+    commands: [{cmd: "boot-test.py --mode nicless --ram-mb 64", evidence: boot-test.yml:403-408}]
+    artifacts: [{upload: "boot-test-nicless-${run_id}", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.gui
+    kind: job
+    path: .github/workflows/boot-test.yml:424
+    purpose: "TinyX Xfbdev on vesafb /dev/fb0, only libXfont built-in fonts, QEMU HMP screendump asserted non-black (SP-GUI G1 Step 3)."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.gui]
+    commands: [{cmd: "boot-test.py --mode gui --ram-mb 128 --gui-screendump output/gui-screendump.ppm", evidence: boot-test.yml:451-457}]
+    artifacts: [{upload: "boot-test-gui-${run_id}", path: output/boot-test-gui.log}, {upload: "boot-test-gui-screendump-${run_id}", path: output/gui-screendump.ppm, retention: 14d, evidence: "boot-test.yml:468-475"}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.stele-acid2
+    kind: job
+    path: .github/workflows/boot-test.yml:481
+    purpose: "Stele browser renders Acid2 headless to framebuffer (stele --headless --render-fb /usr/share/stele/acid2.html), screendump asserted non-black."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.stele-acid2]
+    commands: [{cmd: "boot-test.py --mode stele-acid2 --ram-mb 256 --gui-screendump output/stele-acid2-screendump.ppm", evidence: boot-test.yml:508-514}]
+    artifacts: [{upload: "boot-test-stele-acid2-${run_id}"}, {upload: "boot-test-stele-acid2-screendump-${run_id}", path: output/stele-acid2-screendump.ppm, retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.nic-models
+    kind: job
+    path: .github/workflows/boot-test.yml:538
+    purpose: "BIOS boot with each QEMU NIC model sequentially; PCI models assert modalias coldplug, ne2k_isa asserts `monolith-net probe` path."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.nic]
+    commands: [{cmd: "for m in pcnet rtl8139 tulip ne2k_pci ne2k_isa: boot-test.py --mode nic --nic-model $m --log-file output/boot-test-nic-$m.log (no --ram-mb); collects FAILED, exits 1 at end (563-585)", evidence: boot-test.yml:567-585}]
+    artifacts: [{upload: "boot-test-nic-${run_id}", path: "output/boot-test-nic-*.log", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+    notes: ["Model list is in YAML; the 6-of-21 NIC comment in build.yml:316-319 refers to this matrix. Models: pcnet rtl8139 tulip ne2k_pci ne2k_isa (5 here)."]
+
+  - id: job.boot-test.vga-models
+    kind: job
+    path: .github/workflows/boot-test.yml:602
+    purpose: "BIOS boot with `-vga cirrus`; asserts cirrusfb coldplugs."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.vga]
+    commands: [{cmd: "for m in cirrus: boot-test.py --mode vga --vga-model $m --log-file output/boot-test-vga-$m.log", evidence: boot-test.yml:631-649}]
+    artifacts: [{upload: "boot-test-vga-${run_id}", path: "output/boot-test-vga-*.log", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.fbdev-modprobe
+    kind: job
+    path: .github/workflows/boot-test.yml:666
+    purpose: "DCX-48: modprobe tdfxfb sm712fb matroxfb_base s3fb lxfb (step name 691) on -vga std BIOS boot; kernel untainted, no new Oops/BUG:/WARNING: in dmesg."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.fbdev-modprobe]
+    commands: [{cmd: "boot-test.py --mode fbdev-modprobe", evidence: boot-test.yml:693-697}]
+    artifacts: [{upload: "boot-test-fbdev-modprobe-${run_id}", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.nat-router
+    kind: job
+    path: .github/workflows/boot-test.yml:714
+    purpose: "Two-node NAT: router guest (eth0 WAN/user, eth1 LAN/socket) + client guest; client curls host http.server through masquerade; negative control tears NAT down."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.nat]
+    commands:
+      - {cmd: "mkdir /tmp/natsrv; echo NAT_OK_marker > probe.txt; (cd /tmp/natsrv && python3 -m http.server 8000 --bind 0.0.0.0) & ; HTTP_PID to GITHUB_ENV; sleep 2", evidence: boot-test.yml:739-744}
+      - {cmd: "boot-test.py --mode nat --log-file output/boot-test-nat.log", evidence: boot-test.yml:748-752}
+      - {cmd: "kill $HTTP_PID (always)", evidence: boot-test.yml:754-756}
+    artifacts: [{upload: "boot-test-nat-${run_id}", path: "output/boot-test-nat.log*", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+    notes: ["Host-side fixture: port 8000 on 0.0.0.0, marker file NAT_OK_marker; boot-test.py must expect this exact port/marker (check scripts area)."]
+
+  - id: job.boot-test.clock-epoch
+    kind: job
+    path: .github/workflows/boot-test.yml:771
+    purpose: "Clock landmine direction (a): RTC at 1970 epoch, monolith-time fetches Date header from host fixture http.server."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.clock-epoch]
+    commands:
+      - {cmd: "mkdir /tmp/clocksrv; echo clock-fixture > probe.txt; python3 -m http.server 8000 --bind 0.0.0.0 &", evidence: boot-test.yml:796-801}
+      - {cmd: "boot-test.py --mode clock-epoch --log-file output/boot-test-clock-epoch.log", evidence: boot-test.yml:805-809}
+    artifacts: [{upload: "boot-test-clock-epoch-${run_id}", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+    notes: ["Comment 767-770 references .superpowers/sdd/2026-08-19-monolith-ux-pass/task-2-brief.md (INVARIANT doc)."]
+
+  - id: job.boot-test.clock-1996
+    kind: job
+    path: .github/workflows/boot-test.yml:824
+    purpose: "Clock landmine direction (b): RTC in disc native era (1996); deliberately NO fixture server - correct 1996 clock must never make a network call."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.clock-1996]
+    commands: [{cmd: "boot-test.py --mode clock-1996 --log-file output/boot-test-clock-1996.log", evidence: boot-test.yml:853-857}]
+    artifacts: [{upload: "boot-test-clock-1996-${run_id}", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+  - id: job.boot-test.persist
+    kind: job
+    path: .github/workflows/boot-test.yml:876
+    purpose: "Persist continuity: BIOS boot with host-formatted MONOLITH_PERSIST virtio-blk disk; /overlay is real partition; unclean QEMU kill, relaunch same disk, history (50-persist-history.bash) survived."
+    needs: [expected-kernel]
+    runner: ubuntu-latest
+    invokes: [script.boot-test, bootmode.persist]
+    commands: [{cmd: "boot-test.py --mode persist --log-file output/boot-test-persist.log", evidence: boot-test.yml:903-907}]
+    artifacts: [{upload: "boot-test-persist-${run_id}", path: "output/boot-test-persist.log*", retention: 14d}]
+    s3_coupling: none
+    secrets: []
+
+# ===================================================================== release.yml
+  - id: wf.release
+    kind: workflow
+    path: .github/workflows/release.yml
+    purpose: "Publish-only: after a successful Build on a v* tag, pull the attested ISO+SBOM+summary from S3, re-verify digest chain, create the GitHub Release."
+    triggers: ["workflow_run workflows:[Build] types:[completed] (release.yml:32-34)"]
+    invokes: [job.release.publish]
+    invoked_by: ["wf.build via workflow_run"]
+    permissions: "contents: write (workflow 44-45)"
+    concurrency: "group release-${{ workflow_run.head_branch }}, cancel-in-progress false (37-39)"
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.S3_BUCKET]
+    external: [ext.aws-s3, ext.github-api]
+    s3_coupling: hard
+    notes: ["Runs (skipped) on EVERY Build completion; the 'skipped' runs seen in gh run list are expected.", "Has never been observed succeeding in the last 34 listed runs (all skipped) - no tag releases in window."]
+
+  - id: job.release.publish
+    kind: job
+    path: .github/workflows/release.yml:48
+    purpose: "Verify tag, download artifacts from S3, verify digest chain, generate SHA256SUMS + notes, gh release create, mirror SHA256SUMS to S3."
+    triggers: [workflow_run]
+    needs: []
+    if: "workflow_run.conclusion=='success' && workflow_run.event=='push' && startsWith(workflow_run.head_branch,'v') (57-60)"
+    runner: ubuntu-latest
+    permissions: {contents: write, id-token: none, attestations: none, packages: none}
+    timeout: default-360
+    env: ["GH_TOKEN=${{ github.token }} (65)"]
+    invokes: []
+    commands:
+      - {cmd: "git fetch --tags --force; git rev-parse refs/tags/$TAG^{commit} == workflow_run.head_sha", rw: "refuse to publish if head_branch is not a tag or tag moved", evidence: release.yml:75,88-97}
+      - {cmd: "git describe --tags --abbrev=0 ${TAG}^", rw: "PREV_TAG for changelog", evidence: release.yml:108}
+      - {cmd: "aws s3 cp s3://$S3_BUCKET/themonolith-$BV.iso release-assets/", rw: "READ S3", evidence: release.yml:129-130}
+      - {cmd: "aws s3 cp s3://$S3_BUCKET/attestation/$BV/bom.cdx.json release-assets/bom.cdx.json", rw: "READ S3", evidence: release.yml:131-132}
+      - {cmd: "aws s3 cp s3://$S3_BUCKET/attestation/$BV/attestation-summary.json ./attestation-summary.json", rw: "READ S3 (not shipped in release)", evidence: release.yml:133-134}
+      - {cmd: "sha256sum ISO; python3 -c json iso_sha256 from attestation-summary.json; python3 -c bom['metadata']['component']['hashes'][0]['content']", rw: "digest chain re-check", evidence: release.yml:149-162}
+      - {cmd: "(cd release-assets && sha256sum *.iso bom.cdx.json > SHA256SUMS)", evidence: release.yml:168-170}
+      - {cmd: "git log --no-merges --pretty=format:'- %s (%h)' PREV..TAG", rw: "changelog", evidence: release.yml:189}
+      - {cmd: "gh release create $TAG [--prerelease --latest=false] --title 'The Monolith $TAG' --notes-file release-notes.md release-assets/themonolith-*.iso SHA256SUMS bom.cdx.json", rw: "WRITE GitHub release; prerelease iff TAG#v contains a hyphen", evidence: release.yml:255-271}
+      - {cmd: "aws s3 cp release-assets/SHA256SUMS s3://$S3_BUCKET/attestation/$BV/SHA256SUMS", rw: "WRITE S3 (after the release; failure here leaves release published but job red)", evidence: release.yml:277-278}
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.S3_BUCKET]
+    pins:
+      - {thing: actions/checkout, value: "@v4 (fetch-depth 0, ref workflow_run.head_sha)", evidence: release.yml:67-72}
+      - {thing: aws-actions/configure-aws-credentials, value: "@v4", evidence: release.yml:117}
+    external: [ext.aws-s3, ext.github-api]
+    s3_coupling: hard
+    ci_assertions:
+      - id: release.tag-matches-sha
+        location: release.yml:88-97
+        condition: "refs/tags/${head_branch} must exist and its commit == workflow_run.head_sha"
+      - id: release.digest-chain
+        location: release.yml:149-162
+        condition: "sha256sum(downloaded ISO) == attestation-summary.json['iso_sha256'] AND == bom.cdx.json['metadata']['component']['hashes'][0]['content']; else exit 1."
+    notes:
+      - "Does NOT verify the Sigstore attestation (no `gh attestation verify`); the digest chain is S3-sourced, so release publishes S3 content, not the cached ISO that was attested. Only a sha comparison ties them."
+      - "Release notes hard-code `--owner tuckermclean` in gh attestation verify (216) and read kernel/busybox versions from versions.lock at checkout (175-176); kernel version printed with -rN."
+      - "Release notes link: https://<S3_BUCKET>.s3.amazonaws.com/#/build/<ver> (230) - dashboard on S3 root."
+      - "`id: digest` step defined AFTER its run block at 164; fine in YAML."
+      - "Changelog heredoc via GITHUB_OUTPUT with 'CHANGELOG_EOF' delimiter; git log subjects injected via env, OK."
+      - "ISO shipped as a GitHub release asset: size limit 2 GiB per asset - ISO size unknown here."
+    rebuild_notes:
+      - "Keep: tag->head_sha check, digest-chain re-verify, SHA256SUMS, prerelease rule (hyphen => prerelease, not Latest). Replace the S3 hop (e.g. GHCR oras or Actions artifact via workflow_run + gh run download)."
+      - "Better: attest and release the SAME bytes; consider `gh attestation verify` before publish."
+
+# ===================================================================== cve-gate-canary.yml
+  - id: wf.cve-gate-canary
+    kind: workflow
+    path: .github/workflows/cve-gate-canary.yml
+    purpose: "Cheap liveness proof for the Grype CVE scanner using a fixture SBOM pinned to Heartbleed."
+    triggers: ["push branches [master] paths: scripts/check-cves.sh, scripts/run-cve-canary.sh, scripts/fixtures/**, configs/attestation/cve-policy.yaml, this workflow (lines 21-27)", "pull_request same paths (30-36)", "schedule cron '30 4 * * *' daily (40)", "workflow_dispatch (41)"]
+    invokes: [job.cve-gate-canary.canary]
+    permissions: "contents: read"
+    s3_coupling: none
+    notes: ["Currently GREEN daily (only workflow besides pr-validate that is fully independent of AWS)."]
+    rebuild_notes: ["Keep as-is in spirit; pin grype version + db."]
+
+  - id: job.cve-gate-canary.canary
+    kind: job
+    path: .github/workflows/cve-gate-canary.yml:47
+    purpose: "Install grype, update DB, run scripts/run-cve-canary.sh asserting nonzero raw findings on Heartbleed fixture."
+    needs: []
+    runner: ubuntu-latest
+    permissions: {contents: read}
+    timeout: default-360
+    invokes: [script.run-cve-canary, script.check-cves]
+    commands:
+      - {cmd: "curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin", rw: "network read; unpinned main-branch script + latest grype; needs sudo? writes /usr/local/bin (works because install.sh runs as runner... see note)", evidence: cve-gate-canary.yml:56-57}
+      - {cmd: "pip3 install --user pyyaml", evidence: "cve-gate-canary.yml:61"}
+      - {cmd: "grype db update", rw: "downloads Grype DB from ext.grype-db", evidence: "cve-gate-canary.yml:64"}
+      - {cmd: "grype db status", evidence: "cve-gate-canary.yml:67"}
+      - {cmd: "bash scripts/run-cve-canary.sh", rw: "scans scripts/fixtures/canary-sbom.cdx.json (OpenSSL 1.0.1 / CVE-2014-0160) and asserts raw finding count nonzero", evidence: "cve-gate-canary.yml:70"}
+      - {cmd: "echo ::error:: explanation (if: failure())", evidence: "cve-gate-canary.yml:73-80"}
+    secrets: []
+    pins: [{thing: actions/checkout, value: "@v4", evidence: "cve-gate-canary.yml:54"}, {thing: grype, value: "UNPINNED latest via main install.sh", evidence: "cve-gate-canary.yml:56-57"}]
+    external: [ext.grype-db, ext.github-api]
+    ci_assertions:
+      - id: canary.nonzero-findings
+        location: "cve-gate-canary.yml:70 -> scripts/run-cve-canary.sh"
+        condition: "Grype raw finding count against scripts/fixtures/canary-sbom.cdx.json (pinned OpenSSL 1.0.1 / CVE-2014-0160) must be > 0 (not merely check-cves.sh exit 0). Exact check lives in scripts/run-cve-canary.sh (other area)."
+    s3_coupling: none
+    notes: ["Install to /usr/local/bin without sudo works on ubuntu-latest because the runner user has passwordless write? Unknown - it is evidently green, so it works."]
+
+# ===================================================================== gc.yml
+  - id: wf.gc
+    kind: workflow
+    path: .github/workflows/gc.yml
+    purpose: "Weekly garbage-collect S3 (keep current BUILD_EPOCH) and GHCR packages."
+    triggers: ["schedule cron '0 4 * * 0' Sundays 04:00 UTC (gc.yml:2)", "workflow_dispatch input apply:boolean default false (gc.yml:3-4)"]
+    invokes: [job.gc.gc]
+    s3_coupling: hard
+    notes: ["Currently FAILING weekly since 2026-10-11 at configure-aws-credentials (last success 10-04). GHCR GC step is therefore never reached => GHCR GC also dead, though it needs no S3."]
+    rebuild_notes: ["Split GHCR GC from S3 GC so one dead credential does not block the other."]
+
+  - id: job.gc.gc
+    kind: job
+    path: .github/workflows/gc.yml:7
+    purpose: "Run scripts/s3-gc.sh and scripts/ghcr-gc.sh (apply on schedule; dry-run on dispatch unless apply=true)."
+    needs: []
+    runner: ubuntu-latest
+    permissions: {contents: read, packages: write, id-token: none, attestations: none}
+    timeout: default-360
+    invokes: [script.s3-gc, script.ghcr-gc]
+    commands:
+      - {cmd: "aws-actions/configure-aws-credentials@v4 (static keys)", evidence: gc.yml:15-19}
+      - {cmd: "echo KEEP_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2) >> $GITHUB_ENV", evidence: gc.yml:20}
+      - {cmd: "sh scripts/s3-gc.sh [--apply]  (env S3_BUCKET)", rw: "lists and deletes S3 objects not in keep-list derived from KEEP_EPOCH; abort guard refuses if keep-list matches 0 objects (comment gc.yml:22-25)", evidence: gc.yml:26-29}
+      - {cmd: "sh scripts/ghcr-gc.sh [--apply]  (env GH_TOKEN=secrets.GITHUB_TOKEN)", rw: "GHCR package version deletion via gh api (script in other area)", evidence: gc.yml:30-33}
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.S3_BUCKET, secret.GITHUB_TOKEN]
+    pins: [{thing: actions/checkout, value: "@v4", evidence: gc.yml:14}, {thing: configure-aws-credentials, value: "@v4", evidence: gc.yml:15}]
+    external: [ext.aws-s3, ext.ghcr, ext.github-api]
+    s3_coupling: hard
+    notes: ["workflow_dispatch description says 'the weekly schedule always applies' - schedule deletes unattended.", "GHCR GC with packages:write uses GITHUB_TOKEN: binpkgs (monolith-binpkgs tags per epoch) and builder images are what it prunes (script not in scope)."]
+
+# ===================================================================== nightly-cve-scan.yml
+  - id: wf.nightly-cve-scan
+    kind: workflow
+    path: .github/workflows/nightly-cve-scan.yml
+    purpose: "Daily retroactive re-scan of every historical release SBOM against latest Grype DB; flags revoked releases on the dashboard."
+    triggers: ["schedule cron '0 4 * * *' daily (nightly-cve-scan.yml:18)", "workflow_dispatch (19)"]
+    invokes: [job.nightly-cve-scan.rescan]
+    concurrency: "group nightly-cve-scan, no cancel (24-26)"
+    permissions: "contents: read"
+    s3_coupling: hard
+    notes: ["FAILING daily; last success 2026-10-07; every failure at Configure AWS credentials (run 40480843916, 10s)."]
+
+  - id: job.nightly-cve-scan.rescan
+    kind: job
+    path: .github/workflows/nightly-cve-scan.yml:29
+    purpose: "Run scripts/nightly-cve-monitor.py which shells out to grype and aws s3 sync."
+    needs: []
+    runner: ubuntu-latest
+    permissions: {contents: read}
+    timeout: default-360
+    invokes: [script.nightly-cve-monitor, script.check-cves]
+    commands:
+      - {cmd: "curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b $HOME/.local/bin; echo $HOME/.local/bin >> $GITHUB_PATH; grype version", evidence: nightly-cve-scan.yml:43-47, flag: unpinned}
+      - {cmd: "configure-aws-credentials@v4", evidence: nightly-cve-scan.yml:50-54}
+      - {cmd: "python3 scripts/nightly-cve-monitor.py --data-dir nightly-data --s3-bucket \"$S3_BUCKET\"", rw: "READ S3 (attestation/ SBOMs via aws s3 sync inside script), writes nightly-data/, possibly WRITES revocation data back to S3 (unknown - script not in scope)", evidence: nightly-cve-scan.yml:57-61}
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.S3_BUCKET]
+    pins: [{thing: actions/checkout, value: "@v4", evidence: nightly-cve-scan.yml:33}, {thing: actions/setup-python, value: "@v5 py3.12", evidence: nightly-cve-scan.yml:36}, {thing: grype, value: unpinned}]
+    artifacts: [{upload: nightly-cve-data, path: nightly-data/, if: always(), retention: 14d, evidence: nightly-cve-scan.yml:64-70}]
+    external: [ext.aws-s3, ext.grype-db, ext.nvd]
+    s3_coupling: hard
+    notes: ["Header says the monitor 'previously existed but was never invoked' (nightly-cve-scan.yml:8-9)."]
+
+# ===================================================================== pr-validate.yml
+  - id: wf.pr-validate
+    kind: workflow
+    path: .github/workflows/pr-validate.yml
+    purpose: "Cheap lint/syntax/unit-test gate on every PR (no build)."
+    triggers: ["pull_request (all types default) (pr-validate.yml:7)"]
+    invokes: [job.pr-validate.validate]
+    concurrency: "pr-validate-<pr number>, cancel-in-progress true (13-15)"
+    permissions: "contents: read"
+    s3_coupling: none
+    notes: ["Green; last run 2026-09-24 (no PRs since)."]
+    rebuild_notes: ["This is the cheapest acceptance oracle and AWS-free."]
+
+  - id: job.pr-validate.validate
+    kind: job
+    path: .github/workflows/pr-validate.yml:17
+    purpose: "bash -n, py_compile, YAML parse, actionlint, shellcheck(errors), run scripts/tests/*.sh."
+    needs: []
+    runner: ubuntu-latest
+    permissions: {contents: read}
+    timeout: default-360
+    invokes: [test.scripts-tests-all]
+    ci_assertions:
+      - id: pr.bash-n
+        location: pr-validate.yml:23-30
+        condition: "`bash -n` passes for scripts/*.sh, scripts/tests/*.sh, configs/overlay/app-misc/monolith-base/files/monolith-net and .../monolith-router"
+      - id: pr.py-compile
+        location: pr-validate.yml:32-33
+        condition: "python3 -m py_compile scripts/*.py"
+      - id: pr.yaml-parse
+        location: pr-validate.yml:35-48
+        condition: "yaml.safe_load succeeds on configs/**/*.yaml and .github/workflows/*.yml (only well-formedness)"
+      - id: pr.actionlint
+        location: pr-validate.yml:50-55
+        condition: "actionlint 1.7.7 with -shellcheck= (disabled) exits 0 over .github/workflows"
+      - id: pr.shellcheck
+        location: pr-validate.yml:58-59
+        condition: "shellcheck --severity=error on scripts/*.sh scripts/tests/*.sh and monolith-net, monolith-router, monolith, monolith-time, monolith-time-check, monolith-persist under configs/overlay/app-misc/monolith-base/files/"
+      - id: pr.shell-unit-tests
+        location: pr-validate.yml:61-70
+        condition: "`sh <t>` for every scripts/tests/*.sh must exit 0 (all run, failures aggregated)"
+    commands:
+      - {cmd: "bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7; ./actionlint -color -shellcheck=", evidence: pr-validate.yml:53-55}
+    secrets: []
+    pins: [{thing: actions/checkout, value: "@v4", evidence: pr-validate.yml:21}, {thing: actionlint, value: "1.7.7", evidence: pr-validate.yml:53}]
+    external: [ext.github-api]
+    s3_coupling: none
+    notes:
+      - "Lints only the 6 named overlay shell scripts, not all rootfs/overlay scripts."
+      - "Does NOT run scripts/boot-test.py syntax beyond py_compile; does not lint Dockerfile or Makefile."
+      - "`sh` (dash) is used to run tests but bash -n used for syntax: mismatch if tests use bashisms."
+
+# ===================================================================== pin-bump.yml
+  - id: wf.pin-bump
+    kind: workflow
+    path: .github/workflows/pin-bump.yml
+    purpose: "Weekly BUILD_EPOCH bump: archive new portage snapshot to S3, regen versions.lock, dispatch build.yml on branch, open PR, auto-merge if green."
+    triggers: ["schedule cron '0 6 * * 1' Mon 06:00 UTC (pin-bump.yml:44)", "workflow_dispatch input target_epoch (YYYYMMDD) (45-52)"]
+    invokes: [job.pin-bump.check, job.pin-bump.bump-and-validate, wf.build]
+    concurrency: "group pin-bump, no cancel (54-56)"
+    permissions: "contents: read (workflow); job-level elevated"
+    env: ["REGISTRY=ghcr.io/${{ github.repository_owner }} (62)"]
+    s3_coupling: hard
+    notes: ["Last runs: 10-26 success (8s => check found no update), 10-19 FAILED at Configure AWS credentials, 10-12 success (no update), 10-05, 09-28 success."]
+
+  - id: job.pin-bump.check
+    kind: job
+    path: .github/workflows/pin-bump.yml:67
+    purpose: "Host-only: is a newer BUILD_EPOCH available?"
+    needs: []
+    runner: ubuntu-latest
+    permissions: "inherited contents: read"
+    timeout: default-360
+    invokes: [script.update-build-pins]
+    outputs: [update_available, current_epoch, target_epoch, check_output]
+    commands:
+      - {cmd: "scripts/update-build-pins.sh check", rw: "reads Dockerfile; queries upstream (Docker Hub gentoo/stage3 tags per header) for latest; prints 'BUILD_EPOCH <cur> <latest> *'-style line; gate greps 'BUILD_EPOCH.*\\*' and awk '{print $3}' for latest", evidence: pin-bump.yml:93,112-116}
+    secrets: []
+    pins: [{thing: actions/checkout, value: "@v4", evidence: pin-bump.yml:75}]
+    external: [ext.dockerhub]
+    ci_assertions:
+      - {id: pinbump.target-epoch-format, location: pin-bump.yml:77-83, condition: "dispatch input target_epoch must match ^[0-9]{8}$"}
+    s3_coupling: none
+    notes: ["Script injection risk: ${{ inputs.target_epoch }} interpolated into shell (80,102) before validation - low risk (dispatch only, repo writers)."]
+
+  - id: job.pin-bump.bump-and-validate
+    kind: job
+    path: .github/workflows/pin-bump.yml:122
+    purpose: "Bump BUILD_EPOCH+SOURCE_DATE_EPOCH, mirror snapshot to S3, regen versions.lock, dispatch+poll build.yml, open PR, squash --admin auto-merge on green."
+    needs: [check]
+    if: "needs.check.outputs.update_available == 'true'"
+    runner: ubuntu-latest
+    permissions: {contents: write, pull-requests: write, issues: write, actions: write, packages: read, id-token: none}
+    timeout: 280 minutes
+    env: ["GH_TOKEN=github.token", "OLD_EPOCH", "NEW_EPOCH"]
+    invokes: [make.ensure-dirs, make.pull-image, script.update-build-pins, script.sync-portage, make.sync-portage, make.update-versions, wf.build]
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.S3_BUCKET, secret.GITHUB_TOKEN]
+    commands:
+      - {cmd: "gh label create pin-bump|needs-fixup|validated --force", rw: "WRITE GitHub labels", evidence: pin-bump.yml:152-157}
+      - {cmd: "scripts/update-build-pins.sh update $NEW_EPOCH", rw: "edits Dockerfile BUILD_EPOCH + SOURCE_DATE_EPOCH", evidence: pin-bump.yml:188}
+      - {cmd: "BUILD_EPOCH=$NEW_EPOCH sh scripts/sync-portage.sh fetch-only (env S3_BUCKET)", rw: "downloads portage snapshot from Gentoo and WRITES it to S3 portage-snapshots/ (HARD S3)", evidence: pin-bump.yml:200}
+      - {cmd: "make sync-portage update-versions (env S3_BUCKET)", rw: "docker run builder image; reads S3 snapshot; rewrites configs/portage/versions.lock; rc captured not fatal", evidence: pin-bump.yml:207}
+      - {cmd: "sudo chown -R configs/portage; git add -A; git diff --cached ...; git commit; git push -u origin pins/bump-OLD-NEW", rw: "pushes branch with GITHUB_TOKEN (no workflow triggers)", evidence: pin-bump.yml:221-236}
+      - {cmd: "gh workflow run build.yml --ref pins/bump-OLD-NEW; gh run list --workflow=build.yml --branch ... (30x10s) to find run id", rw: "dispatch; needs actions:write", evidence: pin-bump.yml:245-255}
+      - {cmd: "gh run view $RUN_ID --json status / conclusion / jobs (poll 60s up to 240 min)", evidence: pin-bump.yml:279-295}
+      - {cmd: "gh pr create --base master --head pins/bump-OLD-NEW --label ...", evidence: pin-bump.yml:365-370}
+      - {cmd: "gh pr merge pins/bump-OLD-NEW --squash --admin --delete-branch (if wait.conclusion=='success')", rw: "auto-merge; --admin requires bypass of branch protection (caveat comment 380-391); GITHUB_TOKEN may 403", evidence: pin-bump.yml:392-396}
+    pins: [{thing: actions/checkout, value: "@v4"}, {thing: configure-aws-credentials, value: "@v4", evidence: pin-bump.yml:160}, {thing: docker/login-action, value: "@v3", evidence: pin-bump.yml:167}]
+    external: [ext.aws-s3, ext.ghcr, ext.github-api, ext.dockerhub, ext.gentoo-mirrors]
+    s3_coupling: hard
+    notes:
+      - "A build.yml dispatch on pins/bump-* branch is a non-master, non-tag ref => PUBLISH_LATEST=false => no S3 writes from build, but build still needs AWS creds + S3 portage snapshot (sync-portage) - the validated flow is dead without S3."
+      - "Dispatching build.yml via GITHUB_TOKEN works (workflow_dispatch is allowed from GITHUB_TOKEN)."
+      - "Wait budget 240 min inside a 280-min timeout; the hosted cap is 360."
+      - "PR creation uses GITHUB_TOKEN => PR creation by bot does not trigger pr-validate (GitHub rule) - pr-validate wouldn't run on these PRs."
+      - "Branch pins/bump-* push would trigger regen-pins only for non-GITHUB_TOKEN pushes."
+    rebuild_notes: ["Keep the two-pin model (BUILD_EPOCH cheap/auto, TOOLCHAIN_EPOCH human-gated). Replace S3 snapshot mirror."]
+
+# ===================================================================== regen-pins.yml
+  - id: wf.regen-pins
+    kind: workflow
+    path: .github/workflows/regen-pins.yml
+    purpose: "On a pins/** or integration/** branch push touching pin files, regenerate crossdev.lock and versions.lock in CI and commit them back."
+    triggers: ["push branches ['integration/**','pins/**'] paths Dockerfile, configs/portage/crossdev.lock, configs/portage/versions.lock, scripts/update-versions.sh, scripts/update-build-pins.sh (regen-pins.yml:21-28)", "workflow_dispatch (29)"]
+    invokes: [job.regen-pins.regen]
+    concurrency: "regen-pins-<ref>, no cancel (35-37)"
+    permissions: "contents: write, packages: write (31-33)"
+    env: ["REGISTRY=ghcr.io/${{ github.repository_owner }}"]
+    s3_coupling: soft
+    notes: ["No recent runs in the 300-run window => effectively dormant manual-assist workflow.", "Name is 'Regenerate pin lockfiles'."]
+
+  - id: job.regen-pins.regen
+    kind: job
+    path: .github/workflows/regen-pins.yml:43
+    purpose: "Resolve musl/gcc/binutils pins from pinned stage3 snapshot, rebuild toolchain image, push it, run make update-versions, commit locks."
+    needs: []
+    runner: ubuntu-latest
+    permissions: {contents: write, packages: write, id-token: none}
+    timeout: default-360 (comment says ~50min crossdev)
+    invokes: [make.ensure-dirs, make.ensure-volume, make.pull-image, make.build-image, make.push-image, make.update-versions, script.update-versions]
+    commands:
+      - {cmd: "docker pull -q gentoo/stage3:amd64-openrc-$EPOCH; docker run --rm $IMG sh -euc 'emerge-webrsync --revert=$EPOCH ...; echo \"*/* ~*\" > /etc/portage/package.accept_keywords/zz-regen; portageq best_visible / sys-libs/musl ; \"=sys-devel/gcc-15*\"; sys-devel/binutils; ls musl ebuilds'", rw: "reads Docker Hub + Gentoo snapshot (emerge-webrsync, i.e. ext.gentoo-mirrors); NOT S3", evidence: regen-pins.yml:56-70}
+      - {cmd: "writes configs/portage/crossdev.lock (musl:<v>:0, gcc:<v>:<major>) and sed-patches sys-devel/binutils line in configs/portage/versions.lock", evidence: regen-pins.yml:91-107}
+      - {cmd: "make build-image; make push-image; make update-versions", evidence: regen-pins.yml:130,136,147}
+      - {cmd: "git add Dockerfile versions.lock crossdev.lock; git commit -m '... [skip ci]'; git push origin HEAD:${{ github.ref_name }}", rw: "WRITE branch with bot identity monolith-ci[bot]", evidence: regen-pins.yml:174-182}
+    secrets: [secret.AWS_ACCESS_KEY_ID, secret.AWS_ACCESS_KEY_SECRET, secret.AWS_REGION, secret.GITHUB_TOKEN]
+    pins: [{thing: actions/checkout, value: "@v4 ref: github.ref_name", evidence: regen-pins.yml:46-48}, {thing: configure-aws-credentials, value: "@v4", evidence: regen-pins.yml:111}, {thing: docker/login-action, value: "@v3"}]
+    artifacts: [{upload: "regen-crossdev-logs-${run_id}", if: failure(), retention: 7d}, {upload: "regenerated-locks-${run_id}", paths: [Dockerfile, configs/portage/versions.lock, configs/portage/crossdev.lock], if: always(), retention: 14d, evidence: regen-pins.yml:157-169}]
+    external: [ext.dockerhub, ext.gentoo-mirrors, ext.ghcr, ext.aws-s3]
+    s3_coupling: soft
+    s3_detail: "AWS creds configured (110) so `make update-versions` could read the S3 portage snapshot via the mounted env? The make targets in this job (build-image, update-versions) may or may not use S3; S3_BUCKET is NOT passed in env here, so S3 use is unlikely, but the unconditional Configure AWS step will fail with the disabled account => job fails. Treat as hard-failing in practice."
+    notes:
+      - "Dead-credential effect: fails at Configure AWS credentials step even though the S3 bucket is not used (no S3_BUCKET env set here)."
+      - "The `*/* ~*` keyword trick excludes live 9999 ebuilds (the gcc-15.3.9999 incident)."
+      - "Comment (regen-pins.yml:53) claims the same mechanism the Dockerfile uses (emerge-webrsync --revert=EPOCH)."
+    rebuild_notes: ["The stage3-query trick for musl/gcc/binutils is the recipe worth keeping; drop AWS step."]
+
+# ===================================================================== toolchain-bump.yml
+  - id: wf.toolchain-bump
+    kind: workflow
+    path: .github/workflows/toolchain-bump.yml
+    purpose: "Human-triggered TOOLCHAIN_EPOCH bump: rebuild builder image, dispatch build.yml validation, open PR (never auto-merge)."
+    triggers: ["workflow_dispatch input target_epoch optional (toolchain-bump.yml:32-40)"]
+    invokes: [job.toolchain-bump.bump-and-validate, wf.build]
+    concurrency: "toolchain-bump, no cancel (42-44)"
+    permissions: "contents: read; job elevated"
+    env: ["REGISTRY=ghcr.io/${{ github.repository_owner }}"]
+    s3_coupling: soft
+    notes: ["No AWS step in this workflow; but the build.yml run it dispatches hard-needs S3. No recent runs in window."]
+
+  - id: job.toolchain-bump.bump-and-validate
+    kind: job
+    path: .github/workflows/toolchain-bump.yml:53
+    purpose: "Bump TOOLCHAIN_EPOCH, regen crossdev.lock from pre-bump image, rebuild+push image, dispatch+await build.yml, open PR with label validated|needs-fixup."
+    needs: []
+    runner: ubuntu-latest
+    permissions: {contents: write, pull-requests: write, issues: write, actions: write, packages: write}
+    timeout: 355 minutes
+    invokes: [make.ensure-dirs, script.update-build-pins, make.push-image, make.build-image, wf.build]
+    commands:
+      - {cmd: "gh label create toolchain-bump|needs-fixup|validated --force", evidence: toolchain-bump.yml:88-93}
+      - {cmd: "docker pull/tag monolith-builder:latest and -base-tools:latest from GHCR (cache)", evidence: toolchain-bump.yml:106-109}
+      - {cmd: "scripts/update-build-pins.sh update-toolchain \"$target_epoch\"", rw: "edits Dockerfile TOOLCHAIN_EPOCH, regenerates configs/portage/crossdev.lock from pre-bump image (one-cycle lag)", evidence: toolchain-bump.yml:121}
+      - {cmd: "make push-image (build + push)", rw: "WRITE GHCR monolith-builder; rc captured non-fatally", evidence: toolchain-bump.yml:137}
+      - {cmd: "git push -u origin toolchain/bump-OLD-NEW; gh workflow run build.yml --ref ...; poll gh run view up to 240 min; gh pr create --base master --label ...", evidence: toolchain-bump.yml:177-188,222-224,309-314}
+    secrets: [secret.GITHUB_TOKEN]
+    pins: [{thing: actions/checkout, value: "@v4"}, {thing: docker/login-action, value: "@v3", evidence: toolchain-bump.yml:96}, {thing: upload-artifact, value: "@v4"}]
+    artifacts: [{upload: "crossdev-logs-${run_id}", path: output/portage-logs/, if: "build-image.rc != '0'", retention: 7d}]
+    external: [ext.ghcr, ext.github-api, ext.dockerhub, ext.gentoo-mirrors]
+    s3_coupling: soft
+    ci_assertions:
+      - {id: toolchain.target-epoch-format, location: toolchain-bump.yml:73-79, condition: "target_epoch matches ^[0-9]{8}$"}
+      - {id: toolchain.epoch-changed, location: toolchain-bump.yml:122-126, condition: "Dockerfile TOOLCHAIN_EPOCH after update != before, else exit 1"}
+    notes:
+      - "Never auto-merges (header and 315-316)."
+      - "If make push-image fails, PR still opened with needs-fixup (non-fatal)."
+      - "`git commit` after `git add -A` includes all runner changes (could include unintended files like output/ if not gitignored)."
+      - "Dispatched build.yml on toolchain/bump-* hard-needs S3 (aws creds + sync-portage) => validation can never go green today."
+    rebuild_notes: ["Keep human-gated model."]
+
+contradictions:
+  - claim: "build.yml comment: release.yml calls this ENTIRE workflow via workflow_call"
+    where: ".github/workflows/build.yml:553-558"
+    fact: "release.yml triggers on workflow_run and does not call build.yml (release.yml:31-34); build.yml header (3-17) itself says so."
+    evidence: "release.yml:31-34"
+  - claim: "boot-test.yml header: a future release.yml will call boot-test.yml too"
+    where: ".github/workflows/boot-test.yml:8-22"
+    fact: "Only build.yml calls it; release.yml does not."
+    evidence: "grep 'uses: ./.github/workflows/boot-test.yml' -> only build.yml:562"
+  - claim: "build.yml:316-319 says NIC boot matrix proves 6 of the 21 new symbols"
+    where: ".github/workflows/build.yml:316-319"
+    fact: "boot matrix lists 5 NIC models (pcnet rtl8139 tulip ne2k_pci ne2k_isa, boot-test.yml:567); module assertion list has 23 names incl. 7 netfilter modules."
+    evidence: "boot-test.yml:567; build.yml:337-342"
+  - claim: "build.yml:497-503 etc. imply 'latest' pointers published only after validation; header says 'no release without a proven boot' (boot-test.yml:5-6)"
+    where: ".github/workflows/build.yml:495-546 vs 559-565"
+    fact: "latest vmlinuz/squashfs/initrd/iso are copied to S3 inside the build job BEFORE boot-test runs. Boot-test gates only attestation and release, not the public 'latest' pointer."
+    evidence: "build.yml:495-546 precede boot-test at 559"
+  - claim: "build.yml binpkg cache moved from S3 to GHCR ('replaces old whole-tree aws s3 sync')"
+    where: ".github/workflows/build.yml:255-261,442"
+    fact: "Cache itself is GHCR, but build.yml:809 still excludes 'packages/*' from site sync and gc.yml/s3-gc.sh still operates on S3 keep-lists (vestige of S3 binpkg tree)."
+    evidence: "build.yml:809; gc.yml:26-29"
+  - claim: "AGENTS.md says tag builds skip binpkg cache entirely ('no cached binary enters a signed release')"
+    where: "AGENTS.md (Release flow), build.yml:262-266"
+    fact: "Tag builds skip pull and purge, but still run prune/pack/push of the freshly built packages to GHCR monolith-binpkgs:<epoch> (no tag guard at build.yml:448-466). A tag build can therefore populate the cache non-master builds later consume; harmless for the tag itself."
+    evidence: "build.yml:448-466 has no `if: !startsWith(github.ref, 'refs/tags/')`"
+  - claim: "scripts/verify-resolved-i2c-off.sh header: build.yml invocation is single-argument, mode label 'unknown' in CI"
+    where: "scripts/verify-resolved-i2c-off.sh:25-27"
+    fact: "Consistent with build.yml:313, but the recent commits (DCX-99) claim CI 'names build mode'; the workflow does not pass a mode, so CI output always says 'unknown'."
+    evidence: "build.yml:313"
+  - claim: "pin-bump.yml header comment states cron is 3h after build.yml's weekly build"
+    where: ".github/workflows/pin-bump.yml:41-43"
+    fact: "Timing is correct (03:00/06:00) but a from-source/master build takes 30-60 min+; relation is only loose; not a contradiction in values."
+    evidence: "build.yml:31, pin-bump.yml:44"
+  - claim: "docs say release.yml is self-contained for provenance"
+    where: "docs/releasing.md:75-106 (not fully read)"
+    fact: "Workflow code matches the post-#54/#55/#56 flow (build owns tag, release is workflow_run). No disagreement found except the stale comments above."
+    evidence: "release.yml:3-29"
+
+open_questions:
+  - "scripts/sync-portage.sh exact S3 key layout and whether `fetch-only` also needs write perms (out of scope: scripts area)."
+  - "Does scripts/nightly-cve-monitor.py WRITE back to S3 (revocation records) or only read? Workflow only gives --s3-bucket."
+  - "Does scripts/s3-gc.sh / ghcr-gc.sh delete GHCR binpkg tags other than the current epoch? Workflow keeps KEEP_EPOCH=current BUILD_EPOCH only."
+  - "Branch protection: does github-actions[bot] have admin bypass for `gh pr merge --admin` in pin-bump (comment at 380-391 says unconfirmed)? Pin-bump auto-merge has never been observed end to end in the run list window (successes there are no-update runs)."
+  - "ISO size vs GitHub release asset limit (2 GiB per asset) - not determinable from workflows."
+  - "Whether repo has Environments/required reviewers: none referenced in workflows (no `environment:` key anywhere)."
+  - "Which Makefile REGISTRY_TAG inputs define the builder image tag (make print-registry-tag) - Makefile area."
