@@ -209,7 +209,7 @@ The predecessor's layout is kept, so ported scripts keep their paths.
 | `.github/workflows/` | Ported CI | F01, B03, P02, P01 |
 | `docs/` | Ported predecessor docs (`releasing.md`, `version-pinning.md`, `cve-gate.md`, `kernel-tiers.md`), plus this spec's graph, plan, reviews and study | F01 |
 | `SPEC.md`, `nodes/` | Specification and node specs | owner |
-| `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE` | Ported. `AGENTS.md` opens with this repository's working rules (what the project is, how docs are written, commit attribution), followed by the predecessor's traps-and-recipes knowledge base. `CLAUDE.md` points agents to it. | F01 |
+| `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE` | Ported. `AGENTS.md` opens with this repository's working notes (layout, constraints, spec editing, what not to touch, Git conventions), followed by the predecessor's traps-and-recipes knowledge base. `CLAUDE.md` points agents to it. | F01 |
 | `IMPORT.md` | What was ported from `b9f533b`, with a sha256 per file, and what has changed since | F01 |
 
 ### 4.3 The overlay is a conventional Portage repository
@@ -469,10 +469,9 @@ These are owner decisions. A node that names one does not start until it is sett
   an AC → evidence table with CI run links. The one exception is F01's migration-boundary commit
   (OD-11), which lands as a merge commit so the predecessor stays its parent.
 - **Tests first.** Write the fast test first where one is possible. CI does not police commit order.
-- **Authorship.** The owner, `Tucker McLean <me@tuckermclean.com>`, authors every commit for work the
-  owner directed and accepted. AI assistance is recorded in an `Assisted-by:` trailer naming the tool and
-  model, not as a co-author. Historical commits, the predecessor's included, are not rewritten to change
-  their author identities.
+- **Git.** Existing history and attribution are preserved; historical commits are not rewritten for
+  cosmetic reasons. New commits use the configured Git identity. AI assistance may be noted in commit
+  messages or PR descriptions.
 - **Order of work.** MS1's nodes (B03 and its ancestors) come first, then the rest of the
   `track: critical` nodes, the ancestors of P01. `later` nodes start when their deps are done and a slot
   is free.
