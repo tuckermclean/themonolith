@@ -2,9 +2,9 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | F01 | B03, P03 | — | M |
+| critical | F01 | B01, B03, P03 | — | M |
 
-**Owns:** `scripts/attestation.sh`, `scripts/enrich-sbom.py`, `scripts/check-licenses.py`, `scripts/check-cves.sh`, `scripts/check-unowned.py`, `scripts/run-cve-canary.sh`, `scripts/fixtures/canary-sbom.cdx.json`, `configs/attestation/*` (all policies, allowlists, schemas), `configs/attestation/rc1-sbom-diff.txt`, `.github/workflows/sbom-gates-rc1.yml`, `scripts/tests/check-unowned.test.sh`, `scripts/tests/check-cves-waivers.test.sh`, `scripts/tests/attestation-static.test.sh`.
+**Owns:** `scripts/attestation.sh`, `scripts/enrich-sbom.py`, `scripts/check-licenses.py`, `scripts/check-cves.sh`, `scripts/check-unowned.py`, `scripts/run-cve-canary.sh`, `scripts/fixtures/canary-sbom.cdx.json`, `configs/attestation/*` (all policies, allowlists, schemas), `configs/attestation/rc1-sbom-diff.txt`, `.github/workflows/sbom-gates-rc1.yml`, `scripts/tests/check-unowned.test.sh`, `scripts/tests/check-cves-waivers.test.sh`, `scripts/tests/attestation-static.test.sh`. B01 adds `check-unowned.py`'s `--provenance` mode and the allowlist's `source` fields on top; the ported default mode stays S01's.
 **Ports from linux-live-iso-factory@b9f533b:** every file above, unchanged except as listed. Not ported: `scripts/generate-provenance.py` (P01 uses `actions/attest-build-provenance`) and `scripts/generate-dashboard.py` (out of scope).
 **Study refs:** supplychain.yaml (pillars 1–5, `script.check-unowned`, `script.check-cves`), D-supply-chain-honesty, D-hand-authored-rootfs-files-owned, D-state-and-no-hidden-stderr, T-unowned-allowlist; contradictions: unowned pillar skipped when `sbom.syft.json` is absent, CVE waiver `expires` never compared, DB age only warned; OD-5, OD-9.
 

@@ -23,6 +23,7 @@ Everything else in `build.yml` and the three scripts is carried unchanged, inclu
 4. **Boot tests call O01's reusable workflow** with the ISO artifact from item 1 instead of `build-version` plus the cache. O01 owns the interface. The call passes every mode except `stele-acid2`, because Stele is out of `world` until R05 (B01 change 11); R05 puts it back. *AC-2, AC-7.*
 5. **Artifact checks (O02) and gates (S01) run on the same ISO,** in or before `attestation`. Their order in the job follows S01. They are `needs` of the signing step, so a red check blocks it. *AC-5.*
 6. **Binary-package restore and push stay as ported** (`build.yml:267` pull, `:448` push) with the registry variable from B01. Tags do not use this development path. P02's tag pipeline runs the build job in its offline release mode (B01 release mode, no binpkg pull).
+7. **B01's checks are wired in.** A `static-rebuild` job runs `make test-static-rebuild` in the pinned builder next to the package build, and a failure fails the run (B01 change 13). The attestation step passes `--provenance --package-tree` to the unowned gate, with the build's sysroot as an artifact (B01 change 12). *AC-7.*
 
 **ISO size gates.** `build-iso.sh` has none. The script only logs kernel, initrd and ISO sizes (`build-iso.sh:379-385,490-499`), and `build-rootfs.sh:731-734` and `build-initrd.sh:356-359` only log too. B03 ports the logging as it is. The budget gate is new and belongs to P01 (SPEC §1).
 
