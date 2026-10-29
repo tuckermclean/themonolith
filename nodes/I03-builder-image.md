@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | I01 | B01, M02, R05 | — | S |
+| critical | I01 | B01, M02 | — | S |
 
 **Owns:** `BUILDER_DIGEST` and `pull-image` in `Makefile`, the builder-digest lines of `scripts/attestation.sh` (`:316,687`), the builder step of `.github/workflows/build.yml` (build-image job replaced by a pull), `scripts/builder-manifest.sh`, `scripts/tests/builder-pin.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `Dockerfile` (unchanged, whole file; not built until M02), the crossdev block of `Makefile` (unchanged, unused until M02), `configs/portage/crossdev.lock`.
