@@ -24,6 +24,7 @@ Licensed under the [MIT License](LICENSE).
 | [`docs/first-release.md`](docs/first-release.md) | The plan: a working ISO for iteration first, then the first release; surviving assets, owner actions, order of work, measured timings |
 | [`docs/graph.yaml`](docs/graph.yaml) | 22 nodes, their dependencies and three milestones |
 | [`nodes/`](nodes/) | One spec per node, each with its acceptance criteria |
+| [`AGENTS.md`](AGENTS.md) | How to work on it: what the project is, how the docs are written, commit attribution |
 | [`docs/study/`](docs/study/) | The frozen study of the predecessor at `b9f533b`: inventory, recipes, oracle, doctrines and traps |
 
 Milestones:

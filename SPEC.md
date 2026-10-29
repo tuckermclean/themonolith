@@ -209,7 +209,7 @@ The predecessor's layout is kept, so ported scripts keep their paths.
 | `.github/workflows/` | Ported CI | F01, B03, P02, P01 |
 | `docs/` | Ported predecessor docs (`releasing.md`, `version-pinning.md`, `cve-gate.md`, `kernel-tiers.md`), plus this spec's graph, plan, reviews and study | F01 |
 | `SPEC.md`, `nodes/` | Specification and node specs | owner |
-| `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE` | Ported. AGENTS.md keeps the traps-and-recipes knowledge base. | F01 |
+| `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE` | Ported. `AGENTS.md` opens with this repository's working rules (what the project is, how docs are written, commit attribution), followed by the predecessor's traps-and-recipes knowledge base. | F01 |
 | `IMPORT.md` | What was ported from `b9f533b`, with a sha256 per file, and what has changed since | F01 |
 
 ### 4.3 The overlay is a conventional Portage repository
