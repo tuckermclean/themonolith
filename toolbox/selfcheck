@@ -1,0 +1,22 @@
+#!/bin/sh
+# Fails unless every toolbox tool is present and the pinned ones have their pinned version.
+# Runs at the end of the image build and with `toolbox/run -- toolbox-selfcheck`.
+set -u
+rc=0
+fail() { echo "toolbox-selfcheck: $*" >&2; rc=1; }
+
+for cmd in sh bash make git curl jq zstd cpio file python3 shellcheck actionlint oras \
+           qemu-system-i386 qemu-system-x86_64 unsquashfs mksquashfs xorriso mcopy mkfs.vfat \
+           scanelf modinfo; do
+	command -v "$cmd" >/dev/null 2>&1 || fail "missing: $cmd"
+done
+python3 -c 'import yaml, pexpect' 2>/dev/null || fail "python3 cannot import yaml and pexpect"
+ls /usr/share/OVMF/OVMF_CODE*.fd >/dev/null 2>&1 || fail "missing: OVMF firmware in /usr/share/OVMF"
+
+v=$(actionlint -version 2>/dev/null | head -n 1)
+[ "$v" = "${ACTIONLINT_VERSION:-unset}" ] || fail "actionlint is '$v', pinned ${ACTIONLINT_VERSION:-unset}"
+v=$(oras version 2>/dev/null | sed -n 's/^Version: *//p')
+[ "$v" = "${ORAS_VERSION:-unset}" ] || fail "oras is '$v', pinned ${ORAS_VERSION:-unset}"
+
+[ $rc -eq 0 ] && echo "toolbox-selfcheck: ok"
+exit $rc

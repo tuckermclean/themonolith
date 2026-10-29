@@ -1,0 +1,50 @@
+name: good
+on:
+  pull_request:
+permissions:
+  contents: read
+env:
+  GREETING: hello
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        n: [1, 2]
+    outputs:
+      last: ${{ steps.emit.outputs.value }}
+    steps:
+      - uses: actions/checkout@0000000000000000000000000000000000000000
+      - name: emit
+        id: emit
+        env:
+          N: ${{ matrix.n }}
+        run: toolbox/run -- sh -c 'echo "value=$1" >> "$GITHUB_OUTPUT"' _ "$N"
+      - name: secret step
+        env:
+          TOKEN: ${{ secrets.SOME_TOKEN }}
+        run: toolbox/run -- true
+      - name: only on failure
+        if: failure()
+        run: toolbox/run -- false
+  consume:
+    needs: produce
+    runs-on: ubuntu-24.04
+    env:
+      LAST: ${{ needs.produce.outputs.last }}
+    steps:
+      - name: check output
+        run: |
+          set -eu
+          toolbox/run -- sh -c 'test "$1" = 2 && test "$2" = hello' _ "$LAST" "$GREETING"
+      - name: event
+        if: github.event_name == 'pull_request'
+        run: toolbox/run -- sh -c 'echo "event-ok"'
+      - uses: actions/attest-build-provenance@0000000000000000000000000000000000000000
+        with:
+          subject-path: README.md
+  called:
+    needs: consume
+    uses: ./toolbox/testdata/other/callee.yml
+    with:
+      word: ${{ needs.produce.outputs.last }}
