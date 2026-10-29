@@ -53,5 +53,10 @@ podman) opts="$opts --userns=keep-id --security-opt label=disable" ;;
 *) opts="$opts --user $(id -u):$(id -g)" ;;
 esac
 case $(pwd -P) in "$root"|"$root"/*) ;; *) die "run it from inside $root" ;; esac
+# Rootless podman with cgroupfs leaves an empty `oom` file in the directory it starts from, so start it
+# from a private state directory; -w above still sets the working directory inside the container.
+state=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/monolith-toolbox-$(id -u)
+mkdir -p "$state"
+cd "$state"
 # shellcheck disable=SC2086 # $eng and $opts are word lists with no spaces inside any value we build
 exec $eng run $opts "$image" "$@"

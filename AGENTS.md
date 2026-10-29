@@ -46,6 +46,8 @@ recipes and credential handling.
 
 - **Rootless podman without a systemd user session** fails with "Interactive authentication required".
   `toolbox/run` passes `--cgroup-manager=cgroupfs` in that case; do the same for direct podman calls.
+  With cgroupfs, podman also leaves an empty `oom` file in the directory it starts from; `toolbox/run`
+  starts it from a state directory. Never commit an `oom` file.
 - **No KVM** unless the user can open `/dev/kvm` (group `kvm`). QEMU then runs in software: boots take
   about a minute and the first in-guest check can hit its 30 s timeout. Re-run before suspecting the disc.
 - **Workflow files need the `workflow` scope to push.** The default `gh` token lacks it, so a branch that
