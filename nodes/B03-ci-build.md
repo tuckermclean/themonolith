@@ -24,7 +24,7 @@ Everything else in `build.yml` and the three scripts is carried unchanged, inclu
 5. **Artifact checks (O02) and gates (S01) run on the same ISO,** in or before `attestation`. Their order in the job follows S01. They are `needs` of the signing step, so a red check blocks it. *AC-5.*
 6. **Binary-package restore and push stay as ported** (`build.yml:267` pull, `:448` push) with the registry variable from B01. Tags do not use this development path. P02's tag pipeline runs the build job in its offline release mode (B01 release mode, no binpkg pull).
 
-**ISO size gates.** The brief expects gates in `build-iso.sh`. There are none. The script only logs kernel, initrd and ISO sizes (`build-iso.sh:379-385,490-499`), and `build-rootfs.sh:731-734` and `build-initrd.sh:356-359` only log too. B03 ports the logging as it is. The budget gate is new and belongs to P01 (SPEC §1).
+**ISO size gates.** `build-iso.sh` has none. The script only logs kernel, initrd and ISO sizes (`build-iso.sh:379-385,490-499`), and `build-rootfs.sh:731-734` and `build-initrd.sh:356-359` only log too. B03 ports the logging as it is. The budget gate is new and belongs to P01 (SPEC §1).
 
 ## Gate
 - **B03-AC-1** — `build.yml` and the workflows it calls contain no `actions/cache` step for squashfs or ISO and no `ci-artifacts-` key; the ISO and squashfs go through `upload-artifact` and `download-artifact`. *Verify:* `scripts/tests/build-workflow.test.sh` (grep and `actionlint`). *Tier:* fast.

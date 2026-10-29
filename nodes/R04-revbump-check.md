@@ -6,7 +6,7 @@
 
 **Owns:** `scripts/check-revbump.sh`, `scripts/tests/check-revbump.test.sh`, its step in `.github/workflows/pr-validate.yml`.
 **Ports from linux-live-iso-factory@b9f533b:** nothing (the predecessor had no overlay check).
-**Study refs:** T-binpkg-revbump (the same perl panic three times, v0.3 R03); D-revbump-on-overlay-change; SPEC §4.3, §5 "Binary cache".
+**Study refs:** T-binpkg-revbump (the same perl panic three times); D-revbump-on-overlay-change; SPEC §4.3, §5 "Binary cache".
 
 ## Purpose
 The development cache reuses an overlay package's binary unless its version or revision changes (SPEC §5). After this node, a PR that edits an overlay ebuild or its `files/` without a new revision fails the fast lane, so B01's cache cannot silently keep the old binary. Full `pkgcheck` integration is R02, later.

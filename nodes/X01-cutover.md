@@ -6,7 +6,7 @@
 
 **Owns:** `README.md` (verification section), `docs/releasing.md` (cutover steps), `scripts/tests/readme-verify.test.sh`. The pointer commit in the predecessor is the owner's.
 **Ports from linux-live-iso-factory@b9f533b:** README "Verify a release" section as text to rewrite; `docs/releasing.md`.
-**Study refs:** T-attest-entry-workflow, T-prerelease-never-latest, D-all-static, D-supply-chain-honesty; OD-2, OD-8; `release.yml:216` (`--owner tuckermclean` in the old release notes).
+**Study refs:** T-attest-entry-workflow, T-prerelease-never-latest, D-all-static, D-supply-chain-honesty; OD-2, OD-4; `release.yml:216` (`--owner tuckermclean` in the old release notes).
 
 ## Purpose
 After this node the first non-prerelease has shipped from this repository with an empty dynamic-binary allowlist. The README tells a reader how to verify releases from both repositories. The predecessor carries a pointer and is archived under its own name.
@@ -18,7 +18,7 @@ After this node the first non-prerelease has shipped from this repository with a
 This node is a release plus documentation. There is no ported code to change.
 
 1. **Preconditions** (each already proven by its own node, not re-tested here): R03's allowlist is empty (the O02 report shows 0 entries); M01's bump is merged and the tag's `TREE_COMMIT` differs from rc1's; P03's feed answers at the OD-1 URL; G01 is done; the CVE gate passes with no expired waiver.
-2. **The release.** The owner pushes the final tag, `v0.2.0` per OD-8's sequence (confirm the number). It goes through the whole tag pipeline (fetch, the two builds and P02's comparison, the oracle and gates, then P01's attestation and publication), not a promotion of an `-rc` tag. The release is not a prerelease and is Latest, because the tag has no suffix.
+2. **The release.** The owner pushes the final tag, `v0.2.0` per OD-4's sequence (confirm the number). It goes through the whole tag pipeline (fetch, the two builds and P02's comparison, the oracle and gates, then P01's attestation and publication), not a promotion of an `-rc` tag. The release is not a prerelease and is Latest, because the tag has no suffix.
 3. **README verification section.** Two blocks:
    - for this repository: `gh attestation verify themonolith-<ver>.iso --repo tuckermclean/themonolith --signer-workflow tuckermclean/themonolith/.github/workflows/build.yml`;
    - for rc1: the same with `--repo tuckermclean/linux-live-iso-factory` and its `build.yml`.
@@ -34,7 +34,7 @@ This node is a release plus documentation. There is no ported code to change.
 
 ## Risks
 - Does archiving keep `gh attestation verify` working? Expected yes; unverified. The runbook verifies before and after and can unarchive.
-- Is the rc1 ISO still downloadable? Its assets are on GitHub (`release.yml:265-271` per v0.3, unchecked here).
-- The rc1 disc's advisory URL is baked in and cannot change; v0.3 records it as an S3 address (`monolith-advisory-check:17,29`, unchecked here). The README should say plainly that rc1's advisory check no longer works. That text is the owner's decision.
-- OD-2 (allowlist), OD-8 (version number), OD-1 (advisory host), OD-12 (Hyper-V claim, via G01).
+- Is the rc1 ISO still downloadable? Its assets are on GitHub (`release.yml:265-271`, unchecked here).
+- The rc1 disc's advisory URL is baked in and cannot change; the study records it as an S3 address (`monolith-advisory-check:17,29`, unchecked here). The README should say plainly that rc1's advisory check no longer works. That text is the owner's decision.
+- OD-2 (allowlist), OD-4 (version number), OD-1 (advisory host), OD-7 (Hyper-V claim, via G01).
 - Pushing the tag, deleting secrets and archiving need the owner's credentials.

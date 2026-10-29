@@ -6,7 +6,7 @@
 
 **Owns:** `scripts/sync-portage.sh` (rewritten, see Changes), `scripts/tests/sync-portage.test.sh`, `scripts/seed-tree.sh` (one-time archive helper), the `TREE_COMMIT` and `TREE_DIGEST` pins in `Makefile`, `docs/tree-pin.md` (the recovery evidence: candidate range, match counts, signature result).
 **Ports from linux-live-iso-factory@b9f533b:** `scripts/sync-portage.sh` (`_fetch_one` loop, `--source-only` detection at `:101-112`), `scripts/tests/sync-portage.test.sh` cases 3-5 reshaped. The Makefile `sync-portage` target (`Makefile:380-389`) keeps its name.
-**Study refs:** T-portage-snapshot-fetch, D-two-epoch-pin-model, OD-6; `sync-portage.sh:8-17` (why the predecessor served a local HTTP mirror).
+**Study refs:** T-portage-snapshot-fetch, D-two-epoch-pin-model, OD-3; `sync-portage.sh:8-17` (why the predecessor served a local HTTP mirror).
 
 ## Purpose
 rc1's Gentoo tree becomes a pin we can restore: a gentoo-mirror commit, archived once as an OCI artifact `${REGISTRY}/gentoo-tree:<commit40>` and referenced by digest. `sync-portage.sh` restores it into the portage volume with no upstream access, and fails loudly when the artifact is missing or the digest differs. The snapshot tarball `gentoo-20260811.tar.xz` no longer exists upstream (SPEC §0), so a tree commit from `github.com/gentoo-mirror/gentoo` is what survives.
@@ -40,5 +40,5 @@ rc1's Gentoo tree becomes a pin we can restore: a gentoo-mirror commit, archived
 - Several commits may match all ebuilds. The tree snapshot was cut at an instant we do not know; eclass or profile differences between candidates would be seen only by AC-2, which tests the actual effect.
 - Gentoo may not sign mirror commits, or the key may not be where expected (unverified). If unsigned, the pin rests on the commit hash, the ebuild match and AC-2; the owner accepts that in the PR. No new open decision id is raised.
 - Unverified: GitHub serves a fetch by commit SHA for this repository; `metadata/md5-cache` is present in the mirror (without it the first emerge regenerates metadata slowly); the gpkg embeds its ebuild.
-- OD-6: if the owner answers "current tree", step 1 shrinks to choosing a commit and AC-2 is not run.
+- OD-3: if the owner answers "current tree", step 1 shrinks to choosing a commit and AC-2 is not run.
 - A tree archive is tens of MB (estimate). GHCR keeps it; nothing deletes it.

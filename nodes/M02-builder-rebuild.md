@@ -42,5 +42,5 @@ The builder image can be rebuilt from inputs we hold, and a human can dispatch o
 - The 20260810 tree commit is not known. It is found the way I02 finds rc1's tree; the image manifest, not a timestamp, decides.
 - Live distfiles for the host tools and crossdev may have vanished upstream since August (unverified). The rebuild then fails, which is a finding: the PR lists it and the adopted image stays pinned.
 - The rebuilt image will not equal rc1's byte for byte (change 5). Whether the package set equals it is what AC-3 and AC-6 settle.
-- The workflow pushes with `GITHUB_TOKEN`; a PR opened that way does not trigger its own checks. The workflow dispatches `build.yml` itself instead. OD-11 (bump credential) concerns M01 and may simplify this later.
+- The workflow pushes with `GITHUB_TOKEN`; a PR opened that way does not trigger its own checks. The workflow dispatches `build.yml` itself instead. OD-6 (bump credential) concerns M01 and may simplify this later.
 - Docker Hub may drop `gentoo/stage3:amd64-openrc-20260810`; mirroring it in change 1 is the answer, and must happen before the tag is pruned.

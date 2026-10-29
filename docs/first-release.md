@@ -1,6 +1,6 @@
 # Plan: a working ISO, then the first release
 
-Status: plan, 2026-10-28. SPEC.md v0.4 is the authority; this document gives the order of work and the
+Status: plan, 2026-10-28. SPEC.md is the authority; this document gives the order of work and the
 reasons for it. There are two goals, in this order.
 
 ## First goal: a working ISO for iteration (MS1)
@@ -19,7 +19,7 @@ iterating. **The MS1 ISO is not a release.** It is never published, attested or 
 
 ## Definition of done for the first release (MS2)
 
-Nothing is called a release before this. A tag `v0.2.0-rc1` on `tuckermclean/themonolith` (OD-8) that
+Nothing is called a release before this. A tag `v0.2.0-rc1` on `tuckermclean/themonolith` (OD-4) that
 meets all of these:
 - It is built twice, from source, in two clean builds on separate runners with the network off. Both read
   only the source commit, `release-inputs.json` and one distfiles archive. **The two ISOs have the same
@@ -53,10 +53,6 @@ construction:
 
 The oracle and gates are ported and made to pass against rc1's own artifacts first (the rc1 lane, SPEC
 §7). They are therefore ready before the first ISO of our own exists.
-
-What v0.4 does **not** build: a storage abstraction, a content-addressed build cache, a system
-inventory, a graph validator, an agent loop or commit-identity CI. SPEC §5 records why each is
-unnecessary. The review record `docs/reviews/2026-10-28-v0.4.md` maps every v0.3 node to its fate.
 
 ## Surviving assets
 
@@ -115,12 +111,12 @@ marked.
 3. **Settle the decisions on the path, or accept the defaults** (each before the node that names it):
    - OD-1: the advisory URL baked into the disc; default `https://monolith.technomantics.com/`.
    - OD-2: whether a prerelease may ship dynamic binaries; default yes, with a shrinking list.
-   - OD-6: the first tree; default rc1's.
-   - OD-8: the version; default `v0.2.0-rc1`.
-   - OD-15: CVE waivers on the August tree; default a 30-day expiry.
-   - OD-16: the CD budget; default the whole 74-minute CD-R.
+   - OD-3: the first tree; default rc1's.
+   - OD-4: the version; default `v0.2.0-rc1`.
+   - OD-9: CVE waivers on the August tree; default a 30-day expiry.
+   - OD-10: the CD budget; default the whole 74-minute CD-R.
 
-   OD-9 and OD-13 have defaults that need no action.
+   OD-5 and OD-8 have defaults that need no action.
 4. **Protect `main`** (before the first merge): require the fast-tier check and owner review, and add CODEOWNERS (SPEC §8).
 
 ## Order of work
@@ -164,7 +160,7 @@ unknown until the first P02 dispatch runs. P02 lists the known suspects: the ini
 ISO and ESP dates, the grub memdisk, the Portage VDB and parallel emerge order. Unknown ones may sit in
 individual packages. Other things could block this row: offline `-Z build-std` for the two Rust packages
 (R05), a distfile that has vanished upstream since August, which the fetch job finds first, and the CVE
-gate on the August tree (OD-15). None of them blocks MS1.
+gate on the August tree (OD-9). None of them blocks MS1.
 
 ## After MS2
 
@@ -186,7 +182,7 @@ These nodes are in the `later` track:
   (I02).
 - **Unverified:** how `--rebuild-if-unbuilt` behaves with a cross `ROOT` (B01). Releases do not use the
   cache, so a wrong answer only affects development ISOs.
-- **The CVE gate** may block a 2026-08 tree on fixable criticals (OD-15).
+- **The CVE gate** may block a 2026-08 tree on fixable criticals (OD-9).
 - **The adopted builder image** is pinned by digest but not yet reproduced. M02 rebuilds it.
 - **Reproducibility is a hard gate and the largest unknown.** MS2 needs equal ISO digests. A listed
   difference does not count. See the open row in the calendar.

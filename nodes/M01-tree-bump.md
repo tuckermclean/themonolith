@@ -9,11 +9,11 @@
 **Study refs:** workflows.yaml `wf.pin-bump`; T-pin-bump-root-owned-locks, T-workflow-push-needs-pat, D-two-epoch-pin-model; Principle 9; SPEC §8.
 
 ## Purpose
-After this node a weekly workflow proposes a new Gentoo tree as a pull request. The PR moves `TREE_COMMIT` and `TREE_DIGEST` and regenerates `versions.lock`. The ordinary Build workflow validates it and a human merges it. The first such bump moves the project off rc1's tree (OD-6).
+After this node a weekly workflow proposes a new Gentoo tree as a pull request. The PR moves `TREE_COMMIT` and `TREE_DIGEST` and regenerates `versions.lock`. The ordinary Build workflow validates it and a human merges it. The first such bump moves the project off rc1's tree (OD-3).
 
 ## Standard mechanism
 - Dependabot and Renovate update action SHAs and file-pinned versions. Neither can archive a tree to the registry or regenerate `versions.lock` inside the builder, so they cannot do this bump. Dependabot stays for action SHAs.
-- `actions/create-github-app-token` yields a token that is not `GITHUB_TOKEN`, so PR checks run (OD-11).
+- `actions/create-github-app-token` yields a token that is not `GITHUB_TOKEN`, so PR checks run (OD-6).
 - Branch protection and CODEOWNERS control merging.
 - Custom code: the ported scripts, edited. Gap: the tree pin is a commit, not a dated snapshot, and the ported `update-build-pins.sh` finds the next snapshot on `distfiles.gentoo.org` and Docker Hub (`update-build-pins.sh:122-160`). The snapshot tarballs are gone (SPEC §0).
 
@@ -21,7 +21,7 @@ After this node a weekly workflow proposes a new Gentoo tree as a pull request. 
 Carried unchanged: the weekly cron and `workflow_dispatch` input shape, `concurrency: pin-bump`, the branch-per-bump naming, label creation, the PR body, the `sudo chown -R` that fixes root-owned lock files (`pin-bump.yml:221`, T-pin-bump-root-owned-locks), and `update-versions.sh` (the 23-atom drift fix is B01's).
 
 1. **No `--admin` merge.** Remove the "Auto-merge on fully-green validation" step (`pin-bump.yml:380-396`, `gh pr merge --squash --admin --delete-branch`). The header comments that describe auto-merge (`:32`, `:376-379`) go too. Bots never merge (SPEC §2.9). *AC-1.*
-2. **Credential.** The checkout push and `gh pr create` use an App installation token (OD-11 default), minted in the job with `actions/create-github-app-token`. The predecessor used `github.token` (`pin-bump.yml:134`). A PR opened with `GITHUB_TOKEN` starts no `pull_request` workflows. *AC-2.*
+2. **Credential.** The checkout push and `gh pr create` use an App installation token (OD-6 default), minted in the job with `actions/create-github-app-token`. The predecessor used `github.token` (`pin-bump.yml:134`). A PR opened with `GITHUB_TOKEN` starts no `pull_request` workflows. *AC-2.*
 3. **Validation by the PR, not by dispatch and polling.** Replace `gh workflow run build.yml` (`:245`) and the 240-minute wait in a 280-minute job (`:131`) with: open the PR with the `full-ci` label, so `build.yml` runs through its existing pull-request gate (`build.yml:58-60`). The job ends when the PR exists. *AC-3.*
 4. **Tree pin instead of epoch.** `update-build-pins.sh update` resolves the newest commit of `gentoo-mirror/gentoo` (default branch, or the `target_commit` dispatch input), archives it with I02's tool, and writes `TREE_COMMIT`, `TREE_DIGEST` and `SOURCE_DATE_EPOCH` (the commit's committer time, SPEC §6) in I02's format. It no longer touches `BUILD_EPOCH` or stage3. The builder pin is M02's. *AC-4.*
 5. **S3 steps removed.** "Archive new portage snapshot to S3", the AWS login and `S3_BUCKET` env (`:160-205`). I01 owns this globally. The builder is pulled by digest (I03).
@@ -39,7 +39,7 @@ Carried unchanged: the weekly cron and `workflow_dispatch` input shape, `concurr
 - **M01-AC-7** — A real dispatch opens a PR that moves `TREE_COMMIT` off rc1's tree, whose Build run passes B03's checks, and which a human merges. *Verify:* the PR and its Build run URL. This is the first bump, after MS2. *Tier:* slow.
 
 ## Risks
-- OD-11: GitHub App or fine-grained PAT. App is the default; the owner creates it. Workflow-file changes still need the owner's token (T-workflow-push-needs-pat); a bump touches none.
-- OD-15: the CVE gate on a new tree may need waiver changes in the same PR.
+- OD-6: GitHub App or fine-grained PAT. App is the default; the owner creates it. Workflow-file changes still need the owner's token (T-workflow-push-needs-pat); a bump touches none.
+- OD-9: the CVE gate on a new tree may need waiver changes in the same PR.
 - A tree move is a full rebuild: the cache tag includes `TREE_COMMIT` (SPEC §6), so the PR's run is cold (about 78 minutes for `build`, predecessor measurement), and `main` pays another after the merge.
 - Whether `gentoo-mirror/gentoo` HEAD is always a coherent tree (unverified).

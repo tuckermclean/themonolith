@@ -16,7 +16,7 @@ Portage `PKGDIR` with gpkg, `--usepkg`, `--binpkg-respect-use=y`, `--binpkg-chan
 - `binpkg-store.sh` (OCI transport of one `PKGDIR`): a binhost over HTTP needs a web host we lack (SPEC §5).
 - `savedconfig-cache.sh`: Portage does not hash savedconfig contents (script header, `savedconfig-cache.sh:3-12`).
 - `versions.lock` and `update-versions.sh`: SPEC §5 "Versions".
-- New: the cache tag hashes `make.conf`, `bashrc`, `env/`, `package.env` and `profile/` because Portage cannot see them. This is a few lines of `sha256sum` in the existing script. A per-package fingerprint was considered and rejected (v0.3 I06).
+- New: the cache tag hashes `make.conf`, `bashrc`, `env/`, `package.env` and `profile/` because Portage cannot see them. This is a few lines of `sha256sum` in the existing script. A per-package fingerprint was considered; the cache tag is enough.
 
 ## Changes from the port
 1. **Cache tag.** `binpkg-store.sh` tags the artifact `binpkgs:<tag>` (SPEC §6), with `<tag>` the first 16 hex of sha256 over `BUILDER_DIGEST`, `TREE_COMMIT` and a hash of `make.conf`, `bashrc`, `env/`, `package.env/`, `profile/`. The predecessor keyed on `BUILD_EPOCH` alone (`binpkg-store.sh:59`, `build.yml:269`), so a `bashrc` edit reused stale binaries. Only `main` pushes; PRs pull; tags do neither (the predecessor pushed with `if: always()` and no ref condition, `build.yml:448-450`). The first `main` build is cold (~75 min measured). rc1's cache is not seeded. *AC-1, AC-2.*

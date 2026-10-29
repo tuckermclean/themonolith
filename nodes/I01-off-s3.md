@@ -12,7 +12,7 @@
 After this node no file in the build path names AWS or S3. Durable bytes live in GHCR under one `REGISTRY` variable. Files that move between jobs of one run are Actions artifacts, and published files are GitHub Release assets. The predecessor already half did this for binary packages, so most work is deletion.
 
 ## Standard mechanism
-GHCR through `oras` and `docker`, Actions artifacts, GitHub Releases. No store interface or backend layer (v0.3's F06 and I01 are removed). Changing vendor means changing `REGISTRY` and copying the data. Custom code: none. The one behavioural fix (change 3) is a regex edit.
+GHCR through `oras` and `docker`, Actions artifacts, GitHub Releases. No store interface or backend layer. Changing vendor means changing `REGISTRY` and copying the data. Custom code: none. The one behavioural fix (change 3) is a regex edit.
 
 ## Changes from the port
 Every S3/AWS use found by `grep -rniE 'aws|s3://|amazonaws|S3_BUCKET'` over the imported tree, with its replacement:

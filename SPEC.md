@@ -1,9 +1,6 @@
 # The Monolith — Specification
 
-Version 0.4 (draft, 2026-10-28; corrective passes the same day: the first goal is a working ISO for
-iteration; nothing is called a release until it is bit-for-bit reproducible and ships all 99 packages).
-v0.4 replaces v0.3's factory design with the smallest port of the predecessor that reaches that release. `docs/reviews/2026-10-28-v0.4.md` says what was removed
-and why. This document is the authority for the repository. Where a node spec (`nodes/<id>.md`) and this
+Version 0.4, draft of 2026-10-28. This document is the authority for the repository. Where a node spec (`nodes/<id>.md`) and this
 document disagree, this document wins and the node spec is a defect. The dependency graph is
 `docs/graph.yaml`, and the plan to the first release is `docs/first-release.md`. The study of the
 predecessor in `docs/study/` is evidence, not authority.
@@ -67,7 +64,7 @@ facts decide three things:
 - **Targets:**
   - i486 and up, booting by BIOS through ISOLINUX;
   - x86_64 UEFI machines, through GRUB EFI with the i386 kernel;
-  - common hypervisors: QEMU/KVM, VirtualBox, and Hyper-V per OD-12;
+  - common hypervisors: QEMU/KVM, VirtualBox, and Hyper-V per OD-7;
   - USB and optical media (hybrid ISO).
 - **Userland:** the predecessor's world set, 99 atoms at `b9f533b`, cross-compiled for
   `i486-linux-musl` with `-march=i486 -mtune=i486 -Os`.
@@ -97,7 +94,7 @@ facts decide three things:
 | Hardware compatibility | The predecessor's 17 boot modes pass, including the NIC, VGA and legacy fbdev matrices. MS1 iteration ISOs run the other 16; `stele-acid2` needs Stele (R05). All 17 pass before the first release. | O01 |
 | Reproducibility | Bit for bit, without exceptions, for every release. Two clean, separate builds from the same pinned and archived inputs produce ISOs with the same SHA-256. This covers the whole ISO: kernel, initramfs, squashfs, bootloaders, ESP and filesystem metadata. A mismatch fails the tag, and nothing is published first. Attestations may differ between runs; the ISO bytes may not. MS1 iteration ISOs need only be built from pinned inputs. | P02 (gate), B01 |
 | Package set | Every release ships all 99 of the predecessor's `world` packages, `rl144` and `stele` included. MS1 iteration ISOs may leave out those two Rust packages until R05. | B01, R05, P01 (package-set check) |
-| CD-sized budget | The ISO fits on a 74-minute CD-R (681,984,000 bytes) now, and within the share the owner sets later (OD-16). | P01 (report and gate) |
+| CD-sized budget | The ISO fits on a 74-minute CD-R (681,984,000 bytes) now, and within the share the owner sets later (OD-10). | P01 (report and gate) |
 
 The oracle (§7) defines what the product does. A README promise that no test proves is a gap (G01)
 until it is tested or the promise is removed.
@@ -246,9 +243,8 @@ Python never runs on the target (D-no-python-on-target).
 
 ## 5. Standard mechanisms and the custom residue
 
-This table lists every subsystem of the factory, the standard mechanism it uses and the custom code
-that remains. A custom row must name the gap. Anything v0.3 specified that has no gap here is removed
-(see `docs/reviews/2026-10-28-v0.4.md`).
+This table lists every subsystem, the standard mechanism it uses and the custom code that remains. A
+custom row must name the gap. Anything with no gap here is not built.
 
 | Area | Standard mechanism | Custom residue: gap → smallest solution |
 |---|---|---|
@@ -256,11 +252,11 @@ that remains. A custom row must name the gap. Anything v0.3 specified that has n
 | Packages | Gentoo ebuilds from the pinned tree; the `monolith` overlay for packages Gentoo lacks or that must be patched | None new. The ported `scripts/build-packages.sh` drives `${CHOST}-emerge`. |
 | Distribution policy | `make.conf`, `package.use`/`.mask`/`.env`/`.accept_keywords`, `env/`, `bashrc`, a profile | None new. The ported `configs/portage/`; rc1's working static-link workarounds live in `bashrc` and `env/`. Policy is not moved into an overlay profile: no demonstrated benefit yet. |
 | Versions | The pinned tree fixes every version; `package.mask` holds back removed packages | `versions.lock` (ported). Gap: the predecessor emerges world as `=cat/pkg-ver` atoms (`build-packages.sh:180-197`), so a tree bump moves no world version unreviewed. The ported `update-versions.sh` regenerates the file, and B01 fixes its 23-atom drift. |
-| Binary cache | Portage `PKGDIR` with gpkg, `--usepkg`, `--binpkg-respect-use=y`, `--binpkg-changed-deps=y`, `--rebuild-if-unbuilt` | Gap: Portage cannot see edits to `make.conf`, `bashrc`, `env/`, `package.env` or the profile, nor to `savedconfig` contents. The smallest solution has three parts: (a) the cache tag includes a hash of those files, so changing one starts a cold cache; (b) the ported `savedconfig-cache.sh` marker handles savedconfig; (c) an overlay edit needs a revbump, the standard Gentoo rule, enforced in the fast lane by R04 before B01 relies on the cache. Transport: the ported `binpkg-store.sh` pushes the whole `PKGDIR` as one OCI artifact. A Portage binhost over HTTP (`binrepos.conf`) was considered. It needs a web host for about 2 GB, and GitHub Pages (P03) is sized for far less, so it waits until a host exists. Removed: v0.3's per-package fingerprints, sets, memo and seeding (I06). |
+| Binary cache | Portage `PKGDIR` with gpkg, `--usepkg`, `--binpkg-respect-use=y`, `--binpkg-changed-deps=y`, `--rebuild-if-unbuilt` | Gap: Portage cannot see edits to `make.conf`, `bashrc`, `env/`, `package.env` or the profile, nor to `savedconfig` contents. The smallest solution has three parts: (a) the cache tag includes a hash of those files, so changing one starts a cold cache; (b) the ported `savedconfig-cache.sh` marker handles savedconfig; (c) an overlay edit needs a revbump, the standard Gentoo rule, enforced in the fast lane by R04 before B01 relies on the cache. Transport: the ported `binpkg-store.sh` pushes the whole `PKGDIR` as one OCI artifact. A Portage binhost over HTTP (`binrepos.conf`) was considered. It needs a web host for about 2 GB, and GitHub Pages (P03) is sized for far less, so it waits until a host exists. |
 | Static dependents | `--rebuild-if-unbuilt` rebuilds the build-time reverse dependencies of anything built from source | None; it is one flag. Its behaviour with a cross `ROOT` is unverified, and B01's first slice checks it. Releases build from source, so a miss cannot reach a release. |
 | Gentoo tree | A gentoo-mirror git commit (Portage `sync-type = git`); signed daily snapshots for later epochs | Gap: upstream prunes snapshots, and rc1's 20260810/11 snapshots now return 404. I02 archives the pinned tree as one OCI artifact, and the ported `sync-portage.sh` reads it by digest. |
 | Distfiles | `DISTDIR`, Manifest checksums, `emerge --fetchonly`, `FETCHCOMMAND`; `cargo.eclass` `CRATES` for Rust packages | Gap: upstream URLs disappear, so an old release could not be rebuilt. P02 fetches every distfile once per tag into one archive, both release builds use only that archive with the network off, and P01 pushes it as one OCI artifact. There is no mirror service. `rl144` and `stele` fetch crates at build time today (`RESTRICT=network-sandbox`), so MS1 iteration ISOs leave them out (B01). R05 moves them to `CRATES`, including the standard library's crates that `-Z build-std` needs, and brings them back before the first release. |
-| Kernel | kbuild with a `savedconfig` (`savedconfig.eclass`) and `olddefconfig` | None new. The ported `verify-*.sh` assertions. v0.3's fragment split and tier tooling are removed. |
+| Kernel | kbuild with a `savedconfig` (`savedconfig.eclass`) and `olddefconfig` | None new. The ported `verify-*.sh` assertions. |
 | Initrd | dracut and genkernel were considered | Gap: both assume a glibc, udev or systemd-style userland and are far larger than the 486 budget. The ported `build-initrd.sh` (busybox, deterministic cpio) stays. |
 | Rootfs and ISO | Portage `ROOT` and VDB, squashfs-tools, xorriso, ISOLINUX, `grub-mkimage` | None new. The ported `extract-packages.sh`, `build-rootfs.sh` and `build-iso.sh`. |
 | Boot tests | QEMU, OVMF, `pexpect`. openQA was considered, but it is a service to run and maintain for 17 serial-console modes. | The ported `boot-test.py` and `boot-test.yml`, unchanged. |
@@ -273,9 +269,9 @@ that remains. A custom row must name the gap. Anything v0.3 specified that has n
 | Source provenance | `--usepkg` off with an empty `PKGDIR`; the builder image's preinstalled target packages named on the emerge command line with `--oneshot`, which Portage always re-merges; the Portage VDB (`CONTENTS`, `BUILD_TIME`) | Gap: the predecessor `quickpkg`ed every installed sysroot package and shipped the whole sysroot, so nothing proved that shipped files were built in the release run. → B01's `source-audit.sh` maps every shipped file to a package merged from source in this run, or to a declared toolchain file. |
 | Reproducibility | `SOURCE_DATE_EPOCH`, `KBUILD_BUILD_*`, `cpio --reproducible`, mksquashfs and xorriso date options, `mkfs.vfat --invariant`, `docker run --network none`; `sha256sum` decides; diffoscope only diagnoses a mismatch | Each nondeterminism is fixed at its source (P02). There is no known-differences list. The one possible custom step is normalising Portage's VDB metadata on the disc, if Portage does not honour `SOURCE_DATE_EPOCH` for it (unverified). |
 | CI | GitHub Actions, Dependabot for action SHAs, CODEOWNERS and branch protection | The ported workflows, without the AWS steps. |
-| Storage | An OCI registry (GHCR) via `oras` or `docker`; GitHub Releases; Actions artifacts | None. No store interface, contract suite or backends; v0.3's F06 and I01 are removed. |
+| Storage | An OCI registry (GHCR) via `oras` or `docker`; GitHub Releases; Actions artifacts | None. No store interface, contract suite or backends. |
 | Publishing | GitHub Releases, as the download page; GitHub Pages for the advisory feed | The advisory feed later (P03): static JSON on GitHub Pages under the OD-1 name, so no cloud key is stored. The dashboard and boot demo are out of scope. |
-| Process | Branch protection, CODEOWNERS, PR review | None. v0.3's agent loop, identity CI, graph tooling and system inventory are removed. |
+| Process | Branch protection, CODEOWNERS, PR review | None. No agent loop, identity CI, graph tooling or system inventory. |
 
 ---
 
@@ -288,10 +284,10 @@ Pins stay where the predecessor kept them, and the ported `update-build-pins.sh`
 - `configs/portage/versions.lock`;
 - `configs/portage/crossdev.lock`.
 
-v0.4 changes three pins:
+Three pins differ from the predecessor's:
 
 - **Tree:** `TREE_COMMIT` (a 40-hex gentoo-mirror commit) and `TREE_DIGEST` (the archived tree
-  artifact). They replace the dated `BUILD_EPOCH` snapshot. The first pin is rc1's tree (OD-6).
+  artifact). They replace the dated `BUILD_EPOCH` snapshot. The first pin is rc1's tree (OD-3).
 - **Build time:** `SOURCE_DATE_EPOCH` is the committer time of `TREE_COMMIT`, so it moves only when the
   tree moves. Builds pass it explicitly; the value baked into the adopted builder image
   (`Dockerfile:37`) is not relied on.
@@ -375,7 +371,6 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
   - CODEOWNERS routes these paths to the owner: `.github/**`, `SPEC.md`, `docs/graph.yaml`,
     `configs/attestation/`, `Dockerfile` and the release scripts.
   - Branch protection requires the fast tier and owner review.
-  - Together they replace v0.3's trusted-base checker and identity allowlist.
 - **Merging.** Humans merge. Bots open PRs; they never merge, approve or use `--admin`. The
   predecessor's `pin-bump.yml` used `--admin`, and M01 removes it.
 - **Release.**
@@ -439,29 +434,20 @@ Bullets: unverified third-party behaviour, open decisions (§10).
 
 ## 10. Open decisions
 
-These are owner decisions. A node that names one does not start until it is settled. Ids are stable,
-and withdrawn ones are listed so that old references still resolve.
+These are owner decisions. A node that names one does not start until it is settled.
 
 | Id | Question | Default if unanswered |
 |---|---|---|
 | OD-1 | The advisory URL is baked into every disc from the first release on. It must be a dedicated name that can be repointed for decades. The service behind it (P03) can come later. `themonolith.org` belongs to a third party, so it is out. Where is the name hosted? | `https://monolith.technomantics.com/`, served by GitHub Pages (a custom domain needs no stored cloud key, SPEC §8) |
 | OD-2 | May a prerelease ship with a non-empty dynamic-binary allowlist? | Yes for prereleases, each entry with an issue. The list is empty before the first non-prerelease (R03). |
-| OD-6 | First tree pin: rc1's tree, recovered from gentoo-mirror git, or a current tree? | rc1's tree; M01 bumps it after MS2 |
-| OD-8 | First release version from this repository. | `v0.2.0-rc1` |
-| OD-9 | Does a CVE in the builder image block a release? | Report-only; the owner reviews it at release |
-| OD-11 | Bump PRs (M01) need a credential other than `GITHUB_TOKEN` so their checks run. Fine-grained PAT or GitHub App? | GitHub App |
-| OD-12 | Hyper-V: provide manual evidence on real Hyper-V, or drop the README claim? | A dated manual evidence file |
-| OD-13 | Keep the undocumented Tier-0 `NET_9P`, `NET_9P_FD` and `NETFS_SUPPORT` symbols? | Keep them, documented |
-| OD-15 | If the CVE gate blocks the first release on rc1's 2026-08 tree: waive with an expiry, or bump the tree first? | Waive with a 30-day expiry; M01 follows |
-| OD-16 | The distribution's share of the CD, once content projects claim space. | The whole 74-minute CD-R (681,984,000 bytes) until set |
-
-Withdrawn in v0.4:
-- OD-3 (language): settled by the port.
-- OD-4 (bot identity): no bot commits.
-- OD-5 (distfile scope): release `DISTDIR` only.
-- OD-7 (CI): GitHub Actions.
-- OD-10 (agent-loop licence): no loop in this repository.
-- OD-14 (dashboard tests): no dashboard.
+| OD-3 | First tree pin: rc1's tree, recovered from gentoo-mirror git, or a current tree? | rc1's tree; M01 bumps it after MS2 |
+| OD-4 | First release version from this repository. | `v0.2.0-rc1` |
+| OD-5 | Does a CVE in the builder image block a release? | Report-only; the owner reviews it at release |
+| OD-6 | Bump PRs (M01) need a credential other than `GITHUB_TOKEN` so their checks run. Fine-grained PAT or GitHub App? | GitHub App |
+| OD-7 | Hyper-V: provide manual evidence on real Hyper-V, or drop the README claim? | A dated manual evidence file |
+| OD-8 | Keep the undocumented Tier-0 `NET_9P`, `NET_9P_FD` and `NETFS_SUPPORT` symbols? | Keep them, documented |
+| OD-9 | If the CVE gate blocks the first release on rc1's 2026-08 tree: waive with an expiry, or bump the tree first? | Waive with a 30-day expiry; M01 follows |
+| OD-10 | The distribution's share of the CD, once content projects claim space. | The whole 74-minute CD-R (681,984,000 bytes) until set |
 
 ---
 

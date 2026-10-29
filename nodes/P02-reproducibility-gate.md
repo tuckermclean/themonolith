@@ -51,7 +51,7 @@ MS1's ISO is for iteration and is never published. After this node a tag cannot 
    - known volatile lines are dropped from `environment.bz2`, which is recompressed with `bzip2 -9`.
 
    The builder's own VDB is untouched. B01's source audit reads the builder's VDB, not the shipped copy, so it is unaffected. *AC-6.*
-7. **No difference list.** v0.3's `docs/known-differences.md` is gone. A difference is a defect: fix it at its source with one of the techniques above. If a fix needs a recipe change, it is a revbump in the overlay or a `configs/portage` edit, owned here. *AC-2.*
+7. **No difference list.** There is no list of accepted differences. A difference is a defect: fix it at its source with one of the techniques above. If a fix needs a recipe change, it is a revbump in the overlay or a `configs/portage` edit, owned here. *AC-2.*
 
 ## Gate
 - **P02-AC-1** — `build.yml`'s tag path has `build-a` and `build-b` as separate jobs. Each takes only the source commit, `release-inputs.json` and the distfiles artifact as inputs, with no shared volume, `actions/cache`, binpkg pull or artifact between them. Neither job has a `needs:` on the other. *Verify:* `scripts/tests/release-gate.test.sh` (parses the workflow with PyYAML). *Tier:* fast.

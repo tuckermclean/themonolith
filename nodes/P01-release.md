@@ -6,7 +6,7 @@
 
 **Owns:** `.github/workflows/release.yml`, the `attestation` job of `build.yml`'s tag path (after P02's gate), `scripts/rc1-diff.sh`, `scripts/size-report.sh`, `docs/rc1-diff-reasons.tsv`, `docs/releasing.md`, `scripts/tests/release-*.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/release.yml` (278 lines), `docs/releasing.md`. Removed: `scripts/generate-provenance.py` and its call in `scripts/attestation.sh`.
-**Study refs:** `configs/portage/world` at b9f533b (99 atoms); T-attest-entry-workflow, T-prerelease-never-latest, D-supply-chain-honesty, D-tag-builds-from-source; Principle 7; OD-8, OD-16.
+**Study refs:** `configs/portage/world` at b9f533b (99 atoms); T-attest-entry-workflow, T-prerelease-never-latest, D-supply-chain-honesty, D-tag-builds-from-source; Principle 7; OD-4, OD-10.
 
 ## Purpose
 This node makes the first official release; nothing before it is called a release. After it, a tag whose ISO has passed P02's reproducibility gate, all 17 boot modes, the artifact checks and the gates, and that ships all 99 of the predecessor's world packages (`rl144` and `stele` included, R05), is attested by the platform, has its inputs archived and becomes a GitHub prerelease with reports attached. Nothing runs here for a tag that failed any of those. This completes MS2.
@@ -29,7 +29,7 @@ Carried unchanged: `build.yml` as the entry workflow of a tag run (the signing c
 7. **New release assets.** `release-inputs.json` (written by P02); `source-audit.tsv` (B01, from build A); `rc1-diff.md`; `sizes.md`; `dynamic-allowlist.txt`. All are listed in `SHA256SUMS`. *AC-6, AC-7, AC-8.*
 8. **Reports.**
    - `rc1-diff.sh` compares package name and version sets of the new `bom.cdx.json` and rc1's (fetched by sha256 `3cfc322a…75887`). The rc1 SBOM has no file components (`enrich-sbom.py:582`), so the file diff compares `unsquashfs -lls` path lists of the two ISOs' squashfs. Every added or removed package must have a line in `docs/rc1-diff-reasons.tsv`; a missing line fails the script, an unused line is reported. The owner reviews that file in the PR.
-   - `size-report.sh` prints ISO, squashfs, kernel and initrd sizes against `ISO_BUDGET_BYTES` (Makefile variable, default 681,984,000, OD-16) and exits 1 if the ISO exceeds it. It runs on every build, before signing.
+   - `size-report.sh` prints ISO, squashfs, kernel and initrd sizes against `ISO_BUDGET_BYTES` (Makefile variable, default 681,984,000, OD-10) and exits 1 if the ISO exceeds it. It runs on every build, before signing.
    - The allowlist report copies O02's dynamic-binary allowlist with its entry count.
 9. **Release notes** drop the S3 dashboard link and print `gh attestation verify … --repo "$GITHUB_REPOSITORY" --signer-workflow …/build.yml` instead of `--owner tuckermclean` (`release.yml:216`). The `--owner` form accepts an attestation from any repository of the owner.
 10. **Permissions.** `release.yml`: `contents: write`, `actions: read`. `build.yml` attestation job: `id-token: write`, `attestations: write`, `contents: read`, and `packages: write` for the distfiles push, which runs only on tags. *AC-9.*
@@ -51,5 +51,5 @@ Measured on the predecessor: attestation job about 4.7 minutes. The from-source 
 
 ## Risks
 - `actions/attest-build-provenance` and `attest-sbom` behaviour on a user-owned repository, and that `gh attestation verify --format json` exposes the subject digest in the shape item 3 reads (unverified; the first slice checks).
-- The rc1 SBOM can be fetched only by sha256 (O01's lane). Reasons for each package difference need the owner; expect the first list to be near empty with rc1's tree (OD-6).
-- OD-8 (first version), OD-16 (budget share). The `workflow_run` workflow runs the default-branch copy of `release.yml`, not the tag's (unverified in this repository).
+- The rc1 SBOM can be fetched only by sha256 (O01's lane). Reasons for each package difference need the owner; expect the first list to be near empty with rc1's tree (OD-3).
+- OD-4 (first version), OD-10 (budget share). The `workflow_run` workflow runs the default-branch copy of `release.yml`, not the tag's (unverified in this repository).

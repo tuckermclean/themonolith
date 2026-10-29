@@ -6,7 +6,7 @@
 
 **Owns:** `configs/overlay/app-misc/monolith-base/` (r6 becomes r7), `scripts/build-rootfs.sh` os-release block, `scripts/tests/advisory-check.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `configs/overlay/app-misc/monolith-base/files/monolith-advisory-check`, `files/40-advisory.sh`, `monolith-base-0.1.0-r6.ebuild`.
-**Study refs:** D-revbump-on-overlay-change, D-supply-chain-honesty; OD-1; v0.3 P06 facts.
+**Study refs:** D-revbump-on-overlay-change, D-supply-chain-honesty; OD-1.
 
 ## Purpose
 The first attested ISO from this repository must not carry the dead S3 URL or read silence as safety. The service behind the OD-1 name can come later.

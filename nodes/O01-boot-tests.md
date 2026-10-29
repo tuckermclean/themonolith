@@ -37,4 +37,4 @@ QEMU, OVMF and `pexpect` on a GitHub-hosted runner, as the predecessor. openQA w
 - The ISO's kernel version string for the rc1 caller is derived from predecessor files, not from the ISO. A mismatch would fail `uname -r` in every mode at the first run.
 - QEMU and OVMF come from apt on `ubuntu-latest`, so a runner image update can change them. They are recorded, not pinned (unverified whether older packages remain installable).
 - The "serial warmup" race in `_boot_isolinux_to_shell` (oracle.yaml, open question) is not investigated. Modes that flake get the existing retry rule only.
-- v0.3 O02–O05 findings not carried: golden screendumps, the second-child retry attribution, and modes widened beyond the predecessor. They are changes to behaviour without a demonstrated failure.
+- Not done here: golden screendumps, second-child retry attribution, and modes beyond the predecessor's. They would change behaviour without a demonstrated failure.

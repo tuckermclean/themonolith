@@ -9,7 +9,7 @@
 **Study refs:** D-static-musl-cross-all-the-way, D-two-epoch-pin-model, T-libatomic-static, T-builder-image-tag-not-pushed.
 
 ## Purpose
-The build uses rc1's builder image, taken by digest from our own namespace, with a recorded list of what is inside it. Adopting it avoids about 1.5 hours of crossdev compilation per cold run (the v0.3 estimate; not re-measured) and gives every later node a fixed digest. The image is not reproducible from source until M02.
+The build uses rc1's builder image, taken by digest from our own namespace, with a recorded list of what is inside it. Adopting it avoids about 1.5 hours of crossdev compilation per cold run (estimated; not measured) and gives every later node a fixed digest. The image is not reproducible from source until M02.
 
 ## Standard mechanism
 - Image distribution: an OCI registry and `docker pull <repo>@sha256:...`. Pinning by digest is the standard way to name an immutable image.
@@ -40,4 +40,4 @@ Everything else, including the `Dockerfile` and the `docker commit` crossdev blo
 - The image is a `docker commit` product and carries unpinned `syft` and `grype` (`main` install scripts, `Dockerfile:128-142`) and an unpinned rustup script (`:167-170`). Their versions are recorded by AC-5, not fixed. M02 addresses it.
 - It probably still carries the 20260810 toolchain tree under `/var/db/repos/gentoo` (unverified; the Dockerfile never removes it). B01 must mount the pinned tree over it. The manifest will show it.
 - If GHCR loses `builder:rc1`, there is no second copy. The owner should keep a `docker save` elsewhere (unverified that the predecessor package outlives its account).
-- 1.36 GB pull per job (v0.3 figure, unverified for the copy).
+- 1.36 GB pull per job (unverified for the copy).
