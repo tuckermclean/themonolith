@@ -1,7 +1,8 @@
 # The Monolith — Specification
 
-Version 0.4 (draft, 2026-10-28). v0.4 replaces v0.3's factory design with the smallest port of the
-predecessor that reaches a reproducible release. `docs/reviews/2026-10-28-v0.4.md` says what was removed
+Version 0.4 (draft, 2026-10-28; corrective pass the same day: bit-for-bit reproducibility is a hard gate
+before publication). v0.4 replaces v0.3's factory design with the smallest port of the predecessor that
+reaches a reproducible release. `docs/reviews/2026-10-28-v0.4.md` says what was removed
 and why. This document is the authority for the repository. Where a node spec (`nodes/<id>.md`) and this
 document disagree, this document wins and the node spec is a defect. The dependency graph is
 `docs/graph.yaml`, and the plan to the first release is `docs/first-release.md`. The study of the
@@ -78,6 +79,8 @@ facts decide three things:
   - a CycloneDX SBOM;
   - SHA256SUMS;
   - `release-inputs.json` (§6);
+  - `source-audit.tsv`: every shipped file with the package that built it in the release run, or its
+    declared toolchain origin (B01);
   - a Sigstore SLSA provenance attestation whose subject is the ISO digest.
 
 **Non-negotiable constraints.** Each has a check. None may be traded for factory convenience.
@@ -88,7 +91,7 @@ facts decide three things:
 | Static musl | Every rootfs binary is statically linked against musl, and no dynamic loader ships on the disc. rc1 violates this (§3, D-all-static). The list of violations may only shrink, and it is empty before the first non-prerelease. | O02, R03 |
 | Modest memory | The BIOS boot reaches a shell at 64 MB of RAM, the predecessor's floor. | O01 (ported `ram_mb: [64, 256]`) |
 | Hardware compatibility | The predecessor's 17 boot modes pass, including the NIC, VGA and legacy fbdev matrices. | O01 |
-| Reproducibility | A release can be rebuilt from its archived inputs. The rebuild is compared with the release byte for byte, and every difference is listed. | P01, P02 |
+| Reproducibility | Bit for bit, without exceptions. Two clean, separate builds from the same pinned and archived inputs produce ISOs with the same SHA-256. This covers the whole ISO: kernel, initramfs, squashfs, bootloaders, ESP and filesystem metadata. A mismatch fails the release, and nothing is published first. Attestations may differ between runs; the ISO bytes may not. | P02 (gate), R05, B01 |
 | CD-sized budget | The ISO fits on a 74-minute CD-R (681,984,000 bytes) now, and within the share the owner sets later (OD-16). | P01 (report and gate) |
 
 The oracle (§7) defines what the product does. A README promise that no test proves is a gap (G01)
@@ -120,9 +123,11 @@ until it is tested or the promise is removed.
    restored from a cache entry matching its inputs. Auth errors are failures, never cache misses. Missing
    or empty inputs fail gates.
 6. **Iterate from binary packages; release from source.** Development builds reuse Portage binary
-   packages. Tag builds compile every package from source (D-tag-builds-from-source, ported).
-7. **Publish last.** Nothing public moves until the full oracle, the gates and the attestation have
-   passed for that exact digest.
+   packages. Tag builds compile every package that reaches the rootfs, in that run, and prove it with a
+   file-by-file audit. The only exceptions are a declared list of toolchain files from the pinned
+   builder image (D-tag-builds-from-source; B01).
+7. **Publish last.** Nothing public moves until the reproducibility gate, the full oracle and the gates
+   have passed for that exact digest. Attestation comes after them, then publication.
 8. **Authored and generated are never the same file.** Builds never write into tracked files.
 9. **Humans merge.** Bots and agents may open PRs. They never merge, approve or use `--admin`.
 
@@ -144,8 +149,8 @@ Hard rules about the product. Ids match `docs/study/doctrine.yaml`, which holds 
 | D-486-tier-regime | Kernel drivers are tiered: Tier 0 is `=y` and boot-critical, Tier 1 is `=m` in the initrd, Tier 2 is `=m` on the squashfs. | B02 |
 | D-static-musl-cross-all-the-way | i486-linux-musl via crossdev. Host build tools are 32-bit-capable. | I03 |
 | D-supply-chain-honesty | Releases come only through the verifiable pipeline, and the digest chain holds. | P01 |
-| D-tag-builds-from-source | Tag builds compile every package from source. No cached binary enters a release. | B01, P01 |
-| D-revbump-on-overlay-change | Changing an overlay ebuild or its `files/` requires a `-rN` bump. | R02 |
+| D-tag-builds-from-source | Tag builds compile every package in the rootfs from source in that run (`--emptytree`, no `quickpkg`). No cached or preinstalled binary enters a release, except declared toolchain files from the pinned builder image. | B01 (source audit), P02 |
+| D-revbump-on-overlay-change | Changing an overlay ebuild or its `files/` requires a `-rN` bump. | R04 (fast lane, before B01); R02 later (pkgcheck) |
 | D-hand-authored-rootfs-files-owned | Every rootfs file is owned by a package or by a justified allowlist entry. | S01 |
 | D-state-and-no-hidden-stderr | No `2>/dev/null` on paths that decide success. | review; S01 for the gates |
 | D-two-epoch-pin-model | The builder pin and the runtime tree pin are separate. | I02, I03 |
@@ -163,7 +168,7 @@ configs/overlay  (the `monolith` Portage repository)┤
 configs/portage  (distribution configuration) ─────┤
                                                    ▼
       build-packages.sh: cross-emerge world into the sysroot
-        (dev: binpkgs restored from GHCR; tag: --usepkg off)
+        (dev: binpkgs restored from GHCR; tag: offline, --emptytree, no binpkgs)
         incl. sys-kernel/monolith-kernel (config from savedconfig)
                                                    ▼
       extract-packages.sh / build-rootfs.sh ─▶ squashfs
@@ -171,8 +176,12 @@ configs/portage  (distribution configuration) ─────┤
       build-iso.sh ─▶ hybrid ISO (ISOLINUX + GRUB EFI)
                                                    ▼
       boot tests (17 modes)   artifact checks   SBOM ─▶ license, CVE, unowned gates
-                                                   ▼
-      tag only: attest (actions/attest-build-provenance) ─▶ GitHub prerelease ─▶ rebuild check
+
+  tag only (P02, then P01):
+      fetch distfiles once ─▶ distfiles.tar + release-inputs.json   (only job with network)
+          ├─▶ build A (runner 1, --network none) ─┐
+          └─▶ build B (runner 2, --network none) ─┴─▶ sha256(A) == sha256(B) or fail
+      oracle + gates on that ISO ─▶ attest ─▶ push distfiles ─▶ GitHub prerelease
 ```
 
 Within one CI run, files move between jobs with `actions/upload-artifact` and `download-artifact`, never
@@ -241,10 +250,10 @@ that remains. A custom row must name the gap. Anything v0.3 specified that has n
 | Packages | Gentoo ebuilds from the pinned tree; the `monolith` overlay for packages Gentoo lacks or that must be patched | None new. The ported `scripts/build-packages.sh` drives `${CHOST}-emerge`. |
 | Distribution policy | `make.conf`, `package.use`/`.mask`/`.env`/`.accept_keywords`, `env/`, `bashrc`, a profile | None new. The ported `configs/portage/`; rc1's working static-link workarounds live in `bashrc` and `env/`. Policy is not moved into an overlay profile: no demonstrated benefit yet. |
 | Versions | The pinned tree fixes every version; `package.mask` holds back removed packages | `versions.lock` (ported). Gap: the predecessor emerges world as `=cat/pkg-ver` atoms (`build-packages.sh:180-197`), so a tree bump moves no world version unreviewed. The ported `update-versions.sh` regenerates the file, and B01 fixes its 23-atom drift. |
-| Binary cache | Portage `PKGDIR` with gpkg, `--usepkg`, `--binpkg-respect-use=y`, `--binpkg-changed-deps=y`, `--rebuild-if-unbuilt` | Gap: Portage cannot see edits to `make.conf`, `bashrc`, `env/`, `package.env` or the profile, nor to `savedconfig` contents. The smallest solution has three parts: (a) the cache tag includes a hash of those files, so changing one starts a cold cache; (b) the ported `savedconfig-cache.sh` marker handles savedconfig; (c) an overlay edit needs a revbump, the standard Gentoo rule (R02). Transport: the ported `binpkg-store.sh` pushes the whole `PKGDIR` as one OCI artifact. A Portage binhost over HTTP (`binrepos.conf`) was considered. It needs a web host for about 2 GB, and GitHub Pages (P03) is sized for far less, so it waits until a host exists. Removed: v0.3's per-package fingerprints, sets, memo and seeding (I06). |
+| Binary cache | Portage `PKGDIR` with gpkg, `--usepkg`, `--binpkg-respect-use=y`, `--binpkg-changed-deps=y`, `--rebuild-if-unbuilt` | Gap: Portage cannot see edits to `make.conf`, `bashrc`, `env/`, `package.env` or the profile, nor to `savedconfig` contents. The smallest solution has three parts: (a) the cache tag includes a hash of those files, so changing one starts a cold cache; (b) the ported `savedconfig-cache.sh` marker handles savedconfig; (c) an overlay edit needs a revbump, the standard Gentoo rule, enforced in the fast lane by R04 before B01 relies on the cache. Transport: the ported `binpkg-store.sh` pushes the whole `PKGDIR` as one OCI artifact. A Portage binhost over HTTP (`binrepos.conf`) was considered. It needs a web host for about 2 GB, and GitHub Pages (P03) is sized for far less, so it waits until a host exists. Removed: v0.3's per-package fingerprints, sets, memo and seeding (I06). |
 | Static dependents | `--rebuild-if-unbuilt` rebuilds the build-time reverse dependencies of anything built from source | None; it is one flag. Its behaviour with a cross `ROOT` is unverified, and B01's first slice checks it. Releases build from source, so a miss cannot reach a release. |
 | Gentoo tree | A gentoo-mirror git commit (Portage `sync-type = git`); signed daily snapshots for later epochs | Gap: upstream prunes snapshots, and rc1's 20260810/11 snapshots now return 404. I02 archives the pinned tree as one OCI artifact, and the ported `sync-portage.sh` reads it by digest. |
-| Distfiles | `DISTDIR`, Manifest checksums, `GENTOO_MIRRORS`; `cargo.eclass` `CRATES` for Rust packages | Gap: upstream URLs disappear, so an old release could not be rebuilt. P01 archives the tag build's `DISTDIR` as one OCI artifact per release. There is no mirror service. `rl144` and `stele` still fetch crates at build time (`RESTRICT=network-sandbox`), so their crates are in no archive. R02 moves them to `CRATES`, the standard form, and P02 lists the gap until then. |
+| Distfiles | `DISTDIR`, Manifest checksums, `emerge --fetchonly`, `FETCHCOMMAND`; `cargo.eclass` `CRATES` for Rust packages | Gap: upstream URLs disappear, so an old release could not be rebuilt. P02 fetches every distfile once per tag into one archive, both release builds use only that archive with the network off, and P01 pushes it as one OCI artifact. There is no mirror service. `rl144` and `stele` fetch crates at build time today (`RESTRICT=network-sandbox`). R05 moves them to `CRATES`, including the standard library's crates that `-Z build-std` needs, before the first release. |
 | Kernel | kbuild with a `savedconfig` (`savedconfig.eclass`) and `olddefconfig` | None new. The ported `verify-*.sh` assertions. v0.3's fragment split and tier tooling are removed. |
 | Initrd | dracut and genkernel were considered | Gap: both assume a glibc, udev or systemd-style userland and are far larger than the 486 budget. The ported `build-initrd.sh` (busybox, deterministic cpio) stays. |
 | Rootfs and ISO | Portage `ROOT` and VDB, squashfs-tools, xorriso, ISOLINUX, `grub-mkimage` | None new. The ported `extract-packages.sh`, `build-rootfs.sh` and `build-iso.sh`. |
@@ -255,7 +264,8 @@ that remains. A custom row must name the gap. Anything v0.3 specified that has n
 | CVEs | grype with its DB | The ported `check-cves.sh` policy (waivers, fix states); S01 fixes waiver expiry. |
 | Unowned files | Portage VDB `CONTENTS` (`qfile -o` considered) | The ported `check-unowned.py`; S01 fixes its fail-open paths. |
 | Provenance | `actions/attest-build-provenance`, `actions/attest-sbom`, `gh attestation verify` | None. These replace the ported `generate-provenance.py` with `actions/attest`. Benefit: the platform writes the provenance, not our script. |
-| Reproducibility | `SOURCE_DATE_EPOCH`, diffoscope | A known-differences list (P02). |
+| Source provenance | `emerge --emptytree` with `--usepkg` off; the Portage VDB (`CONTENTS`, `BUILD_TIME`) | Gap: the predecessor `quickpkg`ed every installed sysroot package and shipped the whole sysroot, so nothing proved that shipped files were built in the release run. → B01's `source-audit.sh` maps every shipped file to a package merged from source in this run, or to a declared toolchain file. |
+| Reproducibility | `SOURCE_DATE_EPOCH`, `KBUILD_BUILD_*`, `cpio --reproducible`, mksquashfs and xorriso date options, `mkfs.vfat --invariant`, `docker run --network none`; `sha256sum` decides; diffoscope only diagnoses a mismatch | Each nondeterminism is fixed at its source (P02). There is no known-differences list. The one possible custom step is normalising Portage's VDB metadata on the disc, if Portage does not honour `SOURCE_DATE_EPOCH` for it (unverified). |
 | CI | GitHub Actions, Dependabot for action SHAs, CODEOWNERS and branch protection | The ported workflows, without the AWS steps. |
 | Storage | An OCI registry (GHCR) via `oras` or `docker`; GitHub Releases; Actions artifacts | None. No store interface, contract suite or backends; v0.3's F06 and I01 are removed. |
 | Publishing | GitHub Releases, as the download page; GitHub Pages for the advisory feed | The advisory feed later (P03): static JSON on GitHub Pages under the OD-1 name, so no cloud key is stored. The dashboard and boot demo are out of scope. |
@@ -279,7 +289,11 @@ v0.4 changes three pins:
 - **Build time:** `SOURCE_DATE_EPOCH` is the committer time of `TREE_COMMIT`, so it moves only when the
   tree moves. Builds pass it explicitly; the value baked into the adopted builder image
   (`Dockerfile:37`) is not relied on.
-- **Builder:** `BUILDER_DIGEST`, which is `sha256:ab04002a…` until M02 rebuilds the image.
+- **Builder:** `BUILDER_DIGEST`, which is `sha256:ab04002a…` until M02 rebuilds the image. The toolchain
+  code linked into every static binary (musl `libc.a`, `libgcc.a`, `libatomic.a`) and the few
+  crossdev-owned sysroot files in B01's `bootstrap-exceptions.txt` come from this image. They are pinned by
+  its digest, not rebuilt per release. Both release builds use the same digest, so this does not affect
+  ISO reproducibility.
 - **Registry:** `REGISTRY`, by default `ghcr.io/tuckermclean/themonolith`. It is the only place the
   storage location appears.
 
@@ -292,11 +306,12 @@ GitHub Action references are full commit SHAs in the workflow `uses:` lines, and
 | `builder@sha256:…` | The builder image; rc1's adopted copy is tagged `rc1` | immutable |
 | `gentoo-tree:<commit40>` | A `git archive` of the pinned tree, as one layer | immutable |
 | `binpkgs:<cache-tag>` | The development `PKGDIR`, as one layer in the ported format. `<cache-tag>` is the first 16 hex digits of a sha256 over `BUILDER_DIGEST`, `TREE_COMMIT` and the global config files listed in §5. | overwritten by `main` builds only |
-| `distfiles:<version>` | A release's `DISTDIR` | immutable |
+| `distfiles:<version>` | The archive both release builds used, pushed after the gate | immutable |
 | `rc1-binpkgs:20260811` | A preserved copy of rc1's cache, for comparison only; never restored | immutable |
 
-**`release-inputs.json`** is a release asset. Together with the source commit, it is everything P02
-needs to rebuild. It records:
+**`release-inputs.json`** is written by P02's fetch job before either release build starts, and it is
+published as a release asset. Together with the source commit and the distfiles archive, it is everything a
+release build reads. It records:
 - the version and the source commit;
 - `TREE_COMMIT` and `TREE_DIGEST`;
 - `BUILDER_DIGEST`;
@@ -336,10 +351,13 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
   - the package and file difference against rc1's SBOM, with a reason for each added or removed package;
   - the ISO, squashfs, kernel and initrd sizes against the budget (§1);
   - the dynamic-binary allowlist with its remaining entries.
-- **Reproducibility** (P02):
-  - A second build of the tag uses `release-inputs.json` only.
-  - It is compared against the release with diffoscope.
-  - Differences go to `docs/known-differences.md`, each with a cause, and the list only shrinks.
+- **Reproducibility gate** (P02, every tag, before publication):
+  - Two from-source builds run on separate, clean runners, offline (`--network none`). They read only
+    the source commit, `release-inputs.json` and the distfiles archive.
+  - Their ISO SHA-256 digests must be equal, or the tag fails.
+  - diffoscope runs only after a mismatch, to show where the bytes differ.
+  - The same pipeline can be dispatched on any commit without publishing, so nondeterminism is found
+    and fixed before a tag.
 - **Harness interfaces.** Serial milestones, the ISOLINUX `serial` label and the GRUB entry `(serial)`
   are interfaces between the harness and the disc. Changing one means changing both.
 
@@ -355,12 +373,13 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
 - **Merging.** Humans merge. Bots open PRs; they never merge, approve or use `--admin`. The
   predecessor's `pin-bump.yml` used `--admin`, and M01 removes it.
 - **Release.**
-  - A `vX.Y.Z[-rcN]` tag runs the build workflow with `--usepkg` off.
-  - Attestation and the GitHub release are created only after every boot mode, check and gate has passed
-    for that ISO digest.
+  - A `vX.Y.Z[-rcN]` tag runs P02's gate: one fetch job, then two offline from-source builds whose ISOs
+    must have equal SHA-256.
+  - Attestation and the GitHub release (P01) are created only after the gate and every boot mode, check
+    and gate on that ISO have passed. Nothing is pushed or published before that.
   - A suffixed tag is a prerelease and never "Latest".
-  - The publish step re-verifies the digest chain: `sha256(ISO)` must equal the SHA256SUMS entry, the
-    SBOM's recorded ISO hash and the attestation subject (`gh attestation verify`).
+  - The publish step re-verifies the digest chain: `sha256(ISO)` must equal both builds' digests, the
+    SHA256SUMS entry, the SBOM's recorded ISO hash and the attestation subject (`gh attestation verify`).
 - **Credentials.**
   - Workflows use `GITHUB_TOKEN` with the fewest `permissions:` they need.
   - There are no long-lived cloud keys.
@@ -445,5 +464,5 @@ Withdrawn in v0.4:
 - **Tests first.** Write the fast test first where one is possible. CI does not police commit order.
 - **Authorship.** Commits are authored by `Tucker McLean <me@tuckermclean.com>`. Agent-assisted commits
   carry a `Co-Authored-By:` trailer.
-- **Order of work.** `track: critical` nodes, the ancestors of P02, come first. `later` nodes start when
+- **Order of work.** `track: critical` nodes, the ancestors of P01, come first. `later` nodes start when
   their deps are done and a slot is free.

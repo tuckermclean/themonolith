@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | B01, B02, R01, O01, O02, S01 | G01, P01, R03 | MS1 | M |
+| critical | B01, B02, R01, O01, O02, S01 | G01, P02, R03 | MS1 | M |
 
 **Owns:** `.github/workflows/build.yml`, `scripts/tests/build-workflow.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/build.yml` (jobs `changes`, `build-image`, `build`, `boot-test`, `attestation`), `scripts/build-rootfs.sh`, `scripts/build-initrd.sh`, `scripts/build-iso.sh`, the `Makefile` targets `build-rootfs`, `iso`, `all`, `attestation`. The three scripts are carried byte for byte.
@@ -22,7 +22,7 @@ Everything else in `build.yml` and the three scripts is carried unchanged, inclu
 3. **Builder pulled by digest.** `build-image` and the `Warm docker layer cache from :latest` steps are replaced by `make pull-image` on `BUILDER_DIGEST` (I03 owns the Makefile change). The `build-image` job is removed; rebuilding the image is M02's. *AC-4.*
 4. **Boot tests call O01's reusable workflow** with the ISO artifact from item 1 instead of `build-version` plus the cache. O01 owns the interface. *AC-2.*
 5. **Artifact checks (O02) and gates (S01) run on the same ISO,** in or before `attestation`. Their order in the job follows S01. They are `needs` of the signing step, so a red check blocks it. *AC-5.*
-6. **Binary-package restore and push stay as ported** (`build.yml:267` pull, `:448` push) with the registry variable from B01. Tag builds skip the pull and set `MONOLITH_USEPKG=n` (`build.yml:267,285`); B01 asserts that.
+6. **Binary-package restore and push stay as ported** (`build.yml:267` pull, `:448` push) with the registry variable from B01. Tags do not use this development path. P02's tag pipeline calls the build job in its offline release mode (B01 release mode, no binpkg pull).
 
 **ISO size gates.** The brief expects gates in `build-iso.sh`. There are none. The script only logs kernel, initrd and ISO sizes (`build-iso.sh:379-385,490-499`), and `build-rootfs.sh:731-734` and `build-initrd.sh:356-359` only log too. B03 ports the logging as it is. The budget gate is new and belongs to P01 (SPEC §1).
 
@@ -31,9 +31,9 @@ Everything else in `build.yml` and the three scripts is carried unchanged, inclu
 - **B03-AC-2** — Re-running only the failed jobs of a finished run after deleting its artifact fails in `boot-test` and `attestation` instead of testing a stale ISO. *Verify:* CI: run on a PR, delete the artifact, `gh run rerun --failed`; record both run URLs. *Tier:* slow.
 - **B03-AC-3** — `build.yml` has no `aws`, `s3`, `S3_BUCKET` or `AWS_` reference. *Verify:* `scripts/tests/build-workflow.test.sh`. *Tier:* fast.
 - **B03-AC-4** — Every `docker pull` or `make pull-image` in `build.yml` resolves the builder by `@sha256:` digest, and none uses `:latest`. *Verify:* `scripts/tests/build-workflow.test.sh`. *Tier:* fast.
-- **B03-AC-5** — The signing step (P01) and any later publishing step `need` the `boot-test` job, the artifact-check step and the gate steps. *Verify:* `scripts/tests/build-workflow.test.sh` parses `needs:` and `if:` of the attestation job. *Tier:* fast.
+- **B03-AC-5** — The signing step (P01) and any later publishing step `need` the `boot-test` job, the artifact-check step and the gate steps (P02-AC-3 adds its `compare` job to the same rule). *Verify:* `scripts/tests/build-workflow.test.sh` parses `needs:` and `if:` of the attestation job. *Tier:* fast.
 - **B03-AC-6** — Every `make` target that `build.yml` runs in `build` exists in the Makefile, and `make -n all` lists `build-packages`, `build-rootfs` and `iso` in that order. *Verify:* `scripts/tests/build-workflow.test.sh`. *Tier:* fast.
-- **B03-AC-7** — MS1: a workflow run on `master` builds an ISO with binary packages restored, passes all 17 boot modes, the O02 checks and the S01 gates on it, and no job touches AWS. *Verify:* the run URL, recorded in the PR table. *Tier:* slow.
+- **B03-AC-7** — MS1: a workflow run on `main` builds an ISO with binary packages restored, passes all 17 boot modes, the O02 checks and the S01 gates on it, and no job touches AWS. *Verify:* the run URL, recorded in the PR table. *Tier:* slow.
 
 Measured on the predecessor (to size expectations, not a gate): cache-hot `build` job about 13 minutes (packages about 7.5), cold about 78 minutes, boot modes about 10 minutes wall.
 

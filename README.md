@@ -19,13 +19,13 @@ Licensed under the [MIT License](LICENSE).
 |---|---|
 | [`SPEC.md`](SPEC.md) | The authority: product and constraints, principles, doctrines, architecture, the standard-mechanism table (§5), pins, oracle, release, open decisions |
 | [`docs/first-release.md`](docs/first-release.md) | The plan to the first reproducible release: surviving assets, owner actions, order of work, measured timings |
-| [`docs/graph.yaml`](docs/graph.yaml) | 20 nodes, their dependencies and three milestones |
+| [`docs/graph.yaml`](docs/graph.yaml) | 22 nodes, their dependencies and three milestones |
 | [`nodes/`](nodes/) | One spec per node, each with its acceptance criteria |
 | [`docs/reviews/`](docs/reviews/) | What each revision changed; `2026-10-28-v0.4.md` maps every v0.3 node to its v0.4 fate |
 | [`docs/study/`](docs/study/) | The frozen study of the predecessor at `b9f533b`: inventory, recipes, oracle, doctrines and traps |
 
 Milestones:
 - **MS1:** the first ISO from this repository, with the full oracle green.
-- **MS2:** the first reproducible release, a from-source, attested prerelease whose independent rebuild
-  has been compared.
+- **MS2:** the first reproducible release. Two clean offline builds produce the same ISO SHA-256, and
+  only then is that ISO tested, attested and published as a prerelease.
 - **MS3:** cutover to the first non-prerelease.

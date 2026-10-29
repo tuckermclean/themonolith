@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| later | P02 | M02, X01 | — | M |
+| later | P01 | M02, X01 | — | M |
 
 **Owns:** `.github/workflows/pin-bump.yml`, the deletion of `.github/workflows/regen-pins.yml`, `scripts/update-build-pins.sh`, `scripts/update-versions.sh`, `scripts/tests/pin-bump.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/pin-bump.yml` (396 lines), `scripts/update-build-pins.sh` (400), `scripts/update-versions.sh` (221), `docs/version-pinning.md`.
@@ -41,5 +41,5 @@ Carried unchanged: the weekly cron and `workflow_dispatch` input shape, `concurr
 ## Risks
 - OD-11: GitHub App or fine-grained PAT. App is the default; the owner creates it. Workflow-file changes still need the owner's token (T-workflow-push-needs-pat); a bump touches none.
 - OD-15: the CVE gate on a new tree may need waiver changes in the same PR.
-- A tree move is a full rebuild: the cache tag includes `TREE_COMMIT` (SPEC §6), so the PR's run is cold (about 78 minutes for `build`, predecessor measurement), and `master` pays another after the merge.
+- A tree move is a full rebuild: the cache tag includes `TREE_COMMIT` (SPEC §6), so the PR's run is cold (about 78 minutes for `build`, predecessor measurement), and `main` pays another after the merge.
 - Whether `gentoo-mirror/gentoo` HEAD is always a coherent tree (unverified).

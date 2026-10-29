@@ -6,16 +6,22 @@ this document gives the order of work and the reasons for it.
 ## Definition of done
 
 A tag `v0.2.0-rc1` on `tuckermclean/themonolith` (OD-8) that meets all of these:
-- It compiles every package from source with no binary-package reuse (D-tag-builds-from-source).
-- It passes the 17 inherited boot modes, the artifact doctrine checks, the SBOM and the licence, CVE and
-  unowned gates.
+- It is built twice, from source, in two clean builds on separate runners with the network off. Both read
+  only the source commit, `release-inputs.json` and one distfiles archive. **The two ISOs have the same
+  SHA-256.** A mismatch fails the tag, with no exceptions and no allowlist (P02).
+- Every shipped file comes from a package compiled in that run (`--emptytree`, no `quickpkg`), or from a
+  declared toolchain file of the pinned builder image. `source-audit.tsv` proves it (B01).
+- That ISO passes the 17 inherited boot modes, the artifact doctrine checks, the SBOM and the licence, CVE
+  and unowned gates.
 - It carries a Sigstore SLSA provenance attestation from `actions/attest-build-provenance` whose subject
-  is the ISO digest. The digest chain is re-verified before publishing.
-- It is published as a GitHub prerelease with these assets: the ISO, the SBOM, SHA256SUMS,
-  `release-inputs.json`, the SBOM diff against rc1 and the size report.
-- Its distfiles, tree and builder image are archived on GHCR by digest.
-- An independent rebuild from `release-inputs.json` has been compared with diffoscope. Every difference
-  is listed in `docs/known-differences.md` with a cause.
+  is the ISO digest. It is created only after everything above has passed. The digest chain is
+  re-verified before publishing.
+- It is then published as a GitHub prerelease with these assets: the ISO, the SBOM, SHA256SUMS,
+  `release-inputs.json`, `source-audit.tsv`, the SBOM diff against rc1 and the size report.
+- The distfiles archive both builds used, the tree and the builder image are on GHCR by digest.
+
+Nothing is pushed or published before the gate passes. If the ISO cannot be rebuilt byte for byte from
+archived inputs, it is not released.
 
 No S3, no AWS credential, nothing unpinned.
 
@@ -63,7 +69,8 @@ These come from the predecessor's GitHub Actions runs: run 37292535170 (cache-ho
 | An overlay ebuild (with its revbump) or a `package.use` line | That package, and its static dependents (`--rebuild-if-unbuilt`) | ~25–60 min |
 | A savedconfig, such as the kernel or busybox | That package (ported savedconfig marker) | ~25–35 min |
 | `make.conf`, `bashrc`, `env/`, `package.env`, the profile, the builder or the tree | Everything: a new cache tag | ~90 min once, then hot again |
-| A release tag | Everything from source, then the rebuild check | ~95 min, plus ~80 min for P02 |
+| A release tag | Fetch, then two from-source builds in parallel, then the oracle on that ISO | ~100–110 min wall (each build ~78 min on the predecessor, more if `--emptytree` adds packages) |
+| A reproducibility check without publishing (P02 dispatch) | The same, with no attestation or publication | the same |
 
 ## Step 0: owner actions (before any node)
 
@@ -98,18 +105,20 @@ These come from the predecessor's GitHub Actions runs: run 37292535170 (cache-ho
 
 ## Order of work
 
-Thirteen nodes are on the critical path. The longest chain has seven:
+Fifteen nodes are on the critical path. The longest chain has seven:
 
 ```text
-F01 ─▶ I01 ─▶ I02 ─▶ B01 ─▶ B03 ─▶ P01 ─▶ P02
+F01 ─▶ I01 ─▶ I02 ─▶ B01 ─▶ B03 ─▶ P02 ─▶ P01
 ```
+
+P02, the reproducibility gate, comes before P01, which attests and publishes.
 
 Once F01 lands, the rest run beside that chain:
 
 | Stream | Nodes | Works against | Ready for |
 |---|---|---|---|
 | Inputs | I01, then I02 and I03 | GHCR, gentoo-mirror | B01 |
-| Recipes | B02 (kernel savedconfig and bugs), R01 (advisory URL) | the ported tree | B03 |
+| Recipes | R04 (revbump check), B02 (kernel savedconfig and bugs), R01 (advisory URL), R05 (Rust crates as distfiles) | the ported tree | B01 (R04), B03, P02 (R05) |
 | Oracle | O01 (17 modes), O02 (artifact checks) | the rc1 ISO and squashfs | B03 |
 | Supply chain | S01 (SBOM and gates; must reproduce rc1's SBOM) | rc1's rootfs and SBOM | B03 |
 
@@ -119,15 +128,20 @@ A rough calendar for one owner with agent help. This is a planning guess, not a 
 |---|---|
 | 1 | Step 0; F01; I01; I03; B02 and R01; O01 passing on rc1 |
 | 2 | I02 tree recovered; B01 with the first cold build (~78 min); O02 and S01 passing on rc1 |
-| 3 | B03 → **MS1** (first ISO, full oracle green); P01; tag `v0.2.0-rc1`; P02 → **MS2** |
+| 3 | B03 → **MS1** (first ISO, full oracle green); R05; first P02 dispatch: two offline from-source builds of the same commit, compared |
+| ? | Nondeterminism fixed at its source until the digests match; P01; tag `v0.2.0-rc1` → **MS2** |
 
-The slack is in week 3. The first from-source build may expose a distfile that has vanished upstream
-since August; P01 archives what it fetched, so this happens once. The CVE gate may also need OD-15.
+The last row has no estimate. The predecessor never built twice, so the amount of nondeterminism is
+unknown until the first P02 dispatch runs. P02 lists the known suspects: the initrd cpio, symlink mtimes,
+ISO and ESP dates, the grub memdisk, the Portage VDB and parallel emerge order. Unknown ones may sit in
+individual packages. Two other things could block this row: offline `-Z build-std` for the two Rust
+packages (R05), and a distfile that has vanished upstream since August, which the fetch job finds first.
+The CVE gate may also need OD-15.
 
 ## After MS2
 
 These nodes are in the `later` track:
-- R02: overlay QA with `pkgcheck` and the revbump check.
+- R02: full overlay QA with `pkgcheck` (the minimal revbump check is R04, on the critical path).
 - R03: an empty dynamic allowlist.
 - M01: tree bumps, the first one off rc1's tree.
 - M02: rebuilding the builder from a stage3.
@@ -142,10 +156,14 @@ These nodes are in the `later` track:
   the SBOM diff against rc1 then shows.
 - **Unverified:** whether gentoo-mirror commit signatures can be checked against a published Gentoo key
   (I02).
-- **Unverified:** how `--rebuild-if-unbuilt` behaves with a cross `ROOT` (B01). Releases build from
-  source, so a wrong answer only affects development ISOs.
+- **Unverified:** how `--rebuild-if-unbuilt` behaves with a cross `ROOT` (B01). Releases do not use the
+  cache, so a wrong answer only affects development ISOs.
 - **The CVE gate** may block a 2026-08 tree on fixable criticals (OD-15).
 - **The adopted builder image** is pinned by digest but not yet reproduced. M02 rebuilds it.
-- **Reproducibility:** the predecessor never compared two builds, so the first known-differences list may
-  be long. MS2 requires it to be complete, not empty.
+- **Reproducibility is a hard gate and the largest unknown.** MS2 needs equal ISO digests. A listed
+  difference does not count. See the open row in the calendar.
+- **Offline `-Z build-std`** (R05) is unverified. If it cannot work with the pinned nightly, the owner
+  chooses among R05's options. The offline requirement stays.
+- **`--emptytree` in the crossdev sysroot** (B01) is unverified. A package that cannot be rebuilt that
+  way is fixed or declared with its toolchain owner; it is never silently reused.
 - **The calendar is a guess.** The measured numbers are the build and boot timings above.
