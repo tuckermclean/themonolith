@@ -585,6 +585,8 @@ jobs:
           name: ${{ needs.fetch-iso.outputs.artifact }}
           path: output/iso
 
+      # Deliberately NO fixture server here: a correct 1996 clock must never
+      # trigger a network call in the first place (see run_clock_1996).
       - name: Boot test — clock landmine, direction (b) RTC in the disc's native era
         env:
           EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}

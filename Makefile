@@ -37,7 +37,7 @@ OVMF_CODE ?= $(firstword \
 
 BOOT_MODES := bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist
 BOOT_UNKNOWN := $(filter-out $(BOOT_MODES),$(MODE) $(MODES))
-$(if $(BOOT_UNKNOWN),$(error unknown boot mode(s): $(BOOT_UNKNOWN); valid: $(BOOT_MODES)))
+$(if $(and $(BOOT_UNKNOWN),$(filter test test-boot,$(MAKECMDGOALS))),$(error unknown boot mode(s): $(BOOT_UNKNOWN); valid: $(BOOT_MODES)))
 BOOT_WANT := $(filter $(if $(MODE),$(MODE),$(BOOT_MODES)),$(if $(MODES),$(MODES),$(BOOT_MODES)))
 
 define nl
