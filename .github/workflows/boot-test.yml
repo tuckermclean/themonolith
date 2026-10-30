@@ -1,0 +1,635 @@
+name: Boot Test
+
+# Reusable workflow: boots an ISO in QEMU (TCG, -cpu 486) in 17 modes and proves each reaches a working
+# shell: BIOS (ISOLINUX), UEFI (GRUB + OVMF), the `toram` path (+ CD-eject survival), module-regime
+# variants, NIC and VGA models, the two-node NAT test, the clock landmine and persist continuity.
+#
+# The ISO comes either from an Actions artifact of the calling run (`iso-artifact`, a single file named
+# boot-test.iso) or from a URL checked against a sha256 (`iso-url`, `iso-sha256`). Every mode job runs
+# `make test-boot MODE=<mode>`, which runs scripts/boot-test.py in the pinned toolbox.
+
+on:
+  workflow_call:
+    inputs:
+      iso-artifact:
+        description: "Name of an Actions artifact of this run holding the ISO as boot-test.iso (alternative to iso-url)"
+        required: false
+        type: string
+        default: ""
+      iso-url:
+        description: "URL of the ISO to test (used when iso-artifact is empty)"
+        required: false
+        type: string
+        default: ""
+      iso-sha256:
+        description: "sha256 the ISO fetched from iso-url must match"
+        required: false
+        type: string
+        default: ""
+      kernel-version:
+        description: "Expected `uname -r` string; computed from the repository's kernel config when empty"
+        required: false
+        type: string
+        default: ""
+      modes:
+        description: "Space-separated modes to run (default: all 17); other mode jobs do nothing"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  # Fetch and verify a URL ISO once, then hand it to the mode jobs as an artifact. In artifact mode
+  # it only reports the artifact name.
+  fetch-iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.name.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - id: name
+        env:
+          ISO_ARTIFACT: ${{ inputs.iso-artifact }}
+          ISO_URL: ${{ inputs.iso-url }}
+        run: make iso-artifact-name
+
+      - name: Fetch the ISO and check its sha256
+        if: inputs.iso-artifact == ''
+        env:
+          ISO_URL: ${{ inputs.iso-url }}
+          ISO_SHA256: ${{ inputs.iso-sha256 }}
+        run: make fetch-iso ISO_OUT=output/iso/boot-test.iso
+
+      - name: Upload the ISO
+        if: inputs.iso-artifact == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: output/iso/boot-test.iso
+          retention-days: 1
+          if-no-files-found: error
+
+  # The expected `uname -r`: the kernel-version input, else the kernel's own version plus
+  # actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0NFIG_LOCALVERSION (CONFIG_LOCALVERSION_AUTO is off, so no git suffix). Empty fails: an empty
+  # --kernel-version would make the version check pass trivially.
+  expected-kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - id: compute
+        env:
+          KERNEL_VERSION: ${{ inputs.kernel-version }}
+        run: |
+          toolbox/run -e KERNEL_VERSION -- sh -c 'KVER=$KERNEL_VERSION; if [ -z "$KVER" ]; then V=$(grep "^sys-kernel/monolith-kernel:" configs/portage/versions.lock | cut -d: -f2 | sed -E "s/-r[0-9]+\$//"); L=$(grep "^CONFIG_LOCALVERSION=" configs/portage/savedconfig/sys-kernel/monolith-kernel | cut -d\" -f2); test -n "$V" && test -n "$L" && KVER=$V$L; fi; test -n "$KVER" || { echo "::error::no expected kernel version: pass kernel-version"; exit 1; }; echo "version=$KVER" >> "$GITHUB_OUTPUT"; echo "==> Expected uname -r: $KVER"'
+
+  bios:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ram_mb: [64, 256]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — BIOS (ISOLINUX), ${{ matrix.ram_mb }}M RAM
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+          RAM_MB: ${{ matrix.ram_mb }}
+        run: make test-boot MODE=bios ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-bios-${{ matrix.ram_mb }}m-${{ github.run_id }}
+          path: |
+            output/boot-test-bios-${{ matrix.ram_mb }}m.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  uefi:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — UEFI (GRUB + OVMF)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=uefi ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-uefi-${{ github.run_id }}
+          path: |
+            output/boot-test-uefi.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # toram is exercised via BIOS/ISOLINUX only: GRUB's (toram) menuentry has no console=ttyS0, so it isn't
+  # reachable over serial. See the module docstring in scripts/boot-test.py.
+  toram-eject:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — toram + CD eject survival
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=toram ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-toram-eject-${{ github.run_id }}
+          path: |
+            output/boot-test-toram.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Module-regime variants: each boots the isohybrid ISO from a different emulated storage controller and
+  # asserts the matching kernel module was coldplug-loaded from the initrd before the squashfs was mounted.
+  ahci:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — AHCI/SATA (q35 + ich9-ahci, UEFI)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=ahci ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-ahci-${{ github.run_id }}
+          path: |
+            output/boot-test-ahci.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  nvme:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — NVMe (UEFI)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=nvme ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-nvme-${{ github.run_id }}
+          path: |
+            output/boot-test-nvme.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  usb:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — USB mass storage (xHCI, UEFI)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=usb ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-usb-${{ github.run_id }}
+          path: |
+            output/boot-test-usb.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  virtio:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — virtio-blk (UEFI)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=virtio ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-virtio-${{ github.run_id }}
+          path: |
+            output/boot-test-virtio.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Negative control: no NIC hardware at all (-nic none), proving coldplug does NOT load e1000 when there's
+  # nothing to match.
+  nicless:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — nicless (negative control, BIOS/ISOLINUX)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=nicless ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-nicless-${{ github.run_id }}
+          path: |
+            output/boot-test-nicless.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Boots BIOS/ISOLINUX, starts the TinyX Xfbdev server against /dev/fb0 and proves it painted its default
+  # root + cursor via a QEMU HMP screendump asserted to be non-black. See run_gui in scripts/boot-test.py.
+  gui:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — GUI (Xfbdev on vesafb, BIOS/ISOLINUX)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=gui ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-gui-${{ github.run_id }}
+          path: |
+            output/boot-test-gui.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload framebuffer screendump
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-gui-screendump-${{ github.run_id }}
+          path: output/gui-screendump.ppm
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Stele renders its own Acid2 conformance page to the framebuffer, screendumped and asserted non-black.
+  # See run_stele_acid2 in scripts/boot-test.py.
+  stele-acid2:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — Stele renders Acid2 to the framebuffer
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=stele-acid2 ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-stele-acid2-${{ github.run_id }}
+          path: |
+            output/boot-test-stele-acid2.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload Acid2 screendump
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-stele-acid2-screendump-${{ github.run_id }}
+          path: output/stele-acid2-screendump.ppm
+          retention-days: 14
+          if-no-files-found: warn
+
+  # NIC-model matrix: BIOS/ISOLINUX boot with each QEMU NIC model in turn. PCI models assert coldplug via
+  # modalias; ne2k_isa has no modalias, so it asserts the `monolith-net probe` path instead. See the
+  # NIC_MODEL_MODULE comment in scripts/boot-test.py.
+  nic-models:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — NIC models (sequential, five models)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=nic ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-nic-models-${{ github.run_id }}
+          path: |
+            output/boot-test-nic-*.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # VGA-model matrix: BIOS/ISOLINUX boot with a real PCI graphics device attached, asserting the legacy fbdev
+  # Tier-2 driver coldplugs. See VGA_MODEL_MODULE / run_vga in scripts/boot-test.py.
+  vga-models:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — VGA models (sequential, cirrus)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=vga ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-vga-models-${{ github.run_id }}
+          path: |
+            output/boot-test-vga-*.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Hand-modprobe a representative subset of the legacy fbdev Tier-2 modules on a plain -vga std boot and assert
+  # the kernel comes out untainted with no new Oops/BUG:/WARNING: in dmesg. See run_fbdev_modprobe in
+  # scripts/boot-test.py.
+  fbdev-modprobe:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — hand-load legacy fbdev modules (tdfxfb, sm712fb, matroxfb_base, s3fb, lxfb)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=fbdev-modprobe ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-fbdev-modprobe-${{ github.run_id }}
+          path: |
+            output/boot-test-fbdev-modprobe.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Two-node NAT boot test: a router guest (eth0=WAN/user, eth1=LAN/socket) and a client guest on the same LAN
+  # segment. The client curls a host http.server THROUGH the router's masquerade, then a negative control tears
+  # NAT down and confirms the reach dies. make test-boot starts that http.server in the toolbox container next to
+  # QEMU, so the guest's 10.0.2.2 reaches it. See run_nat in scripts/boot-test.py.
+  nat-router:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — two-node NAT (router + client; the target starts the host http.server the client curls through NAT)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=nat ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-nat-router-${{ github.run_id }}
+          path: |
+            output/boot-test-nat.log*
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # THE CLOCK LANDMINE, both directions. clock-epoch seeds the RTC at the epoch with `-nic none` and asserts the
+  # boot hook raises the ignorance flag and leaves the clock at 1970; no server is involved. See
+  # run_clock_epoch/run_clock_1996 in scripts/boot-test.py.
+  clock-epoch:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — clock landmine, direction (a) RTC at epoch, no NIC
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=clock-epoch ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-clock-epoch-${{ github.run_id }}
+          path: |
+            output/boot-test-clock-epoch.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  clock-1996:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — clock landmine, direction (b) RTC in the disc's native era
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=clock-1996 ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-clock-1996-${{ github.run_id }}
+          path: |
+            output/boot-test-clock-1996.log
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Boots BIOS/ISOLINUX with a second host-formatted MONOLITH_PERSIST disk, then kills QEMU uncleanly and
+  # relaunches against the same disk to prove the incremental history append hit disk. See run_persist in
+  # scripts/boot-test.py.
+  persist:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — persist continuity (two boots, same MONOLITH_PERSIST disk)
+        env:
+          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=persist ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boot-test-persist-${{ github.run_id }}
+          path: |
+            output/boot-test-persist.log*
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn

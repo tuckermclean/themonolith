@@ -1,0 +1,41 @@
+name: Boot Test rc1
+
+# The rc1 lane: the 17 boot modes on the v0.1.0-rc1 release ISO, fetched by URL and checked by sha256, before
+# this repository builds anything. workflow_dispatch runs only for a workflow on the default branch, so a
+# pull_request trigger on the oracle's own files runs it on the PR that changes them. A dispatch with a
+# wrong iso-sha256 must fail the fetch-iso job before any mode runs.
+on:
+  workflow_dispatch:
+    inputs:
+      iso-sha256:
+        description: "sha256 the ISO must match"
+        required: true
+        type: string
+        default: a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
+  pull_request:
+    paths:
+      - scripts/boot-test.py
+      - .github/workflows/boot-test.yml
+      - .github/workflows/boot-test-rc1.yml
+
+permissions:
+  contents: read
+
+jobs:
+  # The right digest, on the pull request.
+  boot-test:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/boot-test.yml
+    with:
+      iso-url: https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
+      iso-sha256: a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
+      kernel-version: 6.12.80-i486-monolith
+
+  # The digest of the dispatch, right or wrong.
+  boot-test-dispatch:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/boot-test.yml
+    with:
+      iso-url: https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
+      iso-sha256: ${{ inputs.iso-sha256 }}
+      kernel-version: 6.12.80-i486-monolith
