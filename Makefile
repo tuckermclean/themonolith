@@ -117,28 +117,28 @@ run-uefi:
 
 # ---- O02: artifact checks ----
 
-OUTPUT_DIR ?= output
-ROOTFS_DIR ?= $(OUTPUT_DIR)/rootfs
-ALLOWLIST ?= configs/attestation/dynamic-allowlist.txt
-RC1_EXPECTED ?= configs/attestation/rc1-static-audit.expected
+ARTIFACT_OUT := output
+ARTIFACT_ROOTFS := $(ARTIFACT_OUT)/rootfs
+ARTIFACT_ALLOWLIST := configs/attestation/dynamic-allowlist.txt
+ARTIFACT_EXPECTED := configs/attestation/rc1-static-audit.expected
 
-# Extracts /rootfs.squashfs of ISO into ROOTFS_DIR (xorriso, then unsquashfs without xattrs; both run unprivileged in the toolbox).
+# Extracts /rootfs.squashfs of ISO into ARTIFACT_ROOTFS (xorriso, then unsquashfs without xattrs; both run unprivileged in the toolbox).
 rootfs: $(if $(filter $(ISO),$(DEFAULT_ISO)),fetch-iso)
-	toolbox/run --network none -- sh -c 'set -eu; rm -rf "$(ROOTFS_DIR)" "$(OUTPUT_DIR)/rootfs.squashfs"; mkdir -p "$(OUTPUT_DIR)"; xorriso -osirrox on -indev "$(ISO)" -extract /rootfs.squashfs "$(OUTPUT_DIR)/rootfs.squashfs"; unsquashfs -no-xattrs -d "$(ROOTFS_DIR)" "$(OUTPUT_DIR)/rootfs.squashfs" > /dev/null'
+	toolbox/run --network none -- sh -c 'set -eu; rm -rf "$(ARTIFACT_ROOTFS)" "$(ARTIFACT_OUT)/rootfs.squashfs"; mkdir -p "$(ARTIFACT_OUT)"; xorriso -osirrox on -indev "$(ISO)" -extract /rootfs.squashfs "$(ARTIFACT_OUT)/rootfs.squashfs"; unsquashfs -no-xattrs -d "$(ARTIFACT_ROOTFS)" "$(ARTIFACT_OUT)/rootfs.squashfs" > /dev/null'
 
 # Audits the rootfs of ISO for dynamic binaries, foreign machines, plugins, Python and the freetype chain. For rc1's ISO
-# (its sha256, computed here, is RC1_SHA256) the findings without the allowlist must equal RC1_EXPECTED; for any other ISO the
+# (its sha256, computed here, is RC1_SHA256) the findings without the allowlist must equal ARTIFACT_EXPECTED; for any other ISO the
 # audit is --strict with the allowlist.
 test-artifact: rootfs
-	mkdir -p $(OUTPUT_DIR)
-	@sha256sum '$(ISO)' | cut -d' ' -f1 > $(OUTPUT_DIR)/artifact-iso.sha256
-	@if [ "$$(cat $(OUTPUT_DIR)/artifact-iso.sha256)" = '$(RC1_SHA256)' ]; then \
-		echo "==> rc1 ISO: findings must equal $(RC1_EXPECTED)"; \
-		toolbox/run --network none -- env OUTPUT_DIR=$(OUTPUT_DIR) bash scripts/static-audit.sh --no-allowlist '$(ROOTFS_DIR)' || exit 1; \
-		grep '^FINDING' $(OUTPUT_DIR)/reports/static-audit.txt | LC_ALL=C sort > $(OUTPUT_DIR)/artifact-findings.txt; \
-		sed 's/[[:space:]]*#.*//' '$(RC1_EXPECTED)' | grep -v '^[[:space:]]*$$' | LC_ALL=C sort > $(OUTPUT_DIR)/artifact-expected.txt; \
-		diff -u $(OUTPUT_DIR)/artifact-expected.txt $(OUTPUT_DIR)/artifact-findings.txt || { echo "test-artifact: findings differ from $(RC1_EXPECTED)"; exit 1; }; \
+	mkdir -p $(ARTIFACT_OUT)
+	@sha256sum '$(ISO)' | cut -d' ' -f1 > $(ARTIFACT_OUT)/artifact-iso.sha256
+	@if [ "$$(cat $(ARTIFACT_OUT)/artifact-iso.sha256)" = '$(RC1_SHA256)' ]; then \
+		echo "==> rc1 ISO: findings must equal $(ARTIFACT_EXPECTED)"; \
+		toolbox/run --network none -- env OUTPUT_DIR=$(ARTIFACT_OUT) bash scripts/static-audit.sh --no-allowlist '$(ARTIFACT_ROOTFS)' || exit 1; \
+		grep '^FINDING' $(ARTIFACT_OUT)/reports/static-audit.txt | LC_ALL=C sort > $(ARTIFACT_OUT)/artifact-findings.txt; \
+		sed 's/[[:space:]]*#.*//' '$(ARTIFACT_EXPECTED)' | grep -v '^[[:space:]]*$$' | LC_ALL=C sort > $(ARTIFACT_OUT)/artifact-expected.txt; \
+		diff -u $(ARTIFACT_OUT)/artifact-expected.txt $(ARTIFACT_OUT)/artifact-findings.txt || { echo "test-artifact: findings differ from $(ARTIFACT_EXPECTED)"; exit 1; }; \
 		echo "test-artifact: PASS (rc1 findings match)"; \
 	else \
-		toolbox/run --network none -- env OUTPUT_DIR=$(OUTPUT_DIR) bash scripts/static-audit.sh --strict --allowlist '$(ALLOWLIST)' '$(ROOTFS_DIR)'; \
+		toolbox/run --network none -- env OUTPUT_DIR=$(ARTIFACT_OUT) bash scripts/static-audit.sh --strict --allowlist '$(ARTIFACT_ALLOWLIST)' '$(ARTIFACT_ROOTFS)'; \
 	fi

@@ -28,7 +28,8 @@
 #
 # Allowlist (configs/attestation/dynamic-allowlist.txt by default): one
 # rootfs-relative path per line followed by "# <issue> <reason>". An entry
-# that matches no dynamic ELF file is stale and fails.
+# that names neither an ELF file with PT_INTERP nor an ELF file named *.so or
+# *.so.* outside lib/modules/ is stale and fails.
 #
 # Usage:
 #   static-audit.sh [--strict] [--allowlist FILE | --no-allowlist]
@@ -186,7 +187,10 @@ while IFS='|' read -r mach interp textrel file; do
     case "$textrel" in *TEXTREL*) printf 'INFO textrel %s\n' "$rel" >> "$REPORT_FILE" ;; esac
     case "$rel" in
         lib/modules/*|"$LOADER") : ;;
-        *.so|*.so.*) [ "$allowed" -eq 0 ] && finding plugin "$rel" ;;
+        *.so|*.so.*)
+            [ "$allowed" -eq 0 ] && finding plugin "$rel"
+            [ "$allowed" -eq 1 ] && printf '%s\n' "$rel" >> "$DYNAMIC"
+            ;;
     esac
 done < "$SCAN"
 
@@ -207,29 +211,34 @@ else
 fi
 
 # --- path-based doctrines ----------------------------------------------------
-# run_find <args...>: print the rootfs-relative matches, one per line
+# run_find <out> <args...>: write the rootfs-relative matches to <out>. It runs in the main shell
+# (not in a process substitution) so that a failed find is counted as an error.
 run_find() {
-    local out="$WORK/find.out"
-    if ! (cd "$TARGET_DIR" && find . \( "$@" \) -print > "$out"); then
+    local out="$1" raw="$WORK/find.raw"
+    shift
+    if ! (cd "$TARGET_DIR" && find . \( "$@" \) -print > "$raw"); then
         problem "find failed under ${TARGET_DIR}"
+        : > "$out"
         return
     fi
-    sed 's|^\./||' "$out"
+    sed 's|^\./||' "$raw" > "$out" || problem "sed failed reading find output"
 }
 
-while IFS= read -r p; do
-    [ -n "$p" ] && finding python "$p"
-done < <(run_find \( -name '*.py' -o -name '*.pyc' \) -o \
+run_find "$WORK/python.txt" \( -name '*.py' -o -name '*.pyc' \) -o \
     \( \( -path './bin/*' -o -path './sbin/*' -o -path './lib/*' -o -path './usr/bin/*' \
           -o -path './usr/sbin/*' -o -path './usr/lib/*' \) \
-       \( -name python -o -name 'python[0-9]*' \) \))
-
+       \( -name python -o -name 'python[0-9]*' \) \)
 while IFS= read -r p; do
-    [ -n "$p" ] && finding font "$p"
-done < <(run_find \( -name '*libfreetype*' -o -name '*libfontconfig*' -o -name '*libXft*' \) -o \
+    [ -n "$p" ] && finding python "$p"
+done < "$WORK/python.txt"
+
+run_find "$WORK/font.txt" \( -name '*libfreetype*' -o -name '*libfontconfig*' -o -name '*libXft*' \) -o \
     \( -path './etc/fonts' -o -path './usr/share/fontconfig' \) -o \
     \( -path './var/db/pkg/*/freetype-*' -o -path './var/db/pkg/*/fontconfig-*' \
-       -o -path './var/db/pkg/*/libXft-*' \))
+       -o -path './var/db/pkg/*/libXft-*' \)
+while IFS= read -r p; do
+    [ -n "$p" ] && finding font "$p"
+done < "$WORK/font.txt"
 
 # --- report ------------------------------------------------------------------
 {
