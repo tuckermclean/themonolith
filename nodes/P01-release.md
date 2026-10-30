@@ -2,14 +2,14 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | P02, R05 | M01, P03, X01 | MS2 | L |
+| critical | P02, R05, G01, R02 | M01, P03, X01 | MS2 | L |
 
 **Owns:** `.github/workflows/release.yml`, the `attestation` job of `build.yml`'s tag path (after P02's gate), `scripts/rc1-diff.sh`, `scripts/size-report.sh`, `docs/rc1-diff-reasons.tsv`, `docs/releasing.md`, `scripts/tests/release-*.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/release.yml` (278 lines), `docs/releasing.md`. Removed: `scripts/generate-provenance.py` and its call in `scripts/attestation.sh`.
 **Study refs:** `configs/portage/world` at b9f533b (99 atoms); T-attest-entry-workflow, T-prerelease-never-latest, D-supply-chain-honesty, D-tag-builds-from-source; Principle 7; OD-4, OD-10.
 
 ## Purpose
-This node makes the first official release; nothing before it is called a release. After it, a tag whose ISO has passed P02's reproducibility gate, all 17 boot modes, the artifact checks and the gates, and that ships all 99 of the predecessor's world packages (`rl144` and `stele` included, R05), is attested by the platform, has its inputs archived and becomes a GitHub prerelease with reports attached. Nothing runs here for a tag that failed any of those. This completes MS2.
+This node makes the first official release; nothing before it is called a release. After it, a tag whose ISO has passed P02's reproducibility gate, all 17 boot modes and G01's persistence, boot-entry and smoke modes, the overlay QA scan (R02), the artifact checks and the gates, and that ships all 99 of the predecessor's world packages (`rl144` and `stele` included, R05), is attested by the platform, has its inputs archived and becomes a GitHub prerelease with reports attached. Nothing runs here for a tag that failed any of those. This completes MS2.
 
 ## Standard mechanism
 - Provenance: `actions/attest-build-provenance` with the ISO as subject, and `actions/attest-sbom` for the CycloneDX SBOM. `gh attestation verify` checks them. Benefit over the ported `generate-provenance.py` plus `actions/attest@v2` (`build.yml:768-778`): the platform writes the predicate, not our 291-line script.
@@ -51,6 +51,7 @@ Carried unchanged: `build.yml` as the entry workflow of a tag run (the signing c
 - **P01-AC-9** — A `-rcN` tag creates a prerelease that is not Latest. The workflow `permissions:` match change 10. *Verify:* `gh release view v0.2.0-rc1 --json isPrerelease`; `scripts/tests/release-workflow.test.sh`. *Tier:* fast + slow.
 - **P01-AC-10** — The release assets carry the SBOM, ISO, `SHA256SUMS`, `release-inputs.json`, `source-audit.tsv`, `rootfs-provenance.tsv` and three reports. *Verify:* the `v0.2.0-rc1` run log and `gh release view --json assets`. *Tier:* slow.
 - **P01-AC-11** — The package-set step fails when one of the 99 b9f533b world atoms is missing from `world`, from the rootfs VDB or from the `built-this-run` rows of `source-audit.tsv`, and passes on `v0.2.0-rc1` with all 99, `games-roguelike/rl144` and `www-client/stele` among them. *Verify:* `scripts/tests/release-package-set.test.sh` (fixture world and audit with one atom removed); the `v0.2.0-rc1` run log. *Tier:* fast + slow.
+- **P01-AC-12** — The tag run's boot tests include G01's `persist-init`, every `entry` leg and `smoke`, and the attestation, release and `oras push` steps `need` them; `make overlay-qa` (R02) passes on the tagged commit before any of those steps. A red `smoke` row on a test tag publishes nothing. *Verify:* `scripts/tests/release-workflow.test.sh` (`needs:`); the `v0.2.0-rc1` tag run. *Tier:* fast + slow.
 
 Measured on the predecessor: attestation job about 4.7 minutes. The from-source builds are P02's.
 

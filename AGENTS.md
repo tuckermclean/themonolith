@@ -12,7 +12,9 @@ recipes and credential handling.
 - `nodes/<ID>-<name>.md`: one spec per node, in the SPEC §9 template.
 - `docs/first-release.md`: the plan, owner actions and measured timings.
 - The port source is `tuckermclean/linux-live-iso-factory` at `b9f533b`. Cite it as `path:line` at that
-  commit. `docs/capabilities.md` says which node ports or builds each capability.
+  commit. `docs/capabilities.md` says which node ports or builds each capability; `docs/migration.tsv`
+  lists every predecessor file with its blob, node, disposition and destination
+  (`scripts/check-migration.py` checks it).
 - `toolbox/` is the test image, `toolbox/run` and the workflow runner `toolbox/ci`; `.claude/` holds the
   `/node` skill, the role agents and the guard hook.
 - Nothing builds yet. `make test` arrives with F01; each node then ports the code its tests need.
@@ -27,12 +29,13 @@ recipes and credential handling.
   b9f533b740b1db7bf5658d2805603d84e9b1f185`, then `git show b9f533b:<path>`. The fetch creates no branch
   or tag; never merge it.
 - `toolbox/run -- toolbox-selfcheck` checks that every tool is present at its pinned version.
-- `toolbox/ci run <workflow> [<job>...]` runs a workflow's jobs locally, as CI runs them. `--event`,
-  `--input k=v` and `--matrix k=v` set the trigger, inputs and one matrix combination. The report marks
-  each step `ok`, `FAIL`, `skip` or `ci-only`. `toolbox/ci lint` checks the parity rules (SPEC §7).
-- `toolbox/ci run pr-validate` is the whole PR check, once F01 has added it. Run it before pushing.
-- `toolbox/run -- sh scripts/tests/<name>.test.sh` runs one fast test; `toolbox/run -- make test` runs the
-  fast tier once F01 has added the Makefile.
+- Make is the build interface. `toolbox/run --network none -- make test` is the whole PR check once F01
+  has added the Makefile (`pr-validate.yml` runs exactly this); run it before pushing.
+  `toolbox/run -- sh scripts/tests/<name>.test.sh` runs one fast test.
+- `toolbox/ci lint` checks the workflow rules (SPEC §7). `toolbox/ci run <workflow> [<job>...]` runs a
+  workflow's `run:` steps in this checkout as a convenience (`--event`, `--input k=v`, `--matrix k=v`).
+  It does not model separate runners or artifact and cache transfers: jobs share one checkout here, so
+  anything that moves files between jobs is verified in CI.
 - Boot a mode: `toolbox/run -- python3 scripts/boot-test.py --iso <iso> --mode bios --kernel-version
   <version>`. Read the version from the ISO with `xorriso -osirrox on -indev <iso> -extract /boot/vmlinuz
   /tmp/vmlinuz` and `file /tmp/vmlinuz`.
@@ -57,8 +60,9 @@ recipes and credential handling.
   `toolbox/run` passes `--cgroup-manager=cgroupfs` in that case; do the same for direct podman calls.
   With cgroupfs, podman also leaves an empty `oom` file in the directory it starts from; `toolbox/run`
   starts it from a state directory. Never commit an `oom` file.
-- **QEMU runs in software, here and in CI.** `boot-test.py` uses `-cpu 486`, which only emulation
-  enforces, so `toolbox/run` passes no `/dev/kvm`. Boots take about a minute and the first in-guest check
+- **QEMU runs in software, here and in CI.** `boot-test.py` uses `-cpu 486`, which means something only
+  under emulation (and even then is not a full post-486 instruction check), so `toolbox/run` passes no
+  `/dev/kvm`. Boots take about a minute and the first in-guest check
   can hit its 30 s timeout. Re-run before suspecting the disc.
 - **A step timeout must stop the container.** `toolbox/run` starts containers with `--init`, so SIGTERM
   reaches the command; without it a timed-out step leaves its container running.
@@ -76,9 +80,13 @@ recipes and credential handling.
   establishes RED, then ports only the code those tests need (SPEC §2.2). Predecessor recipes,
   scripts and tests carry over unchanged unless a node spec lists the change.
 - Use Portage and standard tools. Custom code only where SPEC §5 names a gap.
-- CI parity (SPEC §7): a workflow that can trigger passes `toolbox/ci lint`. Each `run:` command is
+- Make is the interface (SPEC §7): operations are Make targets backed by `scripts/`, and workflows only
+  call them. A workflow that can trigger passes `toolbox/ci lint`: each `run:` command is
   `toolbox/run -- <cmd>` or a builder `make` target, values reach `run:` through `env:`, and tools come
   from the toolbox, never `apt-get` or `setup-*`. Put logic in `scripts/`, not YAML.
+- Provenance lives in `docs/migration.tsv` and Git history, not in source files: no "ported from"
+  comments. A porting commit names the predecessor paths it lands; `scripts/check-migration.py` checks
+  the ledger.
 - MS1, a working ISO for iteration, comes first. Do not add work to its path; SPEC §10 lists the concerns
   tracked outside it.
 

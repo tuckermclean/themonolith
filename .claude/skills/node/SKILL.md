@@ -25,7 +25,7 @@ Write `out/node/<ID>/brief.md`. Until F01 adds `out/` to `.gitignore`, add it to
 - for each criterion, the numbered "Changes from the port" item that produces it, as a pointer;
 - the node spec's **Tests** section: the predecessor tests to port first, their listed adjustments, the tests to add and the baseline expectation;
 - a coverage map: each criterion → the ported test that covers it, or "new test", or "slow";
-- the node's rows in `docs/capabilities.md` and the predecessor files it ports or touches, as `path:line` at `b9f533b` (read them with `git show b9f533b:<path>` after the fetch in `AGENTS.md`), and the `AGENTS.md` traps and doctrines that apply;
+- the node's rows in `docs/capabilities.md` and `docs/migration.tsv`, and the predecessor files it ports or touches, as `path:line` at `b9f533b` (read them with `git show b9f533b:<path>` after the fetch in `AGENTS.md`), and the `AGENTS.md` traps and doctrines that apply;
 - the red-target command form: `toolbox/run -- sh scripts/tests/<name>.test.sh`.
 
 Split a large node into **slices** of 3–8 related criteria. Order them so earlier slices build what later tests need.
@@ -48,10 +48,11 @@ The tester ports the predecessor's tests first, then adds tests for the criteria
 ## 3. GREEN
 Dispatch a **new** `monolith-implementer` with the brief path, the RED SHA, the red target and the failing tests. Check its handoff:
 - the red target passes at head;
-- `toolbox/ci run pr-validate` passes: the PR check exactly as CI runs it (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
+- `toolbox/run --network none -- make test` passes: the PR check, which `pr-validate.yml` runs exactly (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
 - if the slice touched a workflow, `toolbox/ci lint` passes;
+- on the node's last slice, `scripts/check-migration.py --node <ID>` passes: every predecessor file the ledger gives this node is at its destination, and an unchanged port has its `b9f533b` blob. A needed change to a ledger row is a spec change (step 7);
 - `git diff <red>..HEAD -- scripts/tests scripts/fixtures` modifies or deletes no RED test, ported or new;
-- every ported implementation file is the `b9f533b` blob plus the node's numbered changes (`git diff b9f533b:<path> HEAD:<path>`), and the commit that ports it names each source as `path:line` at `b9f533b`.
+- every ported implementation file is the `b9f533b` blob plus the node's numbered changes (`git diff b9f533b:<path> HEAD:<path>`), and the commit that ports it names each predecessor path it lands; no source file gains a provenance comment.
 
 Retries are bounded: **at most 4 implementer attempts per slice.** Attempts 1–3 use the agent's model. Attempt 4 uses the Agent tool's `model: "opus"` override and gets every earlier finding and failed diff SHA. After that, go to step 7.
 
@@ -60,11 +61,11 @@ Dispatch a **new** `monolith-reviewer` with the brief path, the base, RED and he
 
 ## 5. Slow tier
 For each slow criterion, in this order of preference:
-1. **Locally, by running the CI job itself** when it is in a parity workflow: `toolbox/ci run <workflow> <job> [--matrix k=v]`. This is the preferred evidence: the same definition CI runs. Otherwise in the toolbox directly when it needs only an ISO and QEMU, or the predecessor's tools: boot modes (`toolbox/run -- python3 scripts/boot-test.py --iso … --mode … --kernel-version …`), artifact checks, rc1 lanes. Keep the log under `out/node/<ID>/`.
+1. **Locally, through the Make targets the CI job calls**, in the toolbox, when it needs only an ISO and QEMU, or the predecessor's tools: boot modes (`toolbox/run -- python3 scripts/boot-test.py --iso … --mode … --kernel-version …`), artifact checks, rc1 lanes. Keep the log under `out/node/<ID>/`.
 2. **Locally in the builder image** with podman when it needs Portage: package builds and the SBOM gates. Pull the builder by digest (`BUILDER_DIGEST`).
-3. **In CI**, when it needs GitHub itself: GHCR pushes, attestations, tag pipelines, `workflow_dispatch` runs. Push, run, and record the run URL.
+3. **In CI**, when it needs GitHub itself: GHCR pushes, attestations, tag pipelines, `workflow_dispatch` runs, and anything that moves files between jobs (artifacts, caches), which local runs do not model (SPEC §7). Push, run, and record the run URL.
 
-Record each command, exit code and log path or run URL. A slow criterion without a recorded run is not met. When a criterion ran both locally and in CI, record both; a step that passes in one and fails in the other is a parity bug, so stop and report it (step 7).
+Record each command, exit code and log path or run URL. A slow criterion without a recorded run is not met. When a criterion ran both locally and in CI, record both; a Make target that passes in one and fails in the other is a parity bug, so stop and report it (step 7).
 
 ## 6. Pull request
 Push with `git push -u origin HEAD`. A push that changes `.github/workflows/*` needs a token with the `workflow` scope, and the default `gh` token lacks it. Use a token the owner provides, transiently (the credential rules in `AGENTS.md`), or ask the owner to push the branch.

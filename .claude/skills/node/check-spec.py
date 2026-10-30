@@ -4,7 +4,7 @@
 
 Checks: deps and decisions resolve, no cycles, `track: critical` is exactly P01 and its ancestors,
 every node has a spec with the SPEC §9 headings, numbered criteria each with *Verify* and *Tier*,
-known doctrine/trap ids and OD ids. --write regenerates each spec's header row from the graph.
+known doctrine/trap ids and OD ids, and docs/migration.tsv (scripts/check-migration.py). --write regenerates each spec's header row from the graph.
 """
 import os
 import re
@@ -115,5 +115,11 @@ for nid, n in N.items():
         problems += 1
     total += len(acs)
 print(f"{len(N)} nodes, {len(crit)} critical, {total} acceptance criteria")
+mig = subprocess.run([sys.executable, "-I", f"{ROOT}/scripts/check-migration.py"], capture_output=True, text=True)
+for line in mig.stdout.splitlines():
+    if not line.startswith("PROBLEMS"):
+        print(line)
+if mig.returncode:
+    problems += 1
 print("PROBLEMS", problems)
 sys.exit(1 if problems else 0)

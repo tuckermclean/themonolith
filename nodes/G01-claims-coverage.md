@@ -2,14 +2,14 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| later | O01, B03 | X01 | — | L |
+| critical | O01, B03 | P01, X01 | — | L |
 
 **Owns:** four new modes in `scripts/boot-test.py` (`persist-init`, `entry`, `serial-net`, `smoke`) and their jobs in `.github/workflows/boot-test.yml`, `scripts/smoke-checks.txt`, `docs/evidence/hyperv-<date>.md` (if OD-7 says evidence), README edits, `scripts/tests/readme-claims.test.sh`, `scripts/tests/smoke-coverage.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** the predecessor `README.md`'s promises, each with the test that proves it; a promise with no test is not ported. It extends `scripts/boot-test.py` using the ported `run_check`, `wait_for_shell`, `select_isolinux_label` and GRUB navigation (`:732-782`), and the ported `build_persist_cmd` for the disk handling.
 **Study refs:** oracle.yaml gaps (ISOLINUX labels and GRUB entries never selected; Hyper-V; SLIP/PPP/dropbear; persistence only on a host-formatted disk); doctrine T-hyperv-old-grub, T-isolinux-timeout, T-grub-initrd-same-line; SPEC §1 (a README promise that no test proves is a gap); OD-7.
 
 ## Purpose
-After this node every promise the README makes is either tested in a boot mode or removed from the README. The predecessor tested four label choices, the GRUB `(serial)` entry, history survival on a host-formatted disk, and nothing about Hyper-V, SLIP, PPP, dropbear or most packages.
+After this node every promise the README makes is either tested in a boot mode or removed from the README. Its persistence, boot-entry and package smoke modes are part of the first-release gate (P01-AC-12), so no release ships an untested core promise. The predecessor tested four label choices, the GRUB `(serial)` entry, history survival on a host-formatted disk, and nothing about Hyper-V, SLIP, PPP, dropbear or most packages.
 
 ## Standard mechanism
 Existing QEMU options (`-drive`, `-serial`, `-chardev`) and the ported harness; no new framework. `sfdisk` on the runner makes the test disk's partition table. In the guest, the tools the README names are used as written. Custom code: only mode functions in `boot-test.py` and one text table, `smoke-checks.txt`. Gap: no tool tests a live ISO against its README. No manifest schema, evaluator or lint library: a plain table read by one shell loop in the guest is enough.
@@ -35,14 +35,15 @@ Claims, with README line numbers at b9f533b, and what happens to each.
 
 Other changes:
 1. The README "Testing" section (`README.md:327-345`) lists the modes that exist, after this node. Proved by AC-7.
-2. New modes run first on the rc1 ISO. A failure is a product bug (fix in a recipe with a revbump, R02) or a wrong claim (remove it); each failing row is recorded with the decision.
+2. **Serial networking does not hold the release.** If `serial-net` is not reliable in time, the SLIP, PPP and dropbear sentences leave the README and SPEC §10 tracks them as future work; AC-4 and AC-5 are then met by their removal.
+3. New modes run first on the rc1 ISO. A failure is a product bug (fix in a recipe with a revbump, R02) or a wrong claim (remove it); each failing row is recorded with the decision.
 
 ## Gate
 - **G01-AC-1** — `persist-init` passes: init on a blank partition, `/overlay` is ext4 on `/dev/vda1`, a marker written in boot 2 is present after an unclean kill and a third boot, `swapon /overlay/swapfile` succeeds, and boot 3 without the disk shows the fallback warning. *Verify:* CI leg `persist-init`. *Tier:* slow.
 - **G01-AC-2** — Each ISOLINUX label and each GRUB entry has a green `entry` leg that boots to a shell with the expected `/proc/cmdline`. *Verify:* CI matrix `entry`. *Tier:* slow.
 - **G01-AC-3** — The README contains no Hyper-V sentence without a dated file under `docs/evidence/`, and no sentence claiming Hyper-V Gen 1 targeting; the `HYPERV` symbols are present in the savedconfig. *Verify:* `bash scripts/tests/readme-claims.test.sh`. *Tier:* fast.
-- **G01-AC-4** — `serial-net` brings up SLIP and PPP (through `chat`) and passes a `ping` over each; a `chat` expecting a string that never arrives fails. *Verify:* CI leg `serial-net`. *Tier:* slow.
-- **G01-AC-5** — Dropbear starts on request, a host `ssh -i` login runs `id`, and the README names the host key type the guest actually has. *Verify:* CI leg `serial-net`; `readme-claims.test.sh` for the text. *Tier:* slow.
+- **G01-AC-4** — `serial-net` brings up SLIP and PPP (through `chat`) and passes a `ping` over each, and a `chat` expecting a string that never arrives fails; or the README makes no SLIP or PPP claim and SPEC §10 tracks it (change 2). *Verify:* CI leg `serial-net`, or `readme-claims.test.sh`. *Tier:* slow.
+- **G01-AC-5** — Dropbear starts on request, a host `ssh -i` login runs `id`, and the README names the host key type the guest actually has; or the README makes no dropbear claim and SPEC §10 tracks it (change 2). *Verify:* CI leg `serial-net`; `readme-claims.test.sh` for the text. *Tier:* slow.
 - **G01-AC-6** — Every world atom has a row in `smoke-checks.txt`, and the `smoke` mode passes with every non-`n/a` row matching. *Verify:* `bash scripts/tests/smoke-coverage.test.sh` (atoms versus rows), CI leg `smoke`. *Tier:* fast and slow.
 - **G01-AC-7** — Every mode named in the README exists in `boot-test.py`'s mode list, and the README does not mention PPPoE. *Verify:* `bash scripts/tests/readme-claims.test.sh`. *Tier:* fast.
 

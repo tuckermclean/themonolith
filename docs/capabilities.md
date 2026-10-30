@@ -14,6 +14,11 @@ digest, nothing reading `configs/kernel.config`) also holds for files a later no
 - **replace**: a standard mechanism takes the place of predecessor code.
 - **drop**: not ported. The code stays readable in the predecessor at `b9f533b`.
 
+This is the capability view. `docs/migration.tsv` is the file view: every one of the 201 predecessor
+files with its blob, node, disposition and destination, checked by `scripts/check-migration.py` (the
+rows rebuild the predecessor's tree hash, and an unchanged port keeps its blob). Provenance lives
+there and in Git history, not in comments in source files.
+
 The **Source** column cites the predecessor at `b9f533b`. A capability has one porting node. Later
 nodes may change it, listed under **Then**. A predecessor test named under **Source** is ported
 first, before the code it tests, with only the harness and path adjustments the porting node lists.
@@ -23,7 +28,7 @@ first, before the code it tests, with only the harness and path adjustments the 
 | Capability | Source | Node | Mode | Then |
 |---|---|---|---|---|
 | Fast lane: `bash -n`, `py_compile`, YAML check, actionlint, shellcheck, run `scripts/tests/*` | `pr-validate.yml:23-69` | F01 | port | each node adds its tests |
-| `make test` as the fast tier, run by `pr-validate.yml` in the parity form | — | F01 | build | |
+| `make test` as the fast tier and the whole PR check, the only step of `pr-validate.yml` | — | F01 | build | |
 | Action SHA pinning, Dependabot, CODEOWNERS | — | F01 | build | |
 | Agent knowledge base: doctrines, traps, recipes, credential handling | `AGENTS.md`, `CLAUDE.md` | F01 | port | I01 (S3 prose) |
 | `.gitignore` | `.gitignore` | F01 | port+fix (`out/`) | |
@@ -31,7 +36,7 @@ first, before the code it tests, with only the harness and path adjustments the 
 | README: what the disc is and how to use it | `README.md` | G01 | port (each promise with its test) | X01 ("Verify a release") |
 | No storage vendor anywhere: repo-wide no-AWS check, the one `REGISTRY` variable | — | I01 | build | every porting node strips S3 as it ports |
 | Revision bump on overlay change | — | R04 | build | R02 |
-| `pkgcheck` over the overlay | — | R02 | build | |
+| `pkgcheck` over the overlay, `make overlay-qa`, before the first release | — | R02 | build | |
 | Workflow-push credential handling (PAT) | `AGENTS.md` | F01 | port | |
 | Predecessor agent git helper | `scripts/agent-git-env.sh` | — | drop | `.claude/` replaces it |
 
@@ -112,7 +117,7 @@ first, before the code it tests, with only the harness and path adjustments the 
 | Licence gate | `check-licenses.py`, `license-policy.yaml` | S01 | port | |
 | CVE gate with expiring waivers; canary | `check-cves.sh`, `cve-policy.yaml`, `run-cve-canary.sh`, `canary-sbom.cdx.json`, `cve-gate-canary.yml`, `make grype-db-update`, `docs/cve-gate.md` | S01 | port+fix | |
 | Unowned-file gate | `check-unowned.py`, `unowned-allowlist.yaml` | S01 | port+fix | B01 |
-| README promises tested or removed | README | G01 | build | |
+| README promises tested or removed; persistence, boot-entry and smoke modes in the release gate | README | G01 | build | P01 |
 
 ## Release and after
 
@@ -129,6 +134,6 @@ first, before the code it tests, with only the harness and path adjustments the 
 
 | What | Source | Why |
 |---|---|---|
-| Dashboard and in-browser boot demo | `web/` (11 files), `boot.html`, `generate-dashboard.py`, `make dashboard` | Out of scope (SPEC §0) |
+| Dashboard and in-browser boot demo | `web/` (13 files), `boot.html`, `generate-dashboard.py`, `make dashboard` | Out of scope (SPEC §0); not maintained or restored here, and the predecessor keeps the code |
 | Storage retention | `s3-gc.sh`, `ghcr-gc.sh`, their tests, `gc.yml`, `make restore-cache` | Nothing is deleted automatically (SPEC §6); S3 is gone |
 | Planning history and a stale readiness report | `docs/superpowers/` (18 files), `RELEASE-READINESS.md` | Not code; readable in the predecessor |

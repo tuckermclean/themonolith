@@ -3,7 +3,8 @@
 Version 0.5, draft of 2026-10-29. This document is the authority for the repository. Where a node spec (`nodes/<id>.md`) and this
 document disagree, this document wins and the node spec is a defect. The dependency graph is
 `docs/graph.yaml`, the capability ledger (where each capability lives, and whether it is ported or
-built) is `docs/capabilities.md`, and the plan to the first release is `docs/first-release.md`. The study of the
+built) is `docs/capabilities.md`, the migration ledger (every predecessor file with its blob,
+destination, node and disposition) is `docs/migration.tsv`, and the plan to the first release is `docs/first-release.md`. The study of the
 predecessor in `docs/study/` is evidence, not authority.
 
 ---
@@ -31,7 +32,9 @@ storage vendor disabled the account; AWS S3 was hard-wired into five jobs. The r
 - S3 is replaced by the GitHub-native storage the predecessor already half used.
 - The bugs the study verified are fixed as named criteria.
 - `docs/capabilities.md` records, for every capability, the node that owns it and whether it is ported,
-  fixed, built, replaced or dropped.
+  fixed, built, replaced or dropped. `docs/migration.tsv` does the same for every one of the 201
+  predecessor files, and `scripts/check-migration.py` proves it complete: its rows rebuild the
+  predecessor's tree hash at `b9f533b`, and an unchanged port must keep its blob.
 
 These predecessor assets survive and are reused by digest:
 
@@ -97,7 +100,7 @@ facts decide three things:
 
 | Constraint | Meaning | Checked by |
 |---|---|---|
-| i486 | Every target binary runs on an i486. Boot tests run QEMU with `-cpu 486`. | O01 (ported), O02 (`EM_386`, no `EM_X86_64`) |
+| i486 | Every target binary is built for i486 (`-march=i486`, `EM_386`), and the disc boots under QEMU `-cpu 486`. Neither proves that no post-486 instruction ships; that check is future work (§10). | O01 (ported), O02 (`EM_386`, no `EM_X86_64`) |
 | Static musl | Every rootfs binary is statically linked against musl, and no dynamic loader ships on the disc. rc1 violates this (§3, D-all-static). The list of violations may only shrink, and it is empty before the first non-prerelease. | O02, R03 |
 | Modest memory | The BIOS boot reaches a shell at 64 MB of RAM, the predecessor's floor. | O01 (ported `ram_mb: [64, 256]`) |
 | Hardware compatibility | The predecessor's 17 boot modes pass, including the NIC, VGA and legacy fbdev matrices. MS1 iteration ISOs run the other 16; `stele-acid2` needs Stele (R05). All 17 pass before the first release. | O01 |
@@ -106,7 +109,7 @@ facts decide three things:
 | CD-sized budget | The ISO fits on a 74-minute CD-R (681,984,000 bytes) now, and within the share the owner sets later (OD-10). | P01 (report and gate) |
 
 The oracle (§7) defines what the product does. A README promise that no test proves is a gap (G01)
-until it is tested or the promise is removed.
+until it is tested or the promise is removed, and G01 closes the gaps before the first release.
 
 ---
 
@@ -239,7 +242,7 @@ The predecessor's layout is kept, so ported scripts keep their paths.
 | `Dockerfile` | The builder image definition | I03, M02 |
 | `.github/workflows/` | Ported CI | F01, O01, S01, B03, P02, P01, M01, M02, P03 |
 | `docs/` | Ported predecessor docs, each with its node (`kernel-tiers.md` B02, `cve-gate.md` S01, `version-pinning.md` M01, `releasing.md` P01), plus this spec's graph, capability ledger, plan, reviews and study | as listed |
-| `SPEC.md`, `nodes/`, `docs/capabilities.md` | Specification, node specs and the capability ledger | owner |
+| `SPEC.md`, `nodes/`, `docs/capabilities.md`, `docs/migration.tsv`, `scripts/check-migration.py` | Specification, node specs, the capability and migration ledgers and the ledger check | owner |
 | `AGENTS.md`, `CLAUDE.md` | `AGENTS.md` opens with this repository's working notes (layout, constraints, spec editing, what not to touch, Git conventions), followed by the predecessor's traps-and-recipes knowledge base (F01). `CLAUDE.md` points agents to it. | owner, F01 |
 | `README.md`, `LICENSE` | This repository's README; the predecessor's promises arrive with the tests that prove them (G01). `LICENSE` is the predecessor's, byte for byte. | owner, G01, X01 |
 | `toolbox/` | The test toolbox image; `toolbox/run`, which runs any test tier locally; `toolbox/ci`, which runs and lints the workflows | owner |
@@ -377,6 +380,10 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
   - the 17 boot modes inherited from the predecessor (`stele-acid2` from R05 on): bios (at 64 and
     256 MB), uefi, toram, ahci, nvme, usb, virtio, nicless, nic, vga, fbdev-modprobe, nat, gui,
     stele-acid2, clock-epoch, clock-1996 and persist;
+  - G01's modes, part of the first-release gate: `persist-init` (persistence on a blank disk), an
+    `entry` leg per ISOLINUX label and GRUB entry, and `smoke` (one check per world package);
+  - `make overlay-qa`: `pkgcheck` over the overlay against the pinned tree (R02), on every PR and the
+    tagged commit;
   - the artifact doctrine checks (O02);
   - the SBOM and the licence, CVE and unowned gates (S01).
 - **rc1 lane.**
@@ -401,25 +408,33 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
   shellcheck, actionlint, oras, squashfs-tools, xorriso, scanelf), with the checkout mounted. Package
   builds and the SBOM gates run in the builder image, pulled by digest. CI runs the same commands, and
   only what needs GitHub itself (registry pushes, attestation, tag pipelines) is CI-only.
-- **CI parity.** A workflow file is the one definition of its jobs, and `toolbox/ci run <workflow> [<job>]`
-  runs it locally with the same shells, `env:`, step outputs, `if:` conditions, `needs` order, matrix
-  and timeouts. To make that hold, every workflow that can trigger (any trigger but `workflow_dispatch`,
-  and what those call) passes `toolbox/ci lint`, which `pr-validate.yml` runs:
+- **Make is the build interface.** Every operation is a Make target, backed by a script in `scripts/`
+  where it needs logic. A workflow is thin: triggers, the job layout, moving files between jobs, and
+  steps that call Make targets. CI parity means a developer runs the same Make targets in the same
+  toolbox or builder image; `make test` is the whole PR check, and `pr-validate.yml` runs exactly it.
+  Every workflow that can trigger (any trigger but `workflow_dispatch`, and what those call) passes
+  `toolbox/ci lint`, which `make test` runs:
   - each command in a `run:` step is `toolbox/run -- <cmd>`, or `make <target>` for a target that runs
-    the builder image; logic lives in `scripts/`, not in YAML;
+    the builder image, and the command is a Make target or one script; logic lives in `scripts/`, not
+    in YAML;
   - no `${{ }}` inside `run:` (values come through `env:`), and expressions elsewhere are plain context
     paths; `if:` uses status functions and `==`/`!=` comparisons;
   - GitHub-hosted ubuntu runners, no job containers or services, no `apt-get`, `pip` or `setup-*`
     actions: the toolbox carries every tool;
-  - `uses:` only from the short list `toolbox/ci` knows. Checkout and artifact or cache transfer are
-    local no-ops, since jobs share the checkout; attestation, registry logins and anything reading a
-    secret are reported as CI-only and skipped.
-  - QEMU runs under TCG in both places. `-cpu 486` is enforced only by emulation, so `toolbox/run` passes
-    no `/dev/kvm`.
+  - `uses:` only from the short list `toolbox/ci` knows.
+- **What local runs do not show.** `toolbox/ci run <workflow> [<job>]` runs a workflow's `run:` steps
+  in one local checkout, as a convenience; it is not an Actions emulator and does not grow into one.
+  Locally every job shares that checkout, so a file an earlier job wrote is present even where CI would
+  never transfer it, and checkout, artifact and cache steps do nothing. Separate runners, artifact and
+  cache transfer, and the CI-only steps (attestation, registry logins, anything reading a secret) are
+  shown only by a CI run. A criterion that depends on files moving between jobs is verified in CI.
+  The host around the container also differs (runner kernel, CPU speed, docker or podman for the
+  builder image); a test that depends on speed carries a timeout with margin for the slower of the two.
+- **QEMU runs under TCG in both places,** so `toolbox/run` passes no `/dev/kvm`. `-cpu 486` limits the
+  guest to what QEMU models for a 486; it is not a complete check that no post-486 instruction ships
+  (§10).
 
-  A node that re-enables or changes a workflow brings it into this form. What still differs is the host
-  around the container (runner kernel, CPU speed, docker or podman for the builder image) and the
-  CI-only steps; a test that depends on speed carries a timeout with margin for the slower of the two.
+  A node that re-enables or changes a workflow brings it into this form.
 - **Harness interfaces.** Serial milestones, the ISOLINUX `serial` label and the GRUB entry `(serial)`
   are interfaces between the harness and the disc. Changing one means changing both.
 
@@ -429,7 +444,7 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
 
 - **Owner review.**
   - CODEOWNERS routes these paths to the owner: `.github/**`, `SPEC.md`, `docs/graph.yaml`,
-    `configs/attestation/`, `Dockerfile` and the release scripts.
+    `docs/migration.tsv`, `configs/attestation/`, `Dockerfile` and the release scripts.
   - Branch protection requires the fast tier and owner review.
 - **Merging.** Humans merge. Bots open PRs; they never merge, approve or use `--admin`. The
   predecessor's `pin-bump.yml` used `--admin`, and M01 removes it.
@@ -517,11 +532,12 @@ These are owner decisions. A node that names one does not start until it is sett
 | OD-10 | The distribution's share of the CD, once content projects claim space. | The whole 74-minute CD-R (681,984,000 bytes) until set |
 
 **Tracked, outside MS1.** These stay open on purpose. None is a gate for MS1, and none adds a node.
+The two hardware rows are future work after the first release, not part of this migration.
 
 | Concern | Checked today | Where it is tracked |
 |---|---|---|
-| i486 instruction set | `-march=i486` (§1), QEMU `-cpu 486` boots (O01), `EM_386` (O02), I03's in-image link check. `EM_386` does not tell i486 code from i686 code, and a boot runs only the code it reaches. | G01 (the README's 486 claim); a scan for post-486 instructions is the candidate test. |
-| 8 MB of RAM | The aim (MYTH.md). The tested floor is 64 MB (§1). | After MS2. Making it a constraint is a §1 change plus an O01 `ram_mb` mode. |
+| i486 instruction set | `-march=i486` (§1), QEMU `-cpu 486` boots (O01), `EM_386` (O02), I03's in-image link check. `EM_386` does not tell i486 code from i686 code, and a boot runs only the code it reaches. | Future work: a scan of the rootfs for post-486 instructions is the candidate test. No node owns it yet. |
+| 8 MB of RAM | The aim (MYTH.md). The tested floor is 64 MB (§1). | Future work, after MS2. Making it a constraint is a §1 change plus an O01 `ram_mb` mode. |
 | Behavioural parity with rc1 | O01 runs the 17 modes on rc1 first; S01 reproduces rc1's SBOM; P01's `rc1-diff.md`. | G01 for README promises no mode tests. |
 | Toolchain reproducibility | The builder is trusted by digest (I03); both P02 builds use the same digest. | M02 rebuilds the image from pinned inputs. |
 
@@ -532,11 +548,13 @@ These are owner decisions. A node that names one does not start until it is sett
 - **Branches and PRs.** Use `node/<ID>-<name>` branches, one node per PR, squash-merged. The PR body has
   an AC → evidence table with CI run links.
 - **Porting.** The predecessor's history stays in the predecessor; nothing here has a predecessor
-  commit as a parent. A commit that ports predecessor code names each source as `path:line` at
-  `b9f533b` in its message, and the PR body lists them. A ported file is copied from
+  commit as a parent. Provenance lives in `docs/migration.tsv` and in Git history, never in comments
+  in source files. A commit that ports predecessor code names the predecessor paths it lands in its
+  message, and the PR body lists them. A ported file is copied from
   `git show b9f533b:<path>`, then changed only by the node's numbered changes, so `git diff` against
   that blob shows exactly the changes. A ported test differs from its blob only by the harness and
-  path adjustments its RED commit lists.
+  path adjustments its RED commit lists. When a node lands, `scripts/check-migration.py --node <ID>`
+  passes; changing a ledger row is a spec change.
 - **Tests first.** The RED commit (ported tests plus new tests) comes before the code, following the
   six steps of §2.2. Write the fast test first where one is possible. CI does not police commit order.
 - **Git.** Existing history and attribution are preserved; historical commits are not rewritten for

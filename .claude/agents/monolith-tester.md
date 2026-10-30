@@ -29,7 +29,7 @@ Preserve proven tests; add only what is missing (SPEC §2.2, steps 1–3).
 Run the red target yourself before committing:
 - it exits non-zero;
 - the harness runs to its end and reports every failure in its own `FAIL` lines. A missing implementation is a valid failure when it is reported that way: a test that runs a script that is not ported yet captures the error and reports the cases it checks as `FAIL`. Not valid: the harness itself crashing (a syntax error, an uncaught exception or traceback, a missing test tool), or a missing subject turned into a `SKIP`, an exit 0 or a pass. If a ported test does one of these, fix its harness and list the fix as an adjustment;
-- tests that passed before your change still pass (`toolbox/ci run pr-validate` once F01 has added it, otherwise every `scripts/tests/*.sh` under `toolbox/run`).
+- tests that passed before your change still pass (`toolbox/run --network none -- make test` once F01 has added it, otherwise every `scripts/tests/*.sh` under `toolbox/run`).
 
 If a new test already **passes**, the behaviour exists. Stop and report `already_satisfied` with the evidence. Do not weaken the test to make it fail.
 
