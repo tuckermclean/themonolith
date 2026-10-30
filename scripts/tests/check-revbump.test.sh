@@ -197,6 +197,25 @@ expect_pass "R04-AC-3 eclass name as a substring of an inherited one passes (rul
 newrepo; printf 'EAPI=8\n' >"$repo/$O/app-misc/foo/files/x-1.ebuild"; echo x >>"$repo/$O/app-misc/foo/foo-1.ebuild"; change
 expect_fail "R04-AC-1 an ebuild added under files/ is not a bump (ruling 4 item 7)" app-misc/foo
 
+# ---- inherit after ; and #, deep metadata path, non-ASCII path ----
+newrepo
+printf 'EAPI=8\nif [[ ${PV} == 9999 ]]; then inherit git-r3 myecl; fi\n' >"$repo/$O/app-misc/foo/foo-1.ebuild"
+printf 'EAPI=8\n[[ ${PV#9} ]] && inherit myecl\n' >"$repo/$O/app-misc/bar/bar-1.ebuild"
+snap inh3; retag
+echo '# changed' >>"$repo/$O/eclass/myecl.eclass"; change
+expect_fail "R04-AC-3 inherit after ';' is found" app-misc/foo
+expect_fail "R04-AC-3 inherit after '\${PV#9}' is found" app-misc/bar
+
+newrepo; mkdir -p "$repo/$O/metadata/md5-cache/app-misc"; echo cache >"$repo/$O/metadata/md5-cache/app-misc/foo-1"
+snap addcache; retag
+echo more >>"$repo/$O/metadata/md5-cache/app-misc/foo-1"; change
+expect_pass "R04-AC-2 deep metadata/md5-cache edit passes"
+case $out in *app-misc/foo*|*md5-cache*) fail "R04-AC-2 deep metadata/md5-cache edit is not reported ($out)" ;; *) pass "R04-AC-2 deep metadata/md5-cache edit is not reported" ;; esac
+
+newrepo; printf 'p\n' >"$repo/$O/app-misc/foo/files/café.patch"; change
+expect_fail "R04-AC-1 non-ASCII file name under files/ names app-misc/foo" app-misc/foo
+case $out in *'"configs/overlay'*|*'\303'*) fail "R04-AC-1 non-ASCII path is not reported quoted ($out)" ;; *) pass "R04-AC-1 non-ASCII path is not reported quoted" ;; esac
+
 # ---- R04-AC-4: make test-revbump on fixture commits, test includes it, workflow ----
 mk4() { # mk4: fixture repo with Makefile, toolbox and the script; base revision tagged "base"
 	n=$((n + 1)); repo=$tmp/m$n
