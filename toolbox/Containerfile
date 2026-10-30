@@ -32,7 +32,7 @@ RUN set -eu; \
       > /etc/apt/sources.list.d/snapshot.sources; \
     apt-get -o Acquire::Retries=5 update; \
     DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-      bash ca-certificates cpio curl diffutils dosfstools file git jq kmod make mtools ovmf \
+      bash ca-certificates cpio curl diffutils dosfstools e2fsprogs file git jq kmod make mtools ovmf \
       pax-utils python3 python3-pexpect python3-yaml qemu-system-x86 shellcheck squashfs-tools \
       xorriso zstd; \
     rm -rf /var/lib/apt/lists/*

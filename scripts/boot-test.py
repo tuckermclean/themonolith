@@ -1,0 +1,2530 @@
+#!/usr/bin/env python3
+"""
+boot-test.py — Automated QEMU boot verification for The Monolith live ISO.
+
+This is the thing `make test` never was: proof, captured in a CI log, that the
+ISO actually boots to a usable shell — not just that xorriso didn't crash.
+
+Modes
+-----
+  bios    Boot via ISOLINUX (qemu-system-i386, BIOS/SeaBIOS), serial console.
+  uefi    Boot via GRUB (qemu-system-x86_64 + OVMF), serial console.
+  toram   Boot via ISOLINUX with the `toram` kernel parameter, verify the
+          squashfs was copied into RAM, then eject the CD-ROM via the QEMU
+          monitor and confirm the system keeps running.
+
+Phase-2 Tier-1 module-regime variants — each boots the isohybrid ISO (it is
+a valid raw disk image, not just a CD image) from a DIFFERENT emulated
+storage controller via GRUB/UEFI, and asserts the matching kernel module
+was coldplug-loaded from the initrd before the squashfs was mounted:
+  ahci    SATA/AHCI (q35 + ich9-ahci), asserts `ahci` is loaded.
+  nvme    NVMe namespace, asserts `nvme` is loaded.
+  usb     USB mass storage on an xHCI controller, asserts `xhci_hcd` and
+          `usb_storage` are both loaded (the modular HCD chain + disk driver).
+  virtio  virtio-blk-pci, asserts `virtio_blk` is loaded.
+  nicless Negative control: BIOS/ISOLINUX boot with `-nic none` (no NIC
+          hardware at all), asserts `e1000` is NOT loaded — proving
+          coldplug loads modules for hardware that's present, not
+          unconditionally.
+
+THE CLOCK LANDMINE (Monolith UX Pass Task 2) — both directions of the
+/etc/init.d/S45monolith-time boot hook, via QEMU's `-rtc base=<date>`
+(--rtc-date; see build_clock_epoch_cmd/build_clock_1996_cmd):
+  clock-epoch RTC seeded at the Unix epoch (dead-RTC sentinel), `-nic none`,
+              no fixture server; asserts the automatic boot hook raises the
+              ignorance flag and leaves the clock at 1970 (detection only; the
+              correction path is covered by scripts/tests/monolith-time.test.sh).
+  clock-1996  RTC seeded inside the disc's own native era, no fixture
+              server; asserts the hook does NOT touch the clock, makes no
+              network call, and never sets the ignorance flag — a correct
+              1996 clock must never be "corrected" toward the CI host's
+              real present. This is the negative control that makes
+              clock-epoch's positive result mean something.
+
+PERSIST continuity (Monolith UX Pass Task 3) — proves a command typed
+before an UNCLEAN poweroff is still in /root/.bash_history after a fresh
+boot against the SAME MONOLITH_PERSIST disk (see build_persist_cmd /
+run_persist):
+  persist  Boots BIOS/ISOLINUX with a second, host-created raw disk
+           (ext4, labeled MONOLITH_PERSIST — see make_persist_disk)
+           attached as a virtio-blk-pci device, and the `persist` kernel
+           parameter. Types a distinctive `echo <marker>` command, then
+           kills QEMU with SIGKILL (no ACPI poweroff — a graceful
+           shutdown would flush history on its own via bash's normal
+           on-exit save and prove nothing about the incremental-append
+           fix in 20-persist.sh). Relaunches a FRESH QEMU process against
+           the same disk file and asserts the marker is in
+           /root/.bash_history — proving both that /overlay really is the
+           persistent partition (not tmpfs) and that history survived the
+           unclean poweroff.
+
+Ground truth this script is built against (re-check these if the boot
+sequence ever changes — this script has no other source of truth):
+  rootfs/init                 — initramfs init: mount sequence, log lines
+  scripts/build-rootfs.sh     — /etc/inittab, /etc/init.d/rcS, /etc/passwd etc.
+  scripts/build-iso.sh        — ISOLINUX + GRUB menu definitions
+
+Two important, non-obvious facts about this ISO that shape this script:
+
+1. There is no login prompt. /etc/inittab runs
+     agetty -n -l /usr/sbin/monolith-console ...
+   on every console (tty1, tty2, ttyS0) — `-n` skips the username/password
+   prompt entirely. "Passwordless root" here means "no authentication step
+   happens at all", not "empty password is accepted at a login: prompt". This
+   script never sends a username. monolith-console is a lazy shell: a tiny dash
+   that blocks on `read` and only becomes bash once the console is touched (so
+   idle consoles keep no bash resident — RAM matters on a 486). wait_for_shell()
+   below sends the waking newline before it expects a live shell.
+
+2. BusyBox is initramfs-only. The main squashfs rootfs installs iproute2 +
+   dhcpcd (see configs/portage/world, section "replaces BusyBox
+   udhcpc/ifconfig") and does NOT include app-shells/busybox. `udhcpc` is
+   therefore normally absent from the booted shell; DHCP already happened
+   automatically at boot via /etc/init.d/S40network (`dhcpcd -b eth0`). This
+   script probes for udhcpc and, if present, uses it; otherwise it falls back
+   to asserting the DHCP lease dhcpcd already obtained at boot. Both paths
+   prove the same thing: a live DHCP client got an address over QEMU
+   user-mode networking.
+
+Neither ISOLINUX nor GRUB defaults to a serial-visible boot entry:
+  - isolinux.cfg: `DEFAULT fb800` (framebuffer, invisible over -nographic).
+    We explicitly type the `serial` label (optionally with extra kernel
+    params, e.g. `serial toram`) at the `boot:` prompt within the 5s timeout.
+  - grub.cfg: `set default=0` (the plain entry, gfxterm-only, also
+    invisible over -nographic/serial). We send two Down-arrows + Enter to
+    select the "(serial)" entry (index 2) instead. GRUB has no `toram`-over-serial
+    entry at all (its `(toram)` menuentry doesn't set console=ttyS0), so
+    `toram` is only exercised via the BIOS/ISOLINUX path in this script,
+    where the boot prompt lets us combine `serial toram` in one line.
+
+This script cannot be exercised on the authoring machine (no qemu-system-*
+here). It is written to be correct against the code above and is meant to be
+proven out by CI logs, not by a local run.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import uuid
+
+try:
+    import pexpect
+except ImportError:
+    sys.stderr.write(
+        "boot-test.py requires pexpect (pip install pexpect). "
+        "In CI this is installed as a workflow step.\n"
+    )
+    sys.exit(2)
+
+
+# ---------------------------------------------------------------------------
+# Ground-truth anchors
+#
+# These strings are copied verbatim from rootfs/init and the /etc/inittab +
+# /etc/init.d/rcS heredocs in scripts/build-rootfs.sh. If the boot sequence
+# ever changes, update these to match — do not paraphrase, or the milestone
+# matching silently stops proving anything.
+# ---------------------------------------------------------------------------
+
+MILESTONE_INIT_START = "[init] Starting init..."
+MILESTONE_OVERLAY_READY = "[init] Overlay root ready"
+MILESTONE_TORAM_EJECTABLE = "[init] Boot media can now be ejected"
+MILESTONE_EXEC_INIT = "[init] Executing /sbin/init..."
+MILESTONE_RCS_START = "Starting system initialization..."
+MILESTONE_RCS_COMPLETE = "System initialization complete."
+
+ISOLINUX_PROMPT = "boot:"
+
+# GRUB menu order in scripts/build-iso.sh's GRUB_CFG heredoc (0-indexed):
+#   0 plain(default)  1 framebuffer  2 serial  3 debug  4 rescue  5 toram
+# We only ever need entry 2 ("(serial)"); toram is tested via ISOLINUX instead
+# (see module docstring) because the GRUB toram entry has no console=ttyS0.
+# default is entry 0, so reaching "(serial)" (entry 2) is two Down-arrows.
+GRUB_SERIAL_ENTRY_DOWN_PRESSES = 2
+
+DEFAULT_BOOT_TIMEOUT = 300  # generous: emulated i486 path is slow
+
+OVMF_CODE_CANDIDATES = [
+    "/usr/share/OVMF/OVMF_CODE.fd",
+    "/usr/share/OVMF/OVMF_CODE_4M.fd",
+    "/usr/share/edk2/ovmf/OVMF_CODE.fd",
+    "/usr/share/edk2-ovmf/OVMF_CODE.fd",
+]
+
+
+class BootTestError(Exception):
+    """Raised for any condition that should fail the CI job."""
+
+
+def log(msg):
+    print(f"[boot-test] {msg}", flush=True)
+
+
+def find_ovmf_code(explicit):
+    if explicit:
+        return explicit
+    for candidate in OVMF_CODE_CANDIDATES:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def require_binary(name):
+    path = shutil.which(name)
+    if not path:
+        raise BootTestError(
+            f"required binary '{name}' not found on PATH — install it before running boot-test.py"
+        )
+    return path
+
+
+# ---------------------------------------------------------------------------
+# QEMU command construction
+# ---------------------------------------------------------------------------
+
+def build_bios_cmd(args):
+    qemu = require_binary(args.qemu_i386)
+    cmd = [
+        qemu,
+        "-cdrom", args.iso,
+        "-m", str(args.ram_mb),
+        "-cpu", "486",
+        "-boot", "d",
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    # --rtc-date (default: unset -> QEMU uses the host clock, its own
+    # default). QEMU's `-rtc base=<date>` sets the guest RTC's INITIAL value
+    # at cold boot; the guest's own clock then runs forward from there, same
+    # as real hardware. Used by the clock-epoch/clock-1996 modes below to
+    # drive THE CLOCK LANDMINE test in both directions (see
+    # .superpowers/sdd/2026-08-19-monolith-ux-pass/task-2-brief.md).
+    if getattr(args, "rtc_date", None):
+        cmd += ["-rtc", f"base={args.rtc_date}"]
+    return cmd
+
+
+def build_uefi_cmd(args):
+    qemu = require_binary(args.qemu_x86_64)
+    ovmf = find_ovmf_code(args.ovmf_code)
+    if not ovmf:
+        raise BootTestError(
+            "OVMF firmware not found. Install ovmf/edk2-ovmf, or pass --ovmf-code /path/to/OVMF_CODE.fd. "
+            f"Checked: {', '.join(OVMF_CODE_CANDIDATES)}"
+        )
+    log(f"Using OVMF firmware: {ovmf}")
+    cmd = [
+        qemu,
+        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf}",
+        "-cdrom", args.iso,
+        "-m", str(args.ram_mb),
+        "-boot", "d",
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def _require_ovmf(args):
+    ovmf = find_ovmf_code(args.ovmf_code)
+    if not ovmf:
+        raise BootTestError(
+            "OVMF firmware not found. Install ovmf/edk2-ovmf, or pass --ovmf-code /path/to/OVMF_CODE.fd. "
+            f"Checked: {', '.join(OVMF_CODE_CANDIDATES)}"
+        )
+    log(f"Using OVMF firmware: {ovmf}")
+    return ovmf
+
+
+def build_ahci_cmd(args):
+    """
+    Boot the isohybrid ISO from an emulated AHCI/SATA controller instead of
+    the default -cdrom device: q35 + an explicit ich9-ahci controller, with
+    the ISO attached as an AHCI CD-ROM behind it. Proves CONFIG_SATA_AHCI=m
+    (ahci.ko) is coldplug-loaded from the initrd before the squashfs is
+    mounted, for hardware where drive discovery genuinely goes through the
+    AHCI driver rather than a legacy IDE emulation shortcut.
+    """
+    qemu = require_binary(args.qemu_x86_64)
+    ovmf = _require_ovmf(args)
+    cmd = [
+        qemu,
+        "-machine", "q35",
+        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf}",
+        "-device", "ich9-ahci,id=ahci",
+        "-drive", f"id=cd,if=none,media=cdrom,file={args.iso}",
+        "-device", "ide-cd,bus=ahci.0,drive=cd",
+        "-boot", "d",
+        "-m", str(args.ram_mb),
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_nvme_cmd(args):
+    """
+    Boot the isohybrid ISO as the backing file of an emulated NVMe namespace
+    (not a CD-ROM at all — the ISO's own MBR/GPT hybrid layout makes it a
+    valid raw disk image). Proves CONFIG_BLK_DEV_NVME=m (nvme.ko) is
+    coldplug-loaded from the initrd in time to find and mount the root
+    filesystem on NVMe-attached media.
+    """
+    qemu = require_binary(args.qemu_x86_64)
+    ovmf = _require_ovmf(args)
+    cmd = [
+        qemu,
+        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf}",
+        "-drive", f"id=nvm,if=none,format=raw,file={args.iso}",
+        "-device", "nvme,serial=cafe1234,drive=nvm",
+        "-boot", "c",
+        "-m", str(args.ram_mb),
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_usb_cmd(args):
+    """
+    Boot the isohybrid ISO as a USB mass-storage device behind an emulated
+    xHCI host controller. Proves TWO Tier-1 modules are coldplug-loaded in
+    the right order: xhci_hcd (the USB host controller itself) and
+    usb_storage (the USB Mass Storage Class driver on top of it) — either
+    one missing means no root filesystem to mount.
+    """
+    qemu = require_binary(args.qemu_x86_64)
+    ovmf = _require_ovmf(args)
+    cmd = [
+        qemu,
+        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf}",
+        "-device", "qemu-xhci,id=xhci",
+        "-drive", f"id=usbdisk,if=none,format=raw,file={args.iso}",
+        "-device", "usb-storage,bus=xhci.0,drive=usbdisk",
+        "-boot", "c",
+        "-m", str(args.ram_mb),
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_virtio_cmd(args):
+    """
+    Boot the isohybrid ISO as the backing image of a virtio-blk-pci device —
+    the paravirtualized block device most real-world cloud/VM deployments of
+    this ISO would actually use. Proves CONFIG_VIRTIO_BLK=m (virtio_blk.ko)
+    is coldplug-loaded from the initrd.
+    """
+    qemu = require_binary(args.qemu_x86_64)
+    ovmf = _require_ovmf(args)
+    cmd = [
+        qemu,
+        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf}",
+        "-drive", f"id=vblk,if=none,format=raw,file={args.iso}",
+        "-device", "virtio-blk-pci,drive=vblk",
+        "-boot", "c",
+        "-m", str(args.ram_mb),
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_nicless_cmd(args):
+    """
+    The negative control for the Tier-1 module regime: identical to
+    build_bios_cmd's device set, except `-nic none` removes the emulated
+    NIC entirely (QEMU's default `pc` machine would otherwise add an
+    e1000 automatically). With no NIC hardware present at all, the
+    initrd's modalias coldplug has nothing PCI-network-shaped to match —
+    so e1000.ko must NOT appear in `lsmod`. This is the other half of the
+    "refund is real" claim: modules load because hardware matched, not
+    unconditionally.
+    """
+    qemu = require_binary(args.qemu_i386)
+    cmd = [
+        qemu,
+        "-cdrom", args.iso,
+        "-m", str(args.ram_mb),
+        "-cpu", "486",
+        "-boot", "d",
+        "-nic", "none",
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_gui_cmd(args):
+    """
+    SP-GUI G1 Step 3: boot via BIOS/SeaBIOS (same i386/486 pc machine as
+    build_bios_cmd) so SeaBIOS's VBE BIOS is present and the kernel's
+    CONFIG_FB_VESA=y vesafb driver claims it, producing /dev/fb0 — the
+    UEFI/GRUB path uses efifb instead, which this kernel does not carry, so
+    this mode is BIOS-only.
+
+    The serial boot path is BYTE-IDENTICAL to build_bios_cmd — `-nographic
+    -serial mon:stdio` — for a reason: the ISO's isolinux.cfg has NO `SERIAL`
+    directive, so ISOLINUX's `boot:` prompt only reaches the serial console via
+    SeaBIOS's `-nographic` VGA-text-to-serial mirroring. Dropping `-nographic`
+    (e.g. for `-display none`) hides that prompt, ISOLINUX auto-boots its
+    default framebuffer label (no console=ttyS0), and pexpect sees nothing. So
+    we keep the proven `-nographic` path and take the screendump over a SEPARATE
+    QMP monitor socket (`-qmp unix:...`), which coexists fine with the HMP
+    monitor that `-nographic` muxes onto serial stdio — QMP is an independent
+    monitor channel, so it never touches the serial stream pexpect drives.
+    `-vga std` provides the VBE device; `-nographic` opens no host window but the
+    device's VRAM still holds the pixels Xfbdev paints, which QMP `screendump`
+    dumps to a host-side PPM. (efifb/UEFI is avoided: this kernel has FB_VESA=y,
+    not efifb, so /dev/fb0 needs the BIOS+vesafb path.)
+    """
+    qemu = require_binary(args.qemu_i386)
+    sock = args.gui_screendump + ".qmp.sock"
+    args.gui_monitor_sock = sock
+    sock_dir = os.path.dirname(sock) or "."
+    os.makedirs(sock_dir, exist_ok=True)
+    # A stale socket file left behind by a killed prior run makes QEMU's
+    # `server,nowait` bind fail with "Address already in use".
+    if os.path.exists(sock):
+        os.remove(sock)
+    cmd = [
+        qemu,
+        "-cdrom", args.iso,
+        "-m", str(args.ram_mb),
+        "-cpu", "486",
+        "-boot", "d",
+        "-vga", "std",
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-qmp", f"unix:{sock},server,nowait",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_nic_cmd(args):
+    # BIOS/ISOLINUX on the i440fx `pc` machine (has an ISA bus, needed for
+    # ne2k_isa). Legacy -net form replaces QEMU's default NIC with exactly one
+    # card of the requested model; works for pcnet/rtl8139/tulip/ne2k_pci/ne2k_isa.
+    if not args.nic_model:
+        raise BootTestError("--mode nic requires --nic-model")
+    cmd = build_bios_cmd(args)
+    cmd += ["-net", f"nic,model={args.nic_model}", "-net", "user"]
+    return cmd
+
+
+def build_vga_cmd(args):
+    """
+    BIOS/ISOLINUX on the i440fx `pc` machine, identical to build_bios_cmd
+    except for an explicit `-vga <model>` in place of QEMU's default VGA
+    device. To the legacy fbdev Tier-2 drivers (design doc
+    docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md) this is what
+    build_nic_cmd's `-net nic,model=...` is to the NIC-model matrix: a real
+    PCI device with a real modalias for the initrd's coldplug mechanism to
+    match against.
+    """
+    if not args.vga_model:
+        raise BootTestError("--mode vga requires --vga-model")
+    cmd = build_bios_cmd(args)
+    cmd += ["-vga", args.vga_model]
+    return cmd
+
+
+# THE CLOCK LANDMINE (Monolith UX Pass Task 2): boot with the guest RTC
+# seeded to a specific instant via QEMU's `-rtc base=<ISO date>` (documented
+# by QEMU as interpreted in UTC), then prove the automatic
+# /etc/init.d/S45monolith-time boot hook does the right, invariant-respecting
+# thing in both directions. See
+# .superpowers/sdd/2026-08-19-monolith-ux-pass/task-2-brief.md for the
+# INVARIANT this is built against: the trigger is demonstrated ignorance
+# (epoch / known RTC-reset dates), never date plausibility.
+# The dead-RTC / no-battery sentinel: the Unix epoch itself, the truest image
+# of a machine whose clock never started. (An earlier commit briefly moved this
+# to 2000-01-01 on a MISDIAGNOSIS — the clock-epoch job was hanging, but the
+# serial logs proved the hang was the fixture-URL boot label below, not the RTC:
+# SeaBIOS + ISOLINUX come up fine at 1970, then the boot stalls right after a
+# long `monolith_time_url=http://…` label is typed at the ISOLINUX prompt. With
+# that label removed, the epoch boots like any other date, so the origin myth
+# stays.)
+CLOCK_EPOCH_RTC = "1970-01-01T00:00:00"   # the dead-RTC / no-battery sentinel (the Unix epoch)
+CLOCK_1996_RTC = "1996-06-15T12:00:00"    # squarely inside the disc's own native era
+
+# Exit-0-safe reader for /overlay's filesystem type, used by the persist mode.
+# The Monolith's busybox has no awk applet, and a bare `while read` loop over
+# /proc/mounts exits non-zero (its last iteration's `[ $mnt != /overlay ]` test
+# fails), which run_check's validators treat as a command failure. Capturing
+# into a var and echoing a labelled token guarantees exit 0 and yields an
+# unambiguous "overlay_fstype=<fs>" line (empty if /overlay isn't mounted).
+OVERLAY_FSTYPE_CMD = (
+    '_fs=; while read -r _d _m _t _r; do [ "$_m" = /overlay ] && _fs=$_t; done '
+    '< /proc/mounts; echo "overlay_fstype=$_fs"'
+)
+
+# Host-side fixture HTTP server the guest reaches through QEMU's default
+# usermode networking gateway (10.0.2.2 -> the CI host; same address
+# build_nat_router_cmd's WAN link and run_nat's client curl already use).
+# Started by the CI job as a plain `python3 -m http.server` — mirrors
+# boot-test.yml's "Start host http.server" step in the nat-router job
+# verbatim, just a different port so the two jobs (which run on separate
+# runners anyway) never collide even if that changes.
+CLOCK_FIXTURE_PORT = 8000
+CLOCK_FIXTURE_URL = f"http://10.0.2.2:{CLOCK_FIXTURE_PORT}/probe.txt"
+
+
+def build_clock_epoch_cmd(args):
+    """
+    Direction (a): RTC at the Unix epoch. --rtc-date defaults to
+    CLOCK_EPOCH_RTC when the caller didn't already pass one explicitly, so
+    `--mode clock-epoch` is correct out of the box while still allowing an
+    override for local experimentation.
+
+    The NIC is removed (`-nic none`). CI's QEMU guest has no route to the real
+    internet (only the host at 10.0.2.2 is reachable, and DNS doesn't resolve),
+    and the natural way to point monolith-time at a host fixture — a
+    `monolith_time_url=http://…` kernel arg typed at the ISOLINUX prompt —
+    deterministically hangs that boot loader. So rather than test a network
+    *correction* we can't make reliable, we test the DETECTION half
+    hermetically: with no time source at all, monolith-time-check still judges
+    the epoch clock ignorant (sets its flag) and nothing silently stomps the
+    clock. The fetch-and-set mechanics are covered by monolith-time.test.sh.
+    """
+    if not args.rtc_date:
+        args.rtc_date = CLOCK_EPOCH_RTC
+    cmd = build_bios_cmd(args)
+    cmd += ["-nic", "none"]
+    return cmd
+
+
+def build_clock_1996_cmd(args):
+    """Direction (b): RTC seeded to a date inside the disc's own native era."""
+    if not args.rtc_date:
+        args.rtc_date = CLOCK_1996_RTC
+    return build_bios_cmd(args)
+
+
+def epoch_close_to(target_epoch, tolerance):
+    """
+    Validator: the guest's `date +%s` output must be an integer within
+    `tolerance` seconds of `target_epoch`. Used for the clock-epoch
+    direction, where "corrected" means "close to the CI host's real time
+    (as reported by the fixture server's Date header)", not an exact match.
+    """
+    def _v(exit_code, output):
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        m = re.search(r"(\d{9,})", output)
+        if not m:
+            return False, f"no epoch integer found in output: {output.strip()[-200:]}"
+        got = int(m.group(1))
+        delta = abs(got - target_epoch)
+        if delta > tolerance:
+            return False, (
+                f"guest epoch {got} is {delta}s away from expected ~{target_epoch} "
+                f"(tolerance {tolerance}s)"
+            )
+        return True, f"guest epoch {got}, delta {delta}s (tolerance {tolerance}s)"
+    return _v
+
+
+def run_clock_epoch(child, args):
+    """
+    THE CLOCK LANDMINE, direction (a): a dead-RTC machine is correctly JUDGED
+    ignorant. The automatic S45 monolith-time-check hook (running during rcS,
+    well before this function ever gets a shell) must see a clock sitting at the
+    epoch sentinel and raise the ignorance flag the login hint keys on — with
+    zero interaction from this test.
+
+    This deliberately tests DETECTION, not network correction. CI's QEMU guest
+    can't reach a real time source, and injecting a host-fixture URL hangs the
+    ISOLINUX prompt (see build_clock_epoch_cmd, which also removes the NIC so
+    the outcome is deterministic). So we boot the bare `serial` label the other
+    modes use and assert the hermetic, network-independent half: the epoch clock
+    is flagged ignorant, and — with nothing to correct from — is left untouched
+    at 1970 rather than silently stomped. This is the exact mirror of
+    run_clock_1996 (plausible clock -> NOT flagged, left at 1996); together they
+    prove monolith-time-check's sentinel discrimination. The fetch-and-set-clock
+    half is covered by scripts/tests/monolith-time.test.sh.
+    """
+    select_isolinux_label(child, "serial")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    results = []
+    results.append((
+        "dead clock detected as ignorant (S45 raised the flag)",
+        *run_check(child, "flag present", "test -e /run/monolith-clock-ignorant", exit_code_only()),
+    ))
+    results.append((
+        "epoch clock left untouched — no phantom correction without a time source",
+        *run_check(child, "date +%Y", "date +%Y", contains("1970")),
+    ))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_clock_1996(child, args):
+    """
+    THE CLOCK LANDMINE, direction (b) — the disc must pass CI in the year it
+    was built for. RTC seeded inside the disc's own native era, no fixture
+    server offered and no cmdline override: if S45monolith-time mistakenly
+    treated this as ignorance (a plausibility check in disguise) it would
+    either hang waiting on a network call that's never coming, or — since CI
+    runners DO have real internet — reach the genuine default URL and
+    stomp the clock to today's real date. Either failure mode is caught by
+    the assertions below: the year must come out exactly 1996 (proving no
+    stomp happened) and the ignorance flag must be absent (proving the
+    machine was never judged ignorant in the first place, so the login hint
+    stays silent).
+    """
+    select_isolinux_label(child, "serial")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    results = []
+    results.append((
+        "clock left exactly as the machine believed it (year 1996, untouched)",
+        *run_check(child, "date +%Y", "date +%Y", contains("1996")),
+    ))
+    results.append((
+        "no ignorance flag (a correct 1996 clock is never judged ignorant)",
+        *run_check(child, "flag absent", "test ! -e /run/monolith-clock-ignorant", exit_code_only()),
+    ))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+# Private LAN link between the router and client guests, carried as a
+# connectionless UDP datagram pair on loopback. TCP `listen`/`connect` socket
+# netdevs raced connection establishment between the two independently-spawned
+# QEMU processes and left the link dead (client ARP 100% loss, `ip neigh`
+# FAILED) on most runs. UDP has no handshake to lose: each guest binds its own
+# local port and sends frames to the other's — order-independent, and by the
+# time the test drives traffic both ends are bound, so datagrams flow.
+NAT_ROUTER_PORT = 12420  # router binds this; client sends its frames here
+NAT_CLIENT_PORT = 12421  # client binds this; router sends its frames here
+
+
+def build_nat_router_cmd(args):
+    # BIOS/pc guest with TWO NICs: WAN via user-net (SLIRP gateway 10.0.2.2 is
+    # the CI host), LAN via a socket segment the client connects to. -nic none
+    # suppresses QEMU's default NIC so exactly these two exist (eth0=WAN, eth1=LAN).
+    qemu = require_binary(args.qemu_i386)
+    return [
+        qemu, "-cdrom", args.iso, "-m", str(args.ram_mb), "-cpu", "486",
+        "-boot", "d", "-nographic", "-serial", "mon:stdio", "-no-reboot",
+        "-nic", "none",
+        "-netdev", "user,id=wan", "-device", "e1000,netdev=wan",
+        # LAN link: UDP datagram socket to the client (see the port constants).
+        "-netdev",
+        f"socket,id=lan,udp=127.0.0.1:{NAT_CLIENT_PORT},localaddr=127.0.0.1:{NAT_ROUTER_PORT}",
+        "-device", "e1000,netdev=lan",
+    ]
+
+
+def build_nat_client_cmd(args):
+    # Single NIC on the router's LAN socket segment. No WAN, no default NIC.
+    qemu = require_binary(args.qemu_i386)
+    return [
+        qemu, "-cdrom", args.iso, "-m", str(args.ram_mb), "-cpu", "486",
+        "-boot", "d", "-nographic", "-serial", "mon:stdio", "-no-reboot",
+        "-nic", "none",
+        # LAN link: UDP datagram socket to the router (mirror of the router's).
+        "-netdev",
+        f"socket,id=lan,udp=127.0.0.1:{NAT_ROUTER_PORT},localaddr=127.0.0.1:{NAT_CLIENT_PORT}",
+        "-device", "e1000,netdev=lan",
+    ]
+
+
+PERSIST_DISK_SIZE_MB = 64  # plenty for an ext4 superblock + a handful of history lines
+
+
+def make_persist_disk(path, size_mb=PERSIST_DISK_SIZE_MB):
+    """
+    Create (or overwrite) a raw disk image at `path`, ext4-formatted and
+    labeled MONOLITH_PERSIST — the same liturgy `monolith-persist init` runs
+    against a real block device (configs/overlay/app-misc/monolith-base/
+    files/monolith-persist), run here against a host-side file instead.
+    mkfs.ext4 works directly against a plain regular file (no loop device,
+    no root needed), which is why this lives in boot-test.py itself rather
+    than a CI workflow step — contrast the nat-router job's fixture HTTP
+    server, which genuinely needs a long-running background process the
+    workflow owns.
+    """
+    mkfs = require_binary("mkfs.ext4")
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "wb") as f:
+        f.truncate(size_mb * 1024 * 1024)
+    log(f"Formatting persist scratch disk: {path} ({size_mb}M, ext4, label MONOLITH_PERSIST)")
+    subprocess.run([mkfs, "-F", "-q", "-L", "MONOLITH_PERSIST", path], check=True)
+
+
+def _persist_qemu_argv(args):
+    """
+    The actual QEMU argv for persist mode: BIOS/ISOLINUX boot (like
+    build_bios_cmd) plus args.persist_disk attached as a SECOND drive on
+    virtio-blk-pci. Factored out of build_persist_cmd so run_persist() can
+    build the identical "reboot" command a second time WITHOUT re-running
+    make_persist_disk (which would reformat the disk and destroy the
+    history the second boot is supposed to find).
+    """
+    qemu = require_binary(args.qemu_i386)
+    return [
+        qemu,
+        "-cdrom", args.iso,
+        "-drive", f"id=persist,if=none,format=raw,file={args.persist_disk}",
+        "-device", "virtio-blk-pci,drive=persist",
+        "-m", str(args.ram_mb),
+        "-cpu", "486",
+        "-boot", "d",
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+
+
+def build_persist_cmd(args):
+    """
+    First-boot command for persist mode. Formats args.persist_disk fresh
+    (host-side — see make_persist_disk) then returns the same argv
+    _persist_qemu_argv builds. run_persist() calls _persist_qemu_argv
+    directly (not this function) for the second ("reboot") boot.
+    """
+    make_persist_disk(args.persist_disk)
+    return _persist_qemu_argv(args)
+
+
+# ---------------------------------------------------------------------------
+# Boot-loader navigation
+# ---------------------------------------------------------------------------
+
+def select_isolinux_label(child, label_line, prompt_timeout=90):
+    """
+    Wait for ISOLINUX's `boot:` prompt (visible over serial thanks to
+    SeaBIOS's -nographic VGA-text-to-serial mirroring, which covers the
+    firmware + ISOLINUX real-mode text stage) and type the label.
+
+    `label_line` may be "serial" or "serial toram" — SYSLINUX appends any
+    text after the label name to that label's own APPEND line, which is how
+    we exercise `toram` even though isolinux.cfg has no `toram` LABEL.
+    """
+    try:
+        child.expect_exact(ISOLINUX_PROMPT, timeout=prompt_timeout)
+        log(f"ISOLINUX prompt seen, sending label: {label_line!r}")
+    except pexpect.TIMEOUT:
+        log(
+            f"WARNING: did not see ISOLINUX '{ISOLINUX_PROMPT}' prompt within "
+            f"{prompt_timeout}s — sending label blindly as a fallback"
+        )
+    child.sendline(label_line)
+
+
+def select_grub_serial_entry(child):
+    """
+    grub.cfg now mirrors the menu to serial (`terminal_output gfxterm serial`
+    + `terminal_input console serial`), so instead of firing keystrokes blind
+    we WAIT for the menu to render, then navigate interactively — which is
+    reliable, unlike queuing bytes before GRUB opens the console.
+
+    Menu order (grub.cfg, 0-indexed): 0 plain (default, `set default=0`),
+    1 framebuffer, 2 serial, 3 debug, 4 rescue, 5 toram, 6 persistent.
+    From the default we step down GRUB_SERIAL_ENTRY_DOWN_PRESSES times to the
+    '(serial)' entry (which sets console=ttyS0) and boot it. The first key
+    also cancels GRUB's `set timeout=5` countdown.
+    """
+    down = "\x1b[B"
+    enter = "\r"
+    # Wait for the menu to be on-screen over serial before sending anything.
+    try:
+        child.expect_exact("(serial)", timeout=180)
+        log("  -> GRUB menu visible on serial; selecting the (serial) entry")
+    except (pexpect.TIMEOUT, pexpect.EOF):
+        log("  !! GRUB menu not observed on serial within 180s; navigating blind as fallback")
+    time.sleep(0.5)
+    child.send(down * GRUB_SERIAL_ENTRY_DOWN_PRESSES)
+    time.sleep(0.5)
+    child.send(enter)
+
+
+# ---------------------------------------------------------------------------
+# Milestone / shell interaction helpers
+# ---------------------------------------------------------------------------
+
+def expect_milestone(child, text, timeout, description=None):
+    desc = description or text
+    log(f"Waiting for milestone: {desc!r} (timeout {timeout}s)")
+    try:
+        child.expect_exact(text, timeout=timeout)
+    except pexpect.TIMEOUT:
+        raise BootTestError(
+            f"Timed out waiting for milestone {desc!r}. This is exactly the kind of "
+            f"failure a broken init script should produce — check the serial log."
+        )
+    except pexpect.EOF:
+        raise BootTestError(
+            f"QEMU exited before milestone {desc!r} was reached (unexpected EOF)."
+        )
+    log(f"  -> milestone reached: {desc!r}")
+    # Record the first real sign of life for the launch-flake discriminator in
+    # main(): reaching /init means SeaBIOS + kernel + initramfs all ran, so any
+    # later failure is a REAL boot/assertion failure, not a QEMU-startup flake.
+    # A failure BEFORE this ever fires (silent guest, no serial) is the flake
+    # pattern that a bounded relaunch legitimately papers over. `text` (not the
+    # cosmetic `desc`) is compared, so per-boot suffixes like " (boot 2)" still
+    # match the same underlying milestone string.
+    if text == MILESTONE_INIT_START:
+        child._reached_init = True
+
+
+def wait_for_shell(child, timeout=60):
+    """
+    Confirm an interactive shell is actually reading our input.
+
+    We do NOT try to match a PS1 prompt: PS1 content depends on Gentoo's
+    /etc/bash/bashrc.d chain (colors, hostname, the dark-grey square prepended
+    by 99-monolith-square.bash) and isn't worth hardcoding. Instead we
+    repeatedly send a unique echo and wait for its *executed* output: the
+    typed line carries `$((6*7))` and only a running shell prints `_42`, so
+    the tty's own echo of our input never matches. This also absorbs the
+    race where agetty flushes pending tty input right before it
+    hands off to bash, which would otherwise silently eat an early command.
+
+    The console runs the lazy /usr/sbin/monolith-console stub: a tiny dash that
+    blocks on `read` and only execs bash once a line arrives. The bare newline
+    below is that waking keypress; the stub consumes it (and, at worst, one echo
+    line) and becomes bash, after which the retry loop's echo comes back.
+    """
+    marker = f"MONOLITH_SHELL_READY_{uuid.uuid4().hex[:8]}"
+    # Wake the lazy console shell: this newline satisfies monolith-console's
+    # `read`, so it exec's bash before we start looking for our echo.
+    child.sendline("")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        child.sendline(f"echo {marker}_$((6*7))")
+        try:
+            child.expect_exact(f"{marker}_42", timeout=3)
+            log("Shell is interactive and echoing input.")
+            return
+        except pexpect.TIMEOUT:
+            continue
+        except pexpect.EOF:
+            raise BootTestError("QEMU exited while waiting for an interactive shell.")
+    raise BootTestError(f"Shell never became interactive within {timeout}s.")
+
+
+def capture_output(child, cmd, timeout=30):
+    """
+    Run `cmd` in the guest shell and return its (exit_code, raw_output),
+    without any validator applied. Shares run_check's sentinel-marker
+    plumbing; use this instead of run_check when a caller needs the actual
+    value back (e.g. a line count to diff against), not just a pass/fail
+    verdict. Raises pexpect.TIMEOUT/EOF on failure — callers that want the
+    run_check never-raises behavior should go through run_check instead.
+    """
+    marker = f"MONOLITH_CHECK_{uuid.uuid4().hex[:8]}"
+    child.sendline(f"{cmd}; echo {marker}:$?")
+    child.expect(re.escape(marker) + r":(\d+)", timeout=timeout)
+    exit_code = int(child.match.group(1))
+    output = child.before or ""
+    return exit_code, output
+
+
+def run_check(child, name, cmd, validator, timeout=30):
+    """
+    Run `cmd` in the guest shell, wrapped with a unique sentinel that carries
+    the exit code, and hand (exit_code, output_text) to `validator`.
+
+    Returns (ok: bool, detail: str). Never raises — callers collect results
+    from every check so one failure doesn't hide the rest.
+    """
+    try:
+        exit_code, output = capture_output(child, cmd, timeout=timeout)
+    except pexpect.TIMEOUT:
+        return False, f"timed out after {timeout}s waiting for command to complete"
+    except pexpect.EOF:
+        return False, "QEMU exited unexpectedly while running this check"
+
+    try:
+        ok, detail = validator(exit_code, output)
+    except Exception as exc:  # validator bug shouldn't crash the whole suite
+        return False, f"validator raised {exc!r}"
+    return ok, detail
+
+
+def contains(needle, ci=False):
+    def _v(exit_code, output):
+        hay = output.lower() if ci else output
+        n = needle.lower() if ci else needle
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        if n not in hay:
+            return False, f"expected {needle!r} in output, got: {output.strip()[-500:]}"
+        return True, "ok"
+    return _v
+
+
+def regex_matches(pattern, flags=0):
+    compiled = re.compile(pattern, flags)
+    def _v(exit_code, output):
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        if not compiled.search(output):
+            return False, f"expected /{pattern}/ to match output, got: {output.strip()[-500:]}"
+        return True, "ok"
+    return _v
+
+
+def regex_absent(pattern, flags=0):
+    """
+    Inverse of regex_matches: passes only when `pattern` does NOT appear in
+    the output. Used for negative proofs (e.g. "this driver did not load")
+    where a positive regex_matches check can't express the assertion.
+    """
+    compiled = re.compile(pattern, flags)
+    def _v(exit_code, output):
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        match = compiled.search(output)
+        if match:
+            return False, f"expected /{pattern}/ to NOT match output, but found: {match.group(0)!r}"
+        return True, "ok"
+    return _v
+
+
+def exit_code_only():
+    def _v(exit_code, output):
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        return True, "ok"
+    return _v
+
+
+def contains_with_exit(needle, expected_exit, ci=False):
+    """
+    Like `contains`, but for checks whose success case is a specific NONZERO
+    exit code (e.g. bash's command_not_found_handle returns 127) — `contains`
+    and `exit_code_only` both hard-require exit_code == 0, so a miss command
+    needs its own validator here.
+    """
+    def _v(exit_code, output):
+        hay = output.lower() if ci else output
+        n = needle.lower() if ci else needle
+        if exit_code != expected_exit:
+            return False, f"expected exit code {expected_exit}, got {exit_code}, output: {output.strip()[-500:]}"
+        if n not in hay:
+            return False, f"expected {needle!r} in output, got: {output.strip()[-500:]}"
+        return True, "ok"
+    return _v
+
+
+# ---------------------------------------------------------------------------
+# Smoke suite
+# ---------------------------------------------------------------------------
+
+def smoke_kernel_version(child, expected_kernel):
+    return run_check(
+        child, "uname -r matches expected kernel", "uname -r",
+        contains(expected_kernel),
+    )
+
+
+def smoke_nic_is_module(child):
+    """
+    The kernel-module regime (Tier 1) makes the NIC driver loadable rather than
+    built-in: kernel.config carries CONFIG_E1000=m, and QEMU's default `pc` NIC
+    is an e1000. So a passing `lsmod | grep e1000` proves the whole refund chain
+    end to end — the driver was compiled as a .ko, rode into the squashfs via
+    modules_install, and rcS's modalias coldplug matched the PCI id and loaded
+    it. If this passes but eth0 is down, networking broke; if this fails, the
+    module pipeline itself is broken. Keeping the two checks distinct localizes
+    the fault.
+    """
+    return run_check(
+        child, "e1000 NIC driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^e1000\b", re.MULTILINE),
+    )
+
+
+def smoke_eth0_link(child):
+    return run_check(
+        child, "eth0 link is up", "ip link show eth0",
+        regex_matches(r"eth0:.*\bUP\b"),
+    )
+
+
+def smoke_dhcp_lease(child, results):
+    """
+    Prefer udhcpc if it happens to be present (it normally isn't — see module
+    docstring); otherwise assert the dhcpcd lease obtained automatically at
+    boot by /etc/init.d/S40network. Either way this proves a live DHCP round
+    trip happened over QEMU user-mode networking.
+    """
+    has_udhcpc, _ = run_check(
+        child, "udhcpc present?", "command -v udhcpc >/dev/null 2>&1",
+        exit_code_only(),
+    )
+    if has_udhcpc:
+        ok, detail = run_check(
+            child, "udhcpc -i eth0 obtains a lease",
+            "udhcpc -i eth0 -n -q -t 5 -T 3",
+            exit_code_only(), timeout=30,
+        )
+        results.append(("udhcpc -i eth0 obtains a lease", ok, detail))
+    else:
+        log(
+            "udhcpc not present in the booted rootfs (expected — see module docstring); "
+            "verifying the boot-time dhcpcd lease instead"
+        )
+        ok, detail = run_check(
+            child, "eth0 has a DHCP-assigned IPv4 address (via boot-time dhcpcd)",
+            "ip -4 addr show eth0",
+            regex_matches(r"inet\s+\d+\.\d+\.\d+\.\d+"),
+        )
+        results.append(("eth0 has a DHCP-assigned IPv4 address (dhcpcd at boot)", ok, detail))
+
+
+def smoke_curl(child):
+    return run_check(
+        child, "curl --version executes", "curl --version",
+        contains("curl"),
+    )
+
+
+def smoke_sqlite_cli(child):
+    """sqlite3 CLI runs and computes — proves the static amalgamation build."""
+    return run_check(
+        child, "sqlite3 CLI evaluates in-memory SQL", "sqlite3 :memory: 'select 41+1;'",
+        contains("42"))
+
+
+def smoke_perl_version(child):
+    """perl runs and reports its version — proves the perl-cross build pipeline."""
+    return run_check(child, "perl runs and reports its version", "perl -e 'print $];'",
+                     contains("5.0"))  # $] is e.g. 5.042000; tighten to the pinned major once known
+
+
+def smoke_perl_basic(child):
+    """perl strict+warnings program runs — proves a sane, usable interpreter."""
+    return run_check(child, "perl strict+warnings program runs",
+                     "perl -e 'use strict; use warnings; print qq(ok\\n);'", contains("ok"))
+
+
+def smoke_perl_utf8(child):
+    """unicore tables survived pruning: uc() of a non-ASCII char needs Unicode data."""
+    return run_check(child, "perl unicode/utf8 tables present",
+                     "perl -Mutf8 -CS -e 'print uc(qq(\\x{e9}));'", exit_code_only())
+
+
+def smoke_perl_cgi(child):
+    """
+    CGI.pm's param() parses a synthetic query string — proves the pure-perl
+    CGI.pm 4.10 rider (staged into cpan/CGI, see the monolith-perl ebuild)
+    actually landed in the installed /usr/lib/perl5 tree and is importable.
+    """
+    return run_check(
+        child, "CGI.pm param() works",
+        "perl -MCGI -e 'print CGI->new(q(x=42))->param(q(x));'",
+        contains("42"))
+
+
+def smoke_guestbook(child, results):
+    """
+    The LAMP invariant, via CLI (DBI/DBD::SQLite deferred — see
+    configs/portage/world's monolith-perl comment): a guestbook CGI (perl +
+    CGI.pm) shells out to the `sqlite3` CLI to INSERT a row and read it back.
+
+    Two checks, not one: (1) invoke the CGI directly (the httpd-served +
+    curl-POST form is the STRETCH goal per the plan; this direct invocation
+    is the reliable form actually wired here) with a synthetic QUERY_STRING
+    and assert its own response contains the round-tripped row: (2)
+    independently re-query the SAME on-disc sqlite3 db file via the CLI,
+    proving the row was genuinely persisted to disk by the CGI script and
+    not merely echoed back from its own arguments.
+    """
+    # guestbook.cgi's own sqlite3_query1() uses -separator '|' too (see the
+    # fixture), so its printed row is "Ada|Hello from 1996" — same shape as
+    # the independent re-query below.
+    ok1, detail1 = run_check(
+        child, "guestbook.cgi inserts + reads back a row via sqlite3",
+        "rm -f /tmp/guestbook.db; "
+        "REQUEST_METHOD=GET QUERY_STRING='name=Ada&message=Hello+from+1996' "
+        "perl /usr/lib/cgi-bin/guestbook.cgi",
+        contains("Ada|Hello from 1996"),
+    )
+    results.append(("guestbook.cgi inserts + reads back a row via sqlite3", ok1, detail1))
+
+    ok2, detail2 = run_check(
+        child, "guestbook row independently verified via sqlite3 CLI",
+        # -list is REQUIRED: sqlite 3.53's CLI defaults to "box" mode (a
+        # UTF-8 ╭──┬──╮ table) when stdout is a tty — and the boot-test shell
+        # IS a tty — so -separator alone (which only applies to list mode) is
+        # ignored and the row prints as box art, not "Ada|Hello from 1996".
+        # The guestbook.cgi's own query pipes sqlite3 (not a tty) so it gets
+        # list mode implicitly; here we force it.
+        "sqlite3 -list -separator '|' /tmp/guestbook.db "
+        "\"select name, message from guestbook order by id desc limit 1;\"",
+        contains("Ada|Hello from 1996"),
+    )
+    results.append(("guestbook row independently verified via sqlite3 CLI", ok2, detail2))
+
+
+def smoke_overlay_mount(child):
+    return run_check(
+        child, "overlay root is mounted", "mount",
+        regex_matches(r"\btype overlay\b"),
+    )
+
+
+def smoke_man(child):
+    return run_check(
+        child, "man ls renders via mandoc", "MANPAGER=cat PAGER=cat man ls 2>&1 | head -5",
+        regex_matches(r"\bLS\b|\bls\b"),
+        timeout=30,
+    )
+
+
+def smoke_monolith(child, results):
+    """
+    Monolith UX Pass Task 7: lightweight proof the front door (Task 1) and
+    the command_not_found handler (Task 5) actually landed in the booted
+    rootfs, not just in the ebuild's src_install. Three checks:
+
+      1. `monolith help` exits 0 (the front door runs at all).
+      2. `monolith tools` lists monolith-router (the curated inventory in
+         /usr/share/monolith/tools.txt shipped and is readable).
+      3. An unknown command trips bash's command_not_found_handle
+         (60-monolith-cnf.bash, bashrc.d) — asserts BOTH its message
+         ("not on the disc") and its exit code (127), the same contract
+         the cnf handler's own unit test checks.
+    """
+    results.append(("monolith help exits 0",
+                    *run_check(child, "monolith help", "monolith help >/dev/null",
+                               exit_code_only())))
+    results.append(("monolith tools lists monolith-router",
+                    *run_check(child, "monolith tools", "monolith tools",
+                               contains("monolith-router"))))
+    results.append(("unknown command fires command_not_found_handle",
+                    *run_check(child, "notacommand", "notacommand",
+                               contains_with_exit("not on the disc", 127))))
+
+
+def smoke_ahci_is_module(child):
+    """
+    kernel.config carries CONFIG_SATA_AHCI=m, and the ahci mode boots the ISO
+    behind an emulated ich9-ahci controller instead of a plain -cdrom. A
+    passing `lsmod | grep ahci` proves ahci.ko rode into the initrd,
+    modules_install'd, and the initrd's modalias coldplug matched the AHCI
+    controller's PCI id and loaded it in time to find the boot media —
+    exactly the same "reaches the boot media" mechanism smoke_nic_is_module
+    proves for networking, applied to a storage controller instead.
+    """
+    return run_check(
+        child, "ahci SATA driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^ahci\b", re.MULTILINE),
+    )
+
+
+def smoke_nvme_is_module(child):
+    """
+    kernel.config carries CONFIG_BLK_DEV_NVME=m, and the nvme mode attaches
+    the ISO as an NVMe namespace instead of a CD-ROM. A passing
+    `lsmod | grep nvme` proves nvme.ko was coldplug-loaded from the initrd
+    before pivot_root — if this fails, the boot media itself would never
+    have been found on NVMe-attached hardware.
+    """
+    return run_check(
+        child, "nvme driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^nvme\b", re.MULTILINE),
+    )
+
+
+def smoke_xhci_hcd_is_module(child):
+    """
+    kernel.config carries CONFIG_USB_XHCI_HCD=m (usbcore itself stays built-in).
+    The usb mode attaches the ISO behind an emulated xHCI host controller; the
+    initrd coldplugs xhci-pci by the controller's PCI modalias, which pulls in
+    xhci_hcd. Without it the USB bus never comes up and usb_storage has nothing
+    to attach to — so this is the first link of the Tier-1 USB chain.
+    """
+    return run_check(
+        child, "xhci_hcd USB host-controller driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^xhci_hcd\b", re.MULTILINE),
+    )
+
+
+def smoke_usb_storage_is_module(child):
+    """
+    kernel.config carries CONFIG_USB_STORAGE=m (module name usb-storage, which
+    shows as usb_storage in lsmod). Second link of the Tier-1 USB chain: once
+    the modular HCD above has enumerated the USB bus, the initrd coldplug loads
+    usb-storage.ko onto the appearing disk in time to expose the ISO as a block
+    device.
+    """
+    return run_check(
+        child, "usb_storage driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^usb_storage\b", re.MULTILINE),
+    )
+
+
+def smoke_virtio_blk_is_module(child):
+    """
+    kernel.config carries CONFIG_VIRTIO_BLK=m. The virtio mode attaches the
+    ISO via virtio-blk-pci — the paravirtualized disk most real deployments
+    of this ISO under a VM would actually use. Proves virtio_blk.ko was
+    coldplug-loaded from the initrd before the squashfs mount.
+    """
+    return run_check(
+        child, "virtio_blk driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^virtio_blk\b", re.MULTILINE),
+    )
+
+
+def smoke_nic_not_loaded(child):
+    """
+    Negative counterpart to smoke_nic_is_module. The nicless mode boots with
+    `-nic none` — no emulated NIC of any kind — so the initrd's modalias
+    coldplug has no PCI network device to match against. If `lsmod` still
+    showed e1000 here, it would mean modules load unconditionally rather
+    than by matching present hardware, silently defeating the whole point
+    of the Tier-1 module regime (smaller initrd, nothing loaded for
+    hardware that isn't there). A clean absence is the other half of the
+    "refund is real" proof that smoke_nic_is_module only argues positively.
+    """
+    return run_check(
+        child, "e1000 NIC driver is NOT loaded (no NIC hardware present)", "lsmod",
+        regex_absent(r"^e1000\b", re.MULTILINE),
+    )
+
+
+# NIC-model matrix: QEMU emulates much of the zoo. Coldplug models assert the
+# driver loads by modalias; the ISA model (ne2k_isa, no modalias) asserts the
+# monolith-net probe path instead.
+NIC_MODEL_MODULE = {
+    "pcnet": r"^pcnet32\b",
+    "rtl8139": r"^8139(too|cp)\b",
+    "tulip": r"^tulip\b",
+    "ne2k_pci": r"^ne2k_pci\b",
+}
+
+def smoke_nic_model_is_module(child, model):
+    pattern = NIC_MODEL_MODULE[model]
+    return run_check(
+        child, f"{model} NIC driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(pattern, re.MULTILINE),
+    )
+
+
+# VGA-model matrix: like NIC_MODEL_MODULE, but for the legacy fbdev Tier-2
+# drivers. `-vga cirrus` is a real PCI Cirrus Logic GD5446 with a real
+# modalias, so `cirrusfb` in `lsmod` proves the coldplug mechanism matched a
+# graphics device, not just a network one. Only one entry today (see the
+# design spec's "one positive coldplug is the right number" call) but shaped
+# to grow the way NIC_MODEL_MODULE did.
+VGA_MODEL_MODULE = {
+    "cirrus": r"^cirrusfb\b",
+}
+
+# DCX-48: representative subset of the 27 legacy fbdev Tier-2 modules,
+# hand-loaded via modprobe on a plain -vga std boot (no matching PCI device
+# for any of them, so this is a "does it explode" check, not a coldplug
+# proof — that's what VGA_MODEL_MODULE/run_vga is for). vga16fb is
+# deliberately excluded: QA observed it now coldplugs unconditionally on
+# this exact -vga std boot path (vga16fb + vgastate appear in `lsmod` with
+# no console ownership — ~28KB resident, no functional change), so
+# hand-loading it here would prove nothing new and this assertion must not
+# assume it is unloaded.
+FBDEV_MODPROBE_MODULES = ["tdfxfb", "sm712fb", "matroxfb_base", "s3fb", "lxfb"]
+
+
+def modprobe_clean_or_crashed():
+    """
+    Validator for hand-loading a legacy fbdev driver with no matching
+    hardware present. Any exit code is acceptable on its own -- modprobe
+    succeeding (registers the driver, nothing to bind to) and modprobe
+    failing with a quiet "no such device"/"not found" message are both
+    fine outcomes. The only thing that fails THIS check is a crash
+    signature appearing in the command's own output; the kernel-wide
+    tainted/dmesg assertions after the whole batch (see run_fbdev_modprobe)
+    are the real gate for anything that panics asynchronously.
+    """
+    def _v(exit_code, output):
+        crash = re.search(r"Oops|Kernel panic|BUG:", output)
+        if crash:
+            return False, f"crash signature in modprobe output: {output.strip()[-500:]}"
+        return True, f"exit {exit_code}: {output.strip()[-200:] or '(no output)'}"
+    return _v
+
+
+def exact_value(expected):
+    """
+    Like `contains`, but requires the trimmed output to equal `expected`
+    exactly -- needed for /proc/sys/kernel/tainted, where `contains("0")`
+    would wrongly pass a tainted value like "4096" that merely contains a
+    "0" digit.
+    """
+    def _v(exit_code, output):
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        got = output.strip().splitlines()[-1].strip() if output.strip() else ""
+        if got != expected:
+            return False, f"expected {expected!r}, got {got!r} (full output: {output.strip()[-500:]})"
+        return True, "ok"
+    return _v
+
+
+def smoke_vga_model_is_module(child, model):
+    """
+    Assert the module is RESIDENT, not that it owns /dev/fb0. With `vga=788`
+    on the kernel command line, vesafb claims fb0 first and cirrusfb's probe
+    calls remove_conflicting_pci_framebuffers — it may win or lose that
+    handover. Either way pexpect's serial console is undisturbed (the
+    console here is serial, not the framebuffer), and residency in `lsmod`
+    is what proves modalias coldplug delivered the driver at all. If
+    cirrusfb loads and then fails probe, that is still a pass; the module
+    never appearing in `lsmod` is the real failure.
+    """
+    pattern = VGA_MODEL_MODULE[model]
+    return run_check(
+        child, f"{model} VGA driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(pattern, re.MULTILINE),
+    )
+
+def smoke_isa_probe(child, results):
+    """
+    ne2k_isa has no modalias, so coldplug must NOT have loaded `ne`. Then
+    `monolith-net probe` sweeps the common io= addresses (QEMU's ne2k_isa sits
+    at the default 0x300), after which `ne` is resident and an interface exists.
+    """
+    results.append(("ne NOT auto-loaded for ISA card (no modalias)",
+                    *run_check(child, "ne not coldplugged", "lsmod",
+                               regex_absent(r"^ne\b", re.MULTILINE))))
+    results.append(("monolith-net probe finds the ISA NE2000",
+                    *run_check(child, "monolith-net probe", "monolith-net probe",
+                               contains("found"), timeout=60)))
+    results.append(("ne driver resident after probe",
+                    *run_check(child, "ne loaded post-probe", "lsmod",
+                               regex_matches(r"^ne\b", re.MULTILINE))))
+
+
+def run_full_smoke_suite(child, expected_kernel):
+    results = []
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, expected_kernel)))
+    results.append(("e1000 NIC driver loaded as a module (coldplug)", *smoke_nic_is_module(child)))
+    results.append(("eth0 link is up", *smoke_eth0_link(child)))
+    smoke_dhcp_lease(child, results)
+    results.append(("curl --version executes", *smoke_curl(child)))
+    results.append(("sqlite3 CLI evaluates in-memory SQL", *smoke_sqlite_cli(child)))
+    results.append(("perl runs and reports its version", *smoke_perl_version(child)))
+    results.append(("perl strict+warnings program runs", *smoke_perl_basic(child)))
+    results.append(("perl unicode/utf8 tables present", *smoke_perl_utf8(child)))
+    results.append(("CGI.pm param() works", *smoke_perl_cgi(child)))
+    smoke_guestbook(child, results)
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+    results.append(("man ls renders (mandoc)", *smoke_man(child)))
+    smoke_monolith(child, results)
+    return results
+
+
+def run_reduced_smoke_suite(child, expected_kernel):
+    results = []
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, expected_kernel)))
+    results.append(("e1000 NIC driver loaded as a module (coldplug)", *smoke_nic_is_module(child)))
+    results.append(("eth0 link is up", *smoke_eth0_link(child)))
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+    return results
+
+
+def run_storage_smoke_suite(child, expected_kernel):
+    # Post-boot checks for the Tier-1 storage variants: prove the boot completed
+    # onto the right kernel and the overlay root is live. Deliberately NO
+    # networking checks — that is covered by the bios/uefi/toram variants, and
+    # the ahci variant in particular runs on q35, whose default NIC is e1000e (a
+    # driver this kernel doesn't carry), so there is no eth0 to bring up here.
+    results = []
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, expected_kernel)))
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+    return results
+
+
+def report_results(results):
+    ok = True
+    for name, passed, detail in results:
+        status = "PASS" if passed else "FAIL"
+        log(f"  [{status}] {name} — {detail}")
+        if not passed:
+            ok = False
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# Shutdown / eject
+# ---------------------------------------------------------------------------
+
+def poweroff_and_wait(child, timeout=90):
+    log("Sending poweroff (exercises /etc/init.d/rcK: killall5, umount -a -r, sync)")
+    child.sendline("poweroff")
+    try:
+        child.expect(pexpect.EOF, timeout=timeout)
+    except pexpect.TIMEOUT:
+        log("Graceful poweroff did not exit within timeout — sending poweroff -f as a fallback")
+        try:
+            child.sendline("poweroff -f")
+            child.expect(pexpect.EOF, timeout=timeout)
+        except pexpect.TIMEOUT:
+            raise BootTestError(
+                f"QEMU did not exit after poweroff within {2 * timeout}s total "
+                "(CONFIG_ACPI=y is set, so ACPI S5 should terminate QEMU — this "
+                "likely means the shutdown sequence hung, not that ACPI is unsupported)"
+            )
+    child.close()
+    log(f"QEMU exited (status={child.exitstatus})")
+
+
+def eject_cd_and_verify(child, cdrom_id, timeout=30):
+    """
+    Switch from the serial console to the QEMU monitor (Ctrl-A c — the same
+    mux Makefile's `make test` documents as "Ctrl+A X to exit", confirming
+    `-serial mon:stdio` is meant to expose the monitor this way), eject the
+    CD-ROM, switch back, and confirm the guest is still alive.
+    """
+    log("Switching from serial console to QEMU monitor (Ctrl-A c)")
+    child.send("\x01c")
+    child.expect_exact("(qemu)", timeout=timeout)
+
+    log(f"Ejecting CD-ROM (device id: {cdrom_id})")
+    child.sendline(f"eject -f {cdrom_id}")
+    child.expect_exact("(qemu)", timeout=timeout)
+
+    log("Switching back to serial console (Ctrl-A c)")
+    child.send("\x01c")
+    child.sendline("")  # nudge the shell so we get fresh output to match against
+
+    ok, detail = run_check(
+        child, "shell survives CD eject", "uname -r",
+        exit_code_only(), timeout=timeout,
+    )
+    return ok, detail
+
+
+# ---------------------------------------------------------------------------
+# GUI mode helpers (SP-GUI G1 Step 3): drive the QEMU HMP monitor over its
+# own unix socket to take a screendump, then parse the resulting PPM
+# host-side to prove the framebuffer isn't uniformly black.
+# ---------------------------------------------------------------------------
+
+def qemu_qmp_screendump(sock_path, out_path, timeout=25):
+    """
+    Take a framebuffer screendump over QEMU's QMP monitor (a dedicated unix
+    socket, separate from the HMP monitor that `-nographic` muxes onto the
+    serial stdio this boot test drives). QMP handshake per protocol: read the
+    greeting, send `qmp_capabilities`, then `screendump` — which returns only
+    after the PPM has been fully written host-side. Returns (ok, detail);
+    never raises (a connect/timeout/protocol failure is a failed check, not a
+    crashed run).
+    """
+    sock = None
+    buf = b""
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        deadline = time.time() + timeout
+        sock.connect(sock_path)
+
+        def recv_msg():
+            # QMP messages are newline-terminated JSON objects; a single recv
+            # may carry several (e.g. an async event before a return), so we
+            # buffer across calls and hand back one parsed object at a time.
+            nonlocal buf
+            while True:
+                nl = buf.find(b"\n")
+                if nl != -1:
+                    line = buf[:nl].strip()
+                    buf = buf[nl + 1:]
+                    if not line:
+                        continue
+                    try:
+                        return json.loads(line.decode("utf-8", "replace"))
+                    except ValueError:
+                        continue  # skip any non-JSON noise
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return None
+                sock.settimeout(remaining)
+                try:
+                    chunk = sock.recv(4096)
+                except socket.timeout:
+                    return None
+                if not chunk:
+                    return None
+                buf += chunk
+
+        greeting = recv_msg()
+        if not greeting or "QMP" not in greeting:
+            return False, f"no QMP greeting within {timeout}s (got {greeting!r})"
+
+        sock.sendall(b'{"execute":"qmp_capabilities"}\n')
+        cap = recv_msg()
+        if not cap or "return" not in cap:
+            return False, f"qmp_capabilities did not return OK (got {cap!r})"
+
+        sock.sendall(
+            json.dumps({"execute": "screendump", "arguments": {"filename": out_path}}).encode("ascii")
+            + b"\n"
+        )
+        # Read until the command's return/error (async QMP events may precede it).
+        while True:
+            msg = recv_msg()
+            if msg is None:
+                return False, f"no reply to 'screendump' within {timeout}s"
+            if "error" in msg:
+                return False, f"QMP screendump error: {msg['error']!r}"
+            if "return" in msg:
+                return True, f"screendump written: {out_path}"
+            # otherwise an async event — keep reading
+    except (OSError, socket.error) as exc:
+        return False, f"QMP screendump failed: {exc!r}"
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
+def ppm_not_black(path, min_fraction=0.005, channel_threshold=16):
+    """
+    Parse a binary P6 PPM (no PIL dependency — QEMU's screendump output is a
+    simple, well-formed P6 with no comments in practice, but comments are
+    tolerated below anyway) and check that a meaningful fraction of pixels
+    are non-black — proof Xfbdev actually painted its default gray-stipple
+    root + cursor rather than leaving the framebuffer at its cleared/black
+    power-on state.
+
+    A pixel counts as "non-black" if ANY channel exceeds `channel_threshold`
+    (default 16, out of 255) — this tolerates dark anti-aliasing/dithering
+    noise near black without requiring bright content. `min_fraction`
+    (default 0.5%) is deliberately low: the TinyX default root is a subtle
+    gray stipple pattern (a sparse dither, not a solid fill), so most pixels
+    can legitimately still be at or near black.
+
+    Returns (ok: bool, detail: str). Never raises.
+    """
+    if not os.path.isfile(path):
+        return False, f"screendump file not found: {path}"
+
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError as exc:
+        return False, f"could not read screendump file {path}: {exc!r}"
+
+    if len(data) < 2 or data[0:1] != b"P" or data[1:2] != b"6":
+        return False, f"not a binary PPM (P6) file: {path} (first bytes: {data[:16]!r})"
+
+    idx = 2
+    tokens = []
+    try:
+        while len(tokens) < 3:
+            while idx < len(data) and data[idx:idx + 1].isspace():
+                idx += 1
+            if idx < len(data) and data[idx:idx + 1] == b"#":
+                while idx < len(data) and data[idx:idx + 1] != b"\n":
+                    idx += 1
+                continue
+            start = idx
+            while idx < len(data) and not data[idx:idx + 1].isspace():
+                idx += 1
+            if start == idx:
+                return False, f"malformed PPM header in {path}: could not parse width/height/maxval"
+            tokens.append(data[start:idx])
+        width, height, maxval = (int(t) for t in tokens)
+        idx += 1  # exactly one whitespace byte separates maxval from pixel data
+    except (ValueError, IndexError) as exc:
+        return False, f"malformed PPM header in {path}: {exc!r}"
+
+    if width <= 0 or height <= 0:
+        return False, f"malformed PPM header in {path}: non-positive dimensions {width}x{height}"
+
+    pixel_bytes = data[idx:]
+    expected = width * height * 3
+    if len(pixel_bytes) < expected:
+        return False, (
+            f"truncated PPM {path}: expected {expected} pixel bytes for "
+            f"{width}x{height}, got {len(pixel_bytes)}"
+        )
+
+    total = width * height
+    nonblack = 0
+    for i in range(0, expected, 3):
+        if (pixel_bytes[i] > channel_threshold
+                or pixel_bytes[i + 1] > channel_threshold
+                or pixel_bytes[i + 2] > channel_threshold):
+            nonblack += 1
+
+    frac = nonblack / total if total else 0.0
+    detail = f"non-black pixels: {frac * 100:.1f}% ({width}x{height})"
+    return frac > min_fraction, detail
+
+
+# ---------------------------------------------------------------------------
+# Mode implementations
+# ---------------------------------------------------------------------------
+
+def run_bios(child, args):
+    select_isolinux_label(child, "serial")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+    results = run_full_smoke_suite(child, args.kernel_version)
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_uefi(child, args):
+    select_grub_serial_entry(child)
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+    results = run_full_smoke_suite(child, args.kernel_version)
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_toram(child, args):
+    select_isolinux_label(child, "serial toram")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(
+        child, MILESTONE_TORAM_EJECTABLE, args.boot_timeout,
+        "squashfs copied to RAM (toram engaged)",
+    )
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+
+    results = run_reduced_smoke_suite(child, args.kernel_version)
+    ok = report_results(results)
+
+    eject_ok, eject_detail = eject_cd_and_verify(child, args.cdrom_monitor_id)
+    log(f"  [{'PASS' if eject_ok else 'FAIL'}] system survives CD eject (toram) — {eject_detail}")
+    ok = ok and eject_ok
+
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_uefi_driver_variant(child, args, driver_checks):
+    """
+    Shared UEFI/GRUB boot-and-verify path for the Tier-1 storage-controller
+    variants (ahci, nvme, usb, virtio). Same milestone sequence as run_uefi,
+    but runs `driver_checks` — the module-coldplug assertions specific to the
+    storage controller under test — BEFORE the reduced smoke suite, so a
+    driver failing to load is reported as its own distinct failure instead of
+    being buried inside "did the shell come up at all". `driver_checks` is a
+    list of (name, check_fn) pairs where check_fn(child) -> (ok, detail).
+    """
+    select_grub_serial_entry(child)
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+
+    results = []
+    for name, check_fn in driver_checks:
+        results.append((name, *check_fn(child)))
+    results.extend(run_storage_smoke_suite(child, args.kernel_version))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_ahci(child, args):
+    return run_uefi_driver_variant(
+        child, args,
+        [("ahci SATA driver is loaded as a module (coldplug)", smoke_ahci_is_module)],
+    )
+
+
+def run_nvme(child, args):
+    return run_uefi_driver_variant(
+        child, args,
+        [("nvme driver is loaded as a module (coldplug)", smoke_nvme_is_module)],
+    )
+
+
+def run_usb(child, args):
+    # The full USB host-controller chain (xHCI/EHCI/OHCI/UHCI) is Tier-1 modular
+    # (usbcore stays built-in); the initrd coldplugs the HCD, the bus enumerates,
+    # then usb-storage binds the disk. Assert both links of that chain.
+    return run_uefi_driver_variant(
+        child, args,
+        [
+            ("xhci_hcd USB host-controller driver is loaded as a module (coldplug)", smoke_xhci_hcd_is_module),
+            ("usb_storage driver is loaded as a module (coldplug)", smoke_usb_storage_is_module),
+        ],
+    )
+
+
+def run_virtio(child, args):
+    return run_uefi_driver_variant(
+        child, args,
+        [("virtio_blk driver is loaded as a module (coldplug)", smoke_virtio_blk_is_module)],
+    )
+
+
+def run_nicless(child, args):
+    """
+    Negative control: boot via BIOS/ISOLINUX (same as run_bios) with no NIC
+    hardware attached at all, then assert e1000 did NOT load. Skips the
+    NIC-dependent parts of the smoke suite (eth0 link, DHCP) since there is
+    deliberately no NIC to bring up — only uname and the overlay mount are
+    checked alongside the negative lsmod assertion.
+    """
+    select_isolinux_label(child, "serial")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+
+    results = []
+    results.append(("e1000 NIC driver NOT loaded (no NIC hardware present)", *smoke_nic_not_loaded(child)))
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, args.kernel_version)))
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_gui(child, args):
+    """
+    SP-GUI G2: boot via BIOS/ISOLINUX (same milestone sequence as run_nicless)
+    into a graphical vesafb framebuffer, then run the user-facing `startx`
+    (app-misc/monolith-base) — which brings up the TinyX Xfbdev server (libXfont
+    built-in fonts, `-fp built-ins`, no font files on disc) plus the de-Xft'd
+    core-font terminal `st` — and prove two things: (1) both Xfbdev AND st are
+    alive with no fatal error in the X log, and (2) a QEMU-monitor screendump of
+    the framebuffer is not uniformly black — i.e. a terminal actually rendered.
+
+    (G1 Step 3 originally screendumped the bare server root with no client;
+    this now exercises the whole server+client `startx → a term` path.)
+    """
+    # "serial" gives console=ttyS0 (pexpect), and appending "vga=788" adds an
+    # 800x600x16 VESA mode so the kernel's vesafb claims a GRAPHICAL /dev/fb0
+    # (the plain serial label boots text-mode 720x400 — vesafb never sets a
+    # graphics mode — and Xfbdev then dies "no screens found"). 788 == 0x314,
+    # the same mode the isolinux `fb800` label uses. select_isolinux_label
+    # forwards any text after the label to that label's APPEND line.
+    select_isolinux_label(child, "serial vga=788")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+
+    # Debug (non-gating): confirm vesafb produced a graphical /dev/fb0 at the
+    # expected size/depth — invaluable if Xfbdev still can't find a screen.
+    run_check(
+        child, "/dev/fb0 present + mode (debug)",
+        "ls -l /dev/fb0 2>&1; "
+        "cat /sys/class/graphics/fb0/virtual_size /sys/class/graphics/fb0/bits_per_pixel 2>&1; true",
+        exit_code_only(), timeout=15,
+    )
+
+    log("Running `startx` (Xfbdev + dwm + st) on the framebuffer")
+    # startx (app-misc/monolith-base): stops gpm, launches Xfbdev with the
+    # libXfont built-in fonts (-fp built-ins, no font files on disc), waits for
+    # :0, then launches the dwm window manager and one st terminal. This
+    # exercises the whole user-facing `startx → managed desktop` path — the
+    # server, the de-Xft'd core-font WM, AND the de-Xft'd core-font terminal.
+    child.sendline("startx >/tmp/startx.log 2>&1 &")
+    time.sleep(1)  # let the shell fork the background job before driving serial
+    # startx's own loop waits for Xfbdev to listen (~2-4s) then execs st; give
+    # the terminal time to connect, load the 'fixed' built-in font, and paint.
+    run_check(child, "settle after backgrounding startx", "sleep 8", exit_code_only(), timeout=20)
+
+    # Dump both logs to serial for CI debuggability (a failure here is otherwise
+    # opaque — the framebuffer isn't on the serial console).
+    run_check(child, "dump Xfbdev + startx logs (debug)",
+              "echo '--- Xfbdev.log ---'; cat /tmp/Xfbdev.log 2>&1; "
+              "echo '--- startx.log ---'; cat /tmp/startx.log 2>&1; true",
+              exit_code_only(), timeout=15)
+
+    # The server, the WM, AND the terminal must all be alive: a server that
+    # couldn't open the fb/fonts, a dwm that couldn't load its bar font or grab
+    # the root ("another window manager is running"), or an st that couldn't
+    # connect or load its font, exits immediately. Corroborate with a negative
+    # scan of the X log for fatals.
+    server_up = run_check(
+        child, "startx: Xfbdev + dwm + st all alive, no fatal X error",
+        "pgrep -x Xfbdev >/dev/null 2>&1 && pgrep -x dwm >/dev/null 2>&1 && "
+        "pgrep -x st >/dev/null 2>&1 && "
+        "! grep -Eq 'Fatal|could not open default font|giving up' /tmp/Xfbdev.log",
+        exit_code_only(), timeout=15,
+    )
+
+    # No separate font probe on the disc (keeping it lean): dwm and st are built
+    # to name the full Terminus XLFD explicitly, and the Xfbdev server can only
+    # open a font that actually resolves from the disc font path — so a broken
+    # Terminus index/XLFD makes st/dwm exit immediately, which the pgrep check
+    # above already catches. server_up passing == Terminus loaded from disc.
+
+    log("Taking a QEMU QMP screendump of the framebuffer")
+    screendump_out = os.path.abspath(args.gui_screendump)
+    os.makedirs(os.path.dirname(screendump_out) or ".", exist_ok=True)
+    dump_ok, dump_detail = qemu_qmp_screendump(args.gui_monitor_sock, screendump_out)
+    if dump_ok:
+        not_black_ok, not_black_detail = ppm_not_black(screendump_out)
+    else:
+        not_black_ok, not_black_detail = False, f"screendump failed: {dump_detail}"
+
+    results = [
+        ("startx brings up Xfbdev + dwm + st (both naming Terminus) on the framebuffer", *server_up),
+        ("framebuffer screendump is not uniformly black (dwm bar + terminal drawn)", not_black_ok, not_black_detail),
+    ]
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_stele_acid2(child, args):
+    """
+    The headline browser demo: render Stele's own Acid2 conformance page and
+    screendump it. Boots the graphical vesafb framebuffer exactly like run_gui,
+    but instead of startx it runs Stele's ONE-SHOT headless framebuffer renderer
+    (src/backend/fb.rs: "paint a page and exit") against the acid2.html the
+    ebuild ships to /usr/share/stele/. `stele --headless --render-fb` paints
+    /dev/fb0 — the very VRAM QMP screendumps — and exits, leaving the rendered
+    page on the framebuffer for the dump. No X server, WM, or terminal involved,
+    and no network: Acid2 is self-contained (data: URIs), so it renders offline.
+
+    Gates on Stele exiting 0 and the screendump not being uniformly black; the
+    .ppm is uploaded as an artifact (the actual point of this mode).
+    """
+    select_isolinux_label(child, "serial vga=788")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    acid2 = "/usr/share/stele/acid2.html"
+    run_check(
+        child, "stele + acid2.html + graphical fb0 present (debug)",
+        f"command -v stele; ls -l {acid2} /dev/fb0 2>&1; "
+        "cat /sys/class/graphics/fb0/virtual_size /sys/class/graphics/fb0/bits_per_pixel 2>&1; true",
+        exit_code_only(), timeout=15,
+    )
+
+    log("Rendering acid2.html with Stele's one-shot headless framebuffer backend")
+    # One-shot paint-and-exit; laying out Acid2's CSS at -cpu 486 is not instant,
+    # so allow a generous window. RENDER_RC echoes stele's real exit code (the
+    # run_check marker's own $? would just be the trailing echo's).
+    render_ok = run_check(
+        child, "stele --headless --render-fb acid2.html",
+        f"stele --headless --render-fb {acid2}; echo RENDER_RC=$?",
+        contains("RENDER_RC=0"), timeout=180,
+    )
+
+    log("Taking a QEMU QMP screendump of the Acid2 render")
+    screendump_out = os.path.abspath(args.gui_screendump)
+    os.makedirs(os.path.dirname(screendump_out) or ".", exist_ok=True)
+    dump_ok, dump_detail = qemu_qmp_screendump(args.gui_monitor_sock, screendump_out)
+    if dump_ok:
+        not_black_ok, not_black_detail = ppm_not_black(screendump_out)
+    else:
+        not_black_ok, not_black_detail = False, f"screendump failed: {dump_detail}"
+
+    results = [
+        ("stele --headless --render-fb renders acid2.html (exit 0)", *render_ok),
+        ("framebuffer screendump of Acid2 is not uniformly black", not_black_ok, not_black_detail),
+    ]
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_nic(child, args):
+    select_isolinux_label(child, "serial")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    results = []
+    if args.nic_model == "ne2k_isa":
+        smoke_isa_probe(child, results)
+    else:
+        results.append((f"{args.nic_model} coldplug", *smoke_nic_model_is_module(child, args.nic_model)))
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, args.kernel_version)))
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_vga(child, args):
+    """
+    Legacy fbdev Tier-2 coldplug proof (design doc
+    docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md). Structurally
+    identical to run_nic's reduced smoke suite — kernel version + overlay
+    mount plus the one device-specific coldplug check — but for a graphics
+    device instead of a NIC. "serial vga=788" is the same ISOLINUX append
+    run_gui uses; it does not change what we assert here (module residency
+    in lsmod, not framebuffer ownership) but keeps this job's boot path
+    identical to the other BIOS-console jobs in the matrix.
+    """
+    select_isolinux_label(child, "serial vga=788")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    results = []
+    results.append((f"{args.vga_model} coldplug", *smoke_vga_model_is_module(child, args.vga_model)))
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, args.kernel_version)))
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_fbdev_modprobe(child, args):
+    """
+    DCX-48: permanent CI coverage for the manual QA step DCX-47 could not
+    reproduce (no local QEMU in that agent's workspace). Boots plain
+    BIOS/ISOLINUX (-vga std, same as run_bios), hand-modprobes a
+    representative subset of the 27 legacy fbdev Tier-2 modules
+    (FBDEV_MODPROBE_MODULES) that have no matching hardware on this boot
+    path, and asserts the batch didn't crash the kernel: each modprobe
+    exits cleanly (0 or a benign failure, never an oops/panic in its own
+    output — see modprobe_clean_or_crashed), the kernel is untainted
+    afterwards, and dmesg picked up no Oops/BUG:/WARNING: lines that
+    weren't already present before the batch started. The dmesg diff (not
+    a full-log scan) is what pins the assertion to "introduced by the
+    modprobes" rather than flagging an unrelated pre-existing boot message.
+    """
+    _boot_isolinux_to_shell(child, args)
+
+    results = []
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, args.kernel_version)))
+
+    baseline_exit, baseline_out = capture_output(child, "dmesg | wc -l")
+    baseline_lines = int(baseline_out.strip().splitlines()[-1]) if baseline_exit == 0 and baseline_out.strip() else 0
+
+    for module in FBDEV_MODPROBE_MODULES:
+        results.append((
+            f"modprobe {module} completes without a crash signature",
+            *run_check(child, f"modprobe {module}", f"modprobe {module}", modprobe_clean_or_crashed()),
+        ))
+
+    results.append((
+        "kernel not tainted after fbdev modprobes",
+        *run_check(child, "kernel tainted", "cat /proc/sys/kernel/tainted", exact_value("0")),
+    ))
+
+    # Print the full dmesg tail into the serial transcript (child.logfile
+    # captures this automatically as it streams by) so a failure above is
+    # diagnosable from the uploaded log without re-running anything.
+    run_check(child, "print dmesg tail for diagnostics", "dmesg | tail -100", exit_code_only())
+
+    # Slice the diff in the GUEST (`tail -n +N`), not on the host: capture_output
+    # returns the echoed command line ahead of the command's own output, so
+    # indexing host-side splitlines() by the baseline count is off by one and
+    # would drag the last pre-batch dmesg line into the "new" window. Letting
+    # tail do it means the window is exactly the lines dmesg grew by, and the
+    # only host-side text left is the echoed `dmesg | tail ...` line itself,
+    # which cannot match a crash signature.
+    tail_from = baseline_lines + 1
+    diff_exit, diff_out = capture_output(child, f"dmesg | tail -n +{tail_from}")
+    if diff_exit != 0:
+        results.append((
+            "dmesg has no Oops/BUG:/WARNING: introduced by the fbdev modprobes",
+            False,
+            f"could not re-read dmesg to diff it (exit {diff_exit}): {diff_out.strip()[-300:]}",
+        ))
+    else:
+        crash_match = re.search(r"Oops|BUG:|WARNING:", diff_out)
+        results.append((
+            "dmesg has no Oops/BUG:/WARNING: introduced by the fbdev modprobes",
+            crash_match is None,
+            "ok" if crash_match is None else f"found {crash_match.group(0)!r} in dmesg output since the batch started",
+        ))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def _boot_isolinux_to_shell(child, args):
+    select_isolinux_label(child, "serial")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+    # Serial warmup: the FIRST command after the shell appears can lose its
+    # output to a serial-read race (observed intermittently on the storage
+    # jobs — the boot succeeds but the first assertion's output is dropped).
+    # A throwaway command absorbs that race so the first real assertion below
+    # is reliable. Cheap; runs once per guest.
+    run_check(child, "serial warmup", "true", exit_code_only())
+
+
+def run_nat(child, args):
+    # child == router (spawned by main via build_nat_router_cmd).
+    results = []
+    _boot_isolinux_to_shell(child, args)
+    # Router: bring NAT up (eth0=WAN/user, eth1=LAN/socket), assert it took.
+    results.append(("router: monolith-router up --dhcp",
+                    *run_check(child, "monolith-router eth0 eth1 --dhcp --yes",
+                               "monolith-router eth0 eth1 --dhcp --yes",
+                               contains("DHCP+DNS up"), timeout=60)))
+    results.append(("router: nft masquerade present",
+                    *run_check(child, "nft ruleset", "nft list ruleset",
+                               contains("masquerade"))))
+    # Emit a distinctive marker rather than the bare "1": bash's bracketed-paste
+    # escape (\x1b[?2004l) prepends the value on its line, so a line-anchored
+    # ^1 regex misses it. `contains("ipfwd=1")` is escape-tolerant like the other
+    # NAT assertions.
+    results.append(("router: ip_forward=1",
+                    *run_check(child, "ip_forward",
+                               "echo ipfwd=$(cat /proc/sys/net/ipv4/ip_forward)",
+                               contains("ipfwd=1"))))
+    # Secure by default: dnsmasq must be bound to the LAN address only, never
+    # the WAN address or a wildcard. netstat (net-tools) is always present.
+    results.append(("router: dnsmasq bound to LAN only",
+                    *run_check(child, "dnsmasq bind",
+                               "netstat -lnu | grep ':53 ' || true",
+                               contains("192.168.99.1:53"))))
+    results.append(("router: dnsmasq NOT on wildcard",
+                    *run_check(child, "dnsmasq no wildcard",
+                               "echo bind=$(netstat -lnu | grep -c '0.0.0.0:53')",
+                               contains("bind=0"))))
+
+    client = None
+    try:
+        client = pexpect.spawn(build_nat_client_cmd(args)[0], build_nat_client_cmd(args)[1:],
+                               timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace")
+        if args.log_file:
+            client.logfile = open(args.log_file + ".client", "w", encoding="utf-8", errors="replace")
+        _boot_isolinux_to_shell(client, args)
+
+        # Defensive: drain the router child's serial so its pexpect pty can't
+        # back up while we're busy driving the client. This is hygiene, NOT the
+        # historical nat-router flake — that was a monolith-router bug (it skipped
+        # assigning the LAN gateway CIDR when eth1 already carried a failed-DHCP
+        # 169.254 link-local, so the router answered no ARP for the gateway). It's
+        # fixed in monolith-router; these diagnostics are what localized it.
+        def drain_router():
+            try:
+                while True:
+                    child.read_nonblocking(size=65536, timeout=0)
+            except Exception:
+                pass  # pexpect TIMEOUT/EOF — nothing more queued
+
+        # Localize any failure: L2 (dead inter-guest link) vs L3/NAT vs a router
+        # mis-config. router-pre shows eth1's actual address + link/counters (this
+        # is what caught the missing gateway CIDR); client pings the gateway;
+        # router-post proves whether frames crossed (RX ticks, neighbour learned).
+        # A REACHABLE gateway ping means the link + gateway addressing are good, so
+        # a later curl failure is NAT/routing. exit_code_only never fails the run.
+        def _diag(node, label, cmds):
+            for d in cmds:
+                run_check(node, f"{label}-diag: {d}", d, exit_code_only(), timeout=15)
+
+        drain_router()
+        # Set the client's name via busybox (the GNU rootfs has no standalone
+        # `hostname` command; busybox is built CONFIG_HOSTNAME=y).
+        run_check(client, "client hostname", "busybox hostname natclient", exit_code_only())
+        # CRITICAL: a dhcpcd daemon is ALREADY running from boot (S40network runs
+        # `dhcpcd -b eth0`) and it leased at boot WITHOUT a hostname. Re-invoking
+        # `dhcpcd ... --hostname=natclient` then only sends a control command to
+        # that running daemon ("sending commands to dhcpcd process") and the flag
+        # is inert — which is why the lease hostname stayed "*". Stop the boot
+        # daemon first, then start a FRESH one-shot client that actually sends the
+        # hostname (DHCP option 12). dhcpcd honors --hostname when run as a fresh
+        # manual client.
+        run_check(client, "stop boot dhcpcd", "dhcpcd -x 2>/dev/null; dhcpcd -k eth0 2>/dev/null; sleep 1; true",
+                  exit_code_only(), timeout=20)
+        # Fresh lease WITH the hostname. `dhcpcd -1` exits 0 once configured with a
+        # lease and non-zero on timeout/failure, so the exit code — not a log
+        # string — is the reliable success signal. The in-range check corroborates.
+        results.append(("client: DHCP lease from the box",
+                        *run_check(client, "dhcpcd", "dhcpcd -1 -t 30 --hostname=natclient eth0",
+                                   exit_code_only(), timeout=45)))
+
+        drain_router()
+        # Lease is inside the dnsmasq range 192.168.99.50-200.
+        results.append(("client: leased address in DHCP range",
+                        *run_check(client, "client addr",
+                                   "ip -4 -o addr show dev eth0 | grep -oE '192\\.168\\.99\\.[0-9]+'",
+                                   regex_matches(r"192\.168\.99\.(5[0-9]|[6-9][0-9]|1[0-9][0-9]|200)"),
+                                   timeout=15)))
+        # DNS through the box: resolve the router's own registered name against
+        # the box's dnsmasq. The GNU booted rootfs has no standalone `nslookup`
+        # (bind-tools isn't installed); we call busybox's nslookup applet
+        # (CONFIG_NSLOOKUP=y) explicitly — `busybox nslookup HOST SERVER` queries
+        # SERVER directly, proving the .home.arpa zone resolves through the box.
+        results.append(("client: resolves monolith.home.arpa via the box",
+                        *run_check(client, "nslookup",
+                                   "busybox nslookup monolith.home.arpa 192.168.99.1",
+                                   contains("192.168.99.1"), timeout=20)))
+
+        drain_router()
+        # DHCP-hostname → DNS zone registration: the client sent its hostname
+        # (DHCP option 12) in the fresh lease, so dnsmasq (expand-hosts +
+        # domain=home.arpa) registered natclient.home.arpa → the leased address.
+        # This is the actual "DHCP client names auto-populate the zone" proof. The
+        # lease-range regex CANNOT be satisfied by nslookup's own "Server: 192.168.99.1"
+        # line (.1 is outside .50-.200), so only a genuine leased answer passes.
+        results.append(("client: natclient.home.arpa resolves to the leased address",
+                        *run_check(client, "nslookup natclient",
+                                   "busybox nslookup natclient.home.arpa 192.168.99.1",
+                                   regex_matches(r"192\.168\.99\.(5[0-9]|[6-9][0-9]|1[0-9][0-9]|200)"),
+                                   timeout=20)))
+
+        _diag(child, "router-pre",
+              ["ip -o addr show dev eth1", "ip -o link show dev eth1", "cat /proc/net/dev"])
+        _diag(client, "client",
+              ["ip -o addr show dev eth0", "ping -c2 -W2 192.168.99.1", "ip neigh show"])
+        _diag(child, "router-post", ["ip neigh show", "cat /proc/net/dev"])
+        # Positive: reach the host http.server THROUGH the router's masquerade.
+        # Poll rather than fire a single shot — the client's first-packet ARP to
+        # the gateway plus conntrack setup can take a moment, and a lone curl the
+        # instant after `ip route add` can race that and return EHOSTUNREACH.
+        # Retry a bounded number of times, breaking on the first success; a
+        # genuine NAT break still fails — the loop exhausts without the marker.
+        drain_router()
+        results.append(("client: curl host service through NAT",
+                        *run_check(client, "curl via NAT",
+                                   "for i in $(seq 1 20); do "
+                                   "curl -s -m 4 http://10.0.2.2:8000/probe.txt && break; "
+                                   "sleep 1; done",
+                                   contains("NAT_OK_marker"), timeout=120)))
+        # Negative control: tear NAT down on the router, the client can no longer reach it.
+        run_check(child, "monolith-router down", "monolith-router down", contains("NAT down"))
+        neg_ok, neg_detail = run_check(client, "curl fails after NAT down",
+                                       "curl -s -m 8 http://10.0.2.2:8000/probe.txt; echo RC=$?",
+                                       contains("RC=28"), timeout=20)  # curl 28 = timeout
+        results.append(("client: no route after NAT down (negative control)", neg_ok, neg_detail))
+    finally:
+        if client is not None:
+            try: client.close(force=True)
+            except Exception: pass
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def _persist_boot_to_shell(child, args, suffix=""):
+    """Shared milestone sequence for both persist-mode boots."""
+    select_isolinux_label(child, "serial persist")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, f"initramfs /init started{suffix}")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, f"squashfs+overlay mounted{suffix}")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, f"pivot_root complete{suffix}")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, f"sysvinit rcS started{suffix}")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, f"sysvinit rcS completed{suffix}")
+    wait_for_shell(child)
+
+
+def run_persist(child, args):
+    """
+    Monolith UX Pass Task 3 (persist continuity). Two boots against the SAME
+    MONOLITH_PERSIST disk (args.persist_disk, formatted fresh by
+    build_persist_cmd before `child` was even spawned):
+
+      boot 1 (this `child`, already booting when we're called): confirm
+      /overlay is the real persist partition (not tmpfs), run a distinctive
+      `echo <marker>` command so it lands in bash history, give
+      50-persist-history.bash's per-prompt `history -a` one more prompt to
+      fire on, `sync` the appended line to the physical disk, then kill QEMU
+      with SIGKILL — deliberately UNCLEAN. A graceful `poweroff` would flush
+      history via bash's own on-exit save and prove nothing about the
+      incremental-append fix this mode exists to test; the explicit `sync`
+      supplies only the durability an OS flush would, not a clean bash exit.
+
+      boot 2 (a fresh pexpect.spawn against the identical disk file, mirrors
+      how run_nat spawns a second `client` process): confirm /overlay is
+      STILL the persist partition, then grep /root/.bash_history for the
+      marker.
+    """
+    results1 = []
+    _persist_boot_to_shell(child, args)
+
+    results1.append(("boot 1: /overlay is the persist partition (ext4), not tmpfs",
+                     *run_check(child, "overlay fstype",
+                                # Pure-shell field read — the Monolith's busybox
+                                # is built WITHOUT the awk applet (CONFIG_AWK
+                                # unset; the console's command-not-found hint even
+                                # says "awk: not on the disc"), so the old
+                                # awk one-liner exited 127. /proc/mounts columns
+                                # are: dev mountpoint fstype opts dump pass. Capture
+                                # into a var and echo a labelled token so the check
+                                # ALWAYS exits 0 (a bare `while read` loop exits with
+                                # the last iteration's failed `[ != /overlay ]` test,
+                                # which run_check's contains() would read as failure).
+                                OVERLAY_FSTYPE_CMD,
+                                contains("overlay_fstype=ext4"))))
+
+    marker = f"MONOLITH_PERSIST_MARK_{uuid.uuid4().hex[:8]}"
+    # The command itself becomes the .bash_history line boot 2 looks for.
+    results1.append(("boot 1: distinctive command runs",
+                     *run_check(child, "marker command", f"echo {marker}", contains(marker))))
+
+    # One more prompt cycle so 50-persist-history.bash's PROMPT_COMMAND
+    # `history -a` fires on the marker command, appending it to
+    # /root/.bash_history on the overlay. Then `sync`: `history -a` only writes
+    # into the page cache, and an unclean SIGKILL within a second would lose it
+    # before ext4's periodic journal commit ever runs — no persist system
+    # survives a power cut inside the sub-fsync window, and this feature
+    # deliberately avoids a fork/exec `sync` on every prompt (see
+    # 50-persist-history.bash). Flushing once here models the realistic
+    # durability boundary (data that reached the disk survives an unclean
+    # reboot), while the SIGKILL still denies bash its on-exit history save —
+    # so a surviving marker proves the incremental append, not a clean exit,
+    # is what put the line in the file.
+    child.sendline("")
+    time.sleep(1)
+    run_check(child, "sync", "sync", exit_code_only())
+
+    ok1 = report_results(results1)
+
+    log("persist: killing QEMU uncleanly (SIGKILL, no poweroff) to prove flushed history survives")
+    try:
+        child.close(force=True)
+    except Exception:
+        pass
+
+    log("persist: relaunching QEMU against the SAME persist disk (boot 2)")
+    cmd2 = _persist_qemu_argv(args)
+    child2 = pexpect.spawn(
+        cmd2[0], cmd2[1:], timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace"
+    )
+    if args.log_file:
+        child2.logfile = open(args.log_file + ".boot2", "w", encoding="utf-8", errors="replace")
+
+    ok2 = False
+    try:
+        results2 = []
+        _persist_boot_to_shell(child2, args, suffix=" (boot 2)")
+
+        results2.append(("boot 2: /overlay is STILL the persist partition (ext4)",
+                         *run_check(child2, "overlay fstype (boot 2)",
+                                    # Same exit-0-safe read as boot 1 (no awk on
+                                    # the disc); /overlay must remain the ext4
+                                    # MONOLITH_PERSIST partition across reboots.
+                                    OVERLAY_FSTYPE_CMD,
+                                    contains("overlay_fstype=ext4"))))
+        results2.append((f"boot 2: '{marker}' survived the unclean poweroff in .bash_history",
+                         *run_check(child2, "history grep",
+                                    f"grep -qF {marker} /root/.bash_history && echo FOUND_{marker}",
+                                    contains(f"FOUND_{marker}"))))
+
+        ok2 = report_results(results2)
+        poweroff_and_wait(child2)
+    finally:
+        if child2.isalive():
+            try:
+                child2.close(force=True)
+            except Exception:
+                pass
+        if args.log_file and child2.logfile:
+            child2.logfile.close()
+
+    return ok1 and ok2
+
+
+MODE_BUILDERS = {
+    "bios": build_bios_cmd,
+    "uefi": build_uefi_cmd,
+    "toram": build_bios_cmd,
+    "ahci": build_ahci_cmd,
+    "nvme": build_nvme_cmd,
+    "usb": build_usb_cmd,
+    "virtio": build_virtio_cmd,
+    "nicless": build_nicless_cmd,
+    "nic": build_nic_cmd,
+    "vga": build_vga_cmd,
+    "fbdev-modprobe": build_bios_cmd,
+    "nat": build_nat_router_cmd,
+    "gui": build_gui_cmd,
+    "stele-acid2": build_gui_cmd,  # same VGA-std + QMP-socket rig as gui
+    "clock-epoch": build_clock_epoch_cmd,
+    "clock-1996": build_clock_1996_cmd,
+    "persist": build_persist_cmd,
+}
+
+MODE_RUNNERS = {
+    "bios": run_bios,
+    "uefi": run_uefi,
+    "toram": run_toram,
+    "ahci": run_ahci,
+    "nvme": run_nvme,
+    "usb": run_usb,
+    "virtio": run_virtio,
+    "nicless": run_nicless,
+    "nic": run_nic,
+    "vga": run_vga,
+    "fbdev-modprobe": run_fbdev_modprobe,
+    "nat": run_nat,
+    "gui": run_gui,
+    "stele-acid2": run_stele_acid2,
+    "clock-epoch": run_clock_epoch,
+    "clock-1996": run_clock_1996,
+    "persist": run_persist,
+}
+
+MODE_DEFAULT_RAM = {
+    "bios": 64,
+    "uefi": 512,
+    "toram": 512,  # copies the full squashfs into RAM + a 50% tmpfs overlay; 128M OOMs
+    "ahci": 512,
+    "nvme": 512,
+    "usb": 512,
+    "virtio": 512,
+    "nicless": 64,  # mirrors bios: same machine type, no extra RAM pressure
+    "nic": 256,
+    "vga": 64,  # mirrors bios/nic: same machine type, no extra RAM pressure
+    "fbdev-modprobe": 64,  # mirrors bios: same machine type, no extra RAM pressure
+    "nat": 256,
+    "gui": 128,
+    "stele-acid2": 256,  # headless render + image decode of Acid2 wants headroom
+    "clock-epoch": 64,  # same bios/pc machine as "bios", no extra RAM pressure
+    "clock-1996": 64,
+    "persist": 128,  # BIOS/pc + one extra virtio-blk-pci disk; no networking needed
+}
+
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Boot The Monolith ISO in QEMU and verify it reaches a working shell.",
+    )
+    p.add_argument("--iso", required=True, help="Path to the themonolith-*.iso file to test")
+    p.add_argument("--mode", required=True, choices=sorted(MODE_RUNNERS), help="Which boot path to exercise")
+    p.add_argument(
+        "--kernel-version", required=True,
+        help=(
+            "Expected `uname -r` string, e.g. 6.12.80-i486-monolith. "
+            "Compute this from configs/portage/versions.lock "
+            "(sys-kernel/monolith-kernel) + CONFIG_LOCALVERSION in "
+            "configs/kernel.config — never hardcode it here or in CI."
+        ),
+    )
+    p.add_argument("--ram-mb", type=int, default=None, help="Guest RAM in MB (default depends on --mode)")
+    p.add_argument("--qemu-i386", default="qemu-system-i386")
+    p.add_argument("--qemu-x86_64", default="qemu-system-x86_64")
+    p.add_argument("--ovmf-code", default=None, help="Path to OVMF_CODE.fd (uefi mode only; auto-detected if omitted)")
+    p.add_argument(
+        "--boot-timeout", type=int, default=DEFAULT_BOOT_TIMEOUT,
+        help=f"Max seconds to wait for each boot milestone (default: {DEFAULT_BOOT_TIMEOUT})",
+    )
+    p.add_argument(
+        "--cdrom-monitor-id", default="ide1-cd0",
+        help="QEMU block device id for `eject` in the monitor (toram mode only). "
+             "'ide1-cd0' is QEMU's default id for a plain -cdrom on the pc/i440fx machine type.",
+    )
+    p.add_argument("--log-file", default=None, help="Write the full serial session transcript here")
+    p.add_argument("--nic-model", default=None,
+                   choices=["pcnet", "rtl8139", "tulip", "ne2k_pci", "ne2k_isa"],
+                   help="QEMU NIC model for --mode nic (pcnet|rtl8139|tulip|ne2k_pci|ne2k_isa)")
+    p.add_argument("--vga-model", default=None,
+                   choices=sorted(VGA_MODEL_MODULE),
+                   help="QEMU VGA model for --mode vga (cirrus)")
+    p.add_argument(
+        "--gui-screendump", default="output/gui-screendump.ppm",
+        help="Host-side path QEMU's HMP 'screendump' writes the framebuffer PPM to (gui mode only)",
+    )
+    p.add_argument(
+        "--rtc-date", default=None,
+        help="QEMU `-rtc base=<value>` to seed the guest's RTC at cold boot, e.g. "
+             "1970-01-01T00:00:00 or 1996-06-15T12:00:00 (interpreted as UTC). "
+             "Default: unset -- QEMU uses the host clock. The clock-epoch/clock-1996 "
+             "modes set a sensible default automatically when this is omitted; pass "
+             "it explicitly to override even those.",
+    )
+    p.add_argument(
+        "--persist-disk", default="output/monolith-persist-test.img",
+        help="Host-side path for the MONOLITH_PERSIST scratch disk (persist mode only). "
+             "Created fresh (truncated + mkfs.ext4 -L MONOLITH_PERSIST) by build_persist_cmd "
+             "before boot 1; both boots in run_persist attach this same file.",
+    )
+    return p.parse_args()
+
+
+# Total launch attempts before a persistently-silent guest is declared a real
+# failure rather than a transient flake. 3 = one real try plus two retries.
+STARTUP_FLAKE_MAX_ATTEMPTS = 3
+
+
+def should_retry_launch(ok, reached_init, attempt, max_attempts):
+    """
+    Decide whether a failed boot-test attempt was a QEMU-startup flake worth
+    relaunching, versus a real failure that must be reported.
+
+    Pure decision logic (no I/O) so it can be reasoned about and unit-tested in
+    isolation. The discriminator is `reached_init`: if the guest ever reached
+    /init it booted through SeaBIOS + kernel + initramfs, so whatever failed
+    afterwards is a genuine boot/assertion failure and retrying it would only
+    mask regressions. Only a guest that stayed silent — never reaching /init,
+    the 'timeout on the very first milestone' signature of a QEMU-startup flake
+    on the CI host — is retried, and only while attempts remain.
+    """
+    if ok:
+        return False
+    if reached_init:
+        return False
+    return attempt < max_attempts
+
+
+def _run_once(args):
+    """
+    One full launch+run of the current mode. Returns (ok, reached_init).
+    Owns the QEMU child's lifecycle so a retry always starts from a clean slate.
+    reached_init reflects whether the guest got as far as /init (see
+    expect_milestone) — the signal should_retry_launch() keys on.
+    """
+    child = None
+    ok = False
+    try:
+        cmd = MODE_BUILDERS[args.mode](args)
+        log(f"Launching: {' '.join(cmd)}")
+
+        child = pexpect.spawn(
+            cmd[0], cmd[1:], timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace"
+        )
+        if args.log_file:
+            child.logfile = open(args.log_file, "w", encoding="utf-8", errors="replace")
+            log(f"Logging full session to {args.log_file}")
+
+        ok = MODE_RUNNERS[args.mode](child, args)
+    except BootTestError as exc:
+        log(f"FATAL: {exc}")
+        ok = False
+    except pexpect.ExceptionPexpect as exc:
+        log(f"FATAL: pexpect error: {exc}")
+        ok = False
+    finally:
+        reached_init = bool(getattr(child, "_reached_init", False)) if child is not None else False
+        if child is not None:
+            if child.isalive():
+                log("Guest still alive at end of test — force-killing QEMU")
+                try:
+                    child.close(force=True)
+                except Exception:
+                    pass
+            if args.log_file and getattr(child, "logfile", None):
+                try:
+                    child.logfile.close()
+                except Exception:
+                    pass
+    return ok, reached_init
+
+
+def main():
+    args = parse_args()
+    if args.ram_mb is None:
+        args.ram_mb = MODE_DEFAULT_RAM[args.mode]
+
+    log(f"mode={args.mode} iso={args.iso} ram={args.ram_mb}M kernel={args.kernel_version}")
+
+    import os
+    if not os.path.isfile(args.iso):
+        log(f"FATAL: ISO not found: {args.iso}")
+        sys.exit(2)
+
+    ok = False
+    for attempt in range(1, STARTUP_FLAKE_MAX_ATTEMPTS + 1):
+        if attempt > 1:
+            log(f"=== Launch attempt {attempt}/{STARTUP_FLAKE_MAX_ATTEMPTS}: the guest "
+                f"never reached /init last time (no serial output — the QEMU-startup "
+                f"flake pattern), relaunching a fresh QEMU ===")
+        ok, reached_init = _run_once(args)
+        if ok:
+            break
+        if not should_retry_launch(ok, reached_init, attempt, STARTUP_FLAKE_MAX_ATTEMPTS):
+            if reached_init:
+                log("Failure occurred AFTER the guest reached /init — a real "
+                    "boot/assertion failure, not a startup flake. Not retrying.")
+            else:
+                log(f"Guest failed to reach /init on all {STARTUP_FLAKE_MAX_ATTEMPTS} "
+                    f"launches — no longer a transient flake; reporting as a real failure.")
+            break
+
+    if ok:
+        log(f"RESULT: PASS ({args.mode})")
+        sys.exit(0)
+    else:
+        log(f"RESULT: FAIL ({args.mode})")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
