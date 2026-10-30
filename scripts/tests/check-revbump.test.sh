@@ -182,11 +182,28 @@ else fail "R04-AC-4 default BASE is the merge base, not the tip of main (rc=$rc:
 mk4
 (cd "$repo" && g rm -q scripts/check-revbump.sh) >/dev/null 2>&1
 snap noscript base2
+mkdir -p "$repo/scripts"
 if [ -f "$script" ]; then cp "$script" "$repo/scripts/check-revbump.sh"; fi
 echo x >>"$repo/$O/app-misc/foo/foo-1.ebuild"; change
 runmake test-revbump BASE=base2
 if [ $rc -ne 0 ] && [ -f "$script" ]; then pass "R04-AC-4 bootstrap: no script at BASE, working-tree copy judges"
 else fail "R04-AC-4 bootstrap: no script at BASE, working-tree copy judges (rc=$rc: $out)"; fi
+case $out in *"working-tree copy"*) wt=1 ;; *) wt=0 ;; esac
+case $out in *app-misc/foo*) named=1 ;; *) named=0 ;; esac
+if [ $wt -eq 1 ] && [ $named -eq 1 ]; then pass "R04-AC-4 bootstrap: unbumped output notes the working-tree copy and names app-misc/foo"
+else fail "R04-AC-4 bootstrap: unbumped output notes the working-tree copy and names app-misc/foo (rc=$rc: $out)"; fi
+
+# bootstrap, bumped: passes and still prints the note
+mk4
+(cd "$repo" && g rm -q scripts/check-revbump.sh) >/dev/null 2>&1
+snap noscript base3
+mkdir -p "$repo/scripts"
+if [ -f "$script" ]; then cp "$script" "$repo/scripts/check-revbump.sh"; fi
+cp "$repo/$O/app-misc/foo/foo-1.ebuild" "$repo/$O/app-misc/foo/foo-1-r1.ebuild"; change
+runmake test-revbump BASE=base3
+case $out in *"working-tree copy"*) wt=1 ;; *) wt=0 ;; esac
+if [ $rc -eq 0 ] && [ $wt -eq 1 ]; then pass "R04-AC-4 bootstrap: bumped change passes and prints the working-tree copy note"
+else fail "R04-AC-4 bootstrap: bumped change passes and prints the working-tree copy note (rc=$rc: $out)"; fi
 
 # make test includes test-revbump
 mk4
