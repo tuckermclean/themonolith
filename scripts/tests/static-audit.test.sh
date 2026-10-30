@@ -183,6 +183,25 @@ printf 'usr/bin/dyn # 1 reason\nusr/bin/static2 # 2 not dynamic, not a .so\n' > 
 run --strict --allowlist "$AL" "$TREE"
 expect_fail "O02-AC-3 (review 1, ruling 9) allowlist entry naming a static non-.so ELF is stale" ""
 
+# --- review 2, ruling 12: unreadable files are errors ---------------------------
+# Real scanelf -R skips a file it cannot open, prints nothing, exits 0; the stub does the same
+# (head fails on it, the file prints nothing). Running as root would read every file, so that is a FAIL.
+if [ "$(id -u)" -eq 0 ]; then
+    fail "O02-AC-6 (review 2, ruling 12) tests must run as non-root: unreadable files are readable to root"
+else
+    cleantree; elf usr/bin/a; elf usr/bin/b; elf usr/lib/c
+    elf usr/bin/dyn EM_X86_64 "/$LOADER" '   -   ' 111
+    run --strict --allowlist "$EMPTY" "$TREE"
+    expect_fail "O02-AC-6 (review 2, ruling 12) unreadable (0111) ELF with PT_INTERP is an error, not a clean pass" ""
+    cleantree; elf usr/lib/sub/x EM_386 '' '   -   ' 000; elf usr/lib/zzz
+    run --strict --allowlist "$EMPTY" "$TREE"
+    expect_fail "O02-AC-6 (review 2, ruling 12) unreadable file in a subdirectory with a readable file after it is an error" ""
+    dyntree; echo 'usr/bin/dyn # O02-9 reason' > "$AL"; chmod 000 "$AL"
+    run --strict --allowlist "$AL" "$TREE"
+    chmod 644 "$AL"
+    expect_fail "O02-AC-6 (review 2, ruling 12) unreadable allowlist file is an error, not a clean pass" ""
+fi
+
 # --- AC-6: no hidden failures in source ----------------------------------------
 if [ -f "$SUBJECT" ] && ! grep -q '2>/dev/null' "$SUBJECT"; then
     pass "O02-AC-6 static-audit.sh contains no 2>/dev/null"; else fail "O02-AC-6 static-audit.sh contains no 2>/dev/null (or script missing)"; fi
