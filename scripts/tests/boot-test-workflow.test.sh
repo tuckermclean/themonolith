@@ -311,6 +311,14 @@ CALLS="$tmp/calls.xu"; export CALLS; : >"$CALLS"
 rc=$?
 if [ $rc -ne 0 ] && grep -v -e '--mode' -e 'Boot tests:' "$tmp/xu.log" | grep -qw uefi; then pass "O01-AC-9 rc1 digest, uefi fails: target fails naming uefi"; else fail "O01-AC-9 rc1 digest, uefi fails: target fails naming uefi (rc=$rc)"; fi
 
+# ---- Ruling 7 additions (O01-AC-9, O01-AC-7) ----
+# AC-9: the XFAIL output carries the reason (cirrusfb), not only the mode
+if grep XFAIL "$tmp/xf.log" | grep -q cirrusfb; then pass "O01-AC-9 the XFAIL output contains the reason (cirrusfb)"; else fail "O01-AC-9 the XFAIL output contains the reason (cirrusfb)"; fi
+# AC-7: an unknown mode only stops boots; other targets (test-lint) are not affected
+mk -n test-lint MODE=dev >/dev/null 2>&1 && pass "O01-AC-7 MODE=dev make -n test-lint succeeds" || fail "O01-AC-7 MODE=dev make -n test-lint succeeds"
+mk -n test-lint MODES=dev >/dev/null 2>&1 && pass "O01-AC-7 MODES=dev make -n test-lint succeeds" || fail "O01-AC-7 MODES=dev make -n test-lint succeeds"
+mk -n test-boot MODE=dev >/dev/null 2>&1 && fail "O01-AC-7 make -n test-boot MODE=dev still fails" || pass "O01-AC-7 make -n test-boot MODE=dev still fails"
+
 echo
 if [ "$fails" -ne 0 ]; then echo "$fails FAILED"; exit 1; fi
 echo "ALL PASS"
