@@ -76,7 +76,6 @@ check_ac2() { # check_ac2 <root>
 	(
 		cd "$1" || { echo "check_ac2: cannot cd to $1"; exit 1; }
 		git -c core.quotePath=false ls-files scripts >"$tmp/sfiles.$$" || { echo "check_ac2: git ls-files failed"; exit 1; }
-		[ -s "$tmp/sfiles.$$" ] || { echo "check_ac2: empty scripts file list"; exit 1; }
 		while IFS= read -r f; do
 			case $f in
 			'"'*) echo "$f: quoted path in git ls-files output"; continue ;;
@@ -119,6 +118,14 @@ expect() {
 	fi
 }
 
+# expect_msg <label> <function> <root> <substring>: the check must fail and say why
+expect_msg() {
+	label=$1; fn=$2; r=$3; sub=$4
+	out=$($fn "$r" 2>&1); rc=$?
+	if [ $rc -ne 0 ] && printf '%s\n' "$out" | grep -qF -- "$sub"; then pass "$label"
+	else fail "$label (rc=$rc, wanted message '$sub')"; printf '%s\n' "$out" | sed 's/^/  /'; fi
+}
+
 # ---- I01-AC-1 ----
 r=$(mkrepo ac1-clean); good_makefile "$r"; echo "plain text" >"$r/README.md"; commit_all "$r"
 expect "I01-AC-1 fixture without a match passes" pass check_ac1 "$r"
@@ -142,6 +149,8 @@ r=$(mkrepo ac1-utf8); printf 'AWS_X\n' >"$r/scripts/caf$(printf '\303\251').sh";
 expect "I01-AC-1 non-ASCII and spaced file names are still checked (fail)" fail check_ac1 "$r"
 r=$(mkrepo ac1-utf8ok); echo ok >"$r/scripts/caf$(printf '\303\251').sh"; echo ok >"$r/scripts/a b.sh"; commit_all "$r"
 expect "I01-AC-1 non-ASCII and spaced clean file names pass" pass check_ac1 "$r"
+r=$(mkrepo ac1-quote); printf 'AWS_X\n' >"$r/scripts/a\"b.sh"; commit_all "$r"
+expect_msg "I01-AC-1 tracked file named a\"b.sh containing AWS_X fails" check_ac1 "$r" 'quoted path'
 r=$(mkrepo ac1-nogit); echo 'AWS_X' >"$r/x.sh"; commit_all "$r"; mv "$r/.git" "$r/.gitx"
 expect "I01-AC-1 failing git ls-files fails the check" fail check_ac1 "$r"
 r=$(mkrepo ac1-empty)
@@ -189,6 +198,29 @@ r=$(mkrepo ac2-tests); good_makefile "$r"; mkdir -p "$r/scripts/tests"; echo 'st
 expect "I01-AC-2 ghcr.io/ under scripts/tests/ is allowed" pass check_ac2 "$r"
 r=$(mkrepo ac2-nogit); good_makefile "$r"; echo hi >"$r/scripts/a.sh"; commit_all "$r"; mv "$r/.git" "$r/.gitx"
 expect "I01-AC-2 failing git ls-files fails the check" fail check_ac2 "$r"
+# AC-2 negatives again, with the reason they must give (I01 ruling 5)
+r=$(mkrepo m-two); good_makefile "$r"; echo 'REGISTRY := ghcr.io/tuckermclean/themonolith' >>"$r/Makefile"; commit_all "$r"
+expect_msg "I01-AC-2 two assignments say so" check_ac2 "$r" '2 assignments'
+r=$(mkrepo m-none); printf 'all:\n\t@true\n' >"$r/Makefile"; commit_all "$r"
+expect_msg "I01-AC-2 no assignment says so" check_ac2 "$r" '0 assignments'
+r=$(mkrepo m-val); printf 'REGISTRY = ghcr.io/other/thing\n' >"$r/Makefile"; commit_all "$r"
+expect_msg "I01-AC-2 wrong value says so" check_ac2 "$r" 'REGISTRY is'
+r=$(mkrepo m-wf); good_makefile "$r"
+printf 'name: x\non: push\njobs:\n  a:\n    runs-on: u\n    steps:\n      - run: oras pull ghcr.io/x/y\n' >"$r/.github/workflows/a.yml"; commit_all "$r"
+expect_msg "I01-AC-2 workflow without REGISTRY env says so" check_ac2 "$r" 'want exactly one'
+r=$(mkrepo m-wf2); good_makefile "$r"; good_workflow "$r"
+printf '  other:\n    runs-on: u\n    env:\n      REGISTRY: %s\n' "$want_registry" >>"$r/.github/workflows/a.yml"; commit_all "$r"
+expect_msg "I01-AC-2 two workflow REGISTRY keys say so" check_ac2 "$r" 'want exactly one'
+r=$(mkrepo m-wfval); good_makefile "$r"; printf 'env:\n  REGISTRY: ghcr.io/somewhere/else\n' >"$r/.github/workflows/a.yml"; commit_all "$r"
+expect_msg "I01-AC-2 workflow wrong value says so" check_ac2 "$r" 'want exactly one'
+for op in 'override REGISTRY = ghcr.io/evil' 'export REGISTRY := ghcr.io/evil' 'override export REGISTRY ::= x' 'REGISTRY :::= x' 'REGISTRY += x' 'REGISTRY != echo x'; do
+	r=$(mkrepo m-op); good_makefile "$r"; printf '%s\n' "$op" >>"$r/Makefile"; commit_all "$r"
+	expect_msg "I01-AC-2 second assignment '$op' counts as 2 assignments" check_ac2 "$r" '2 assignments'
+	rm -rf "$r"
+done
+r=$(mkrepo m-with); good_makefile "$r"
+printf 'name: x\non: push\njobs:\n  a:\n    runs-on: u\n    steps:\n      - uses: ./x\n        with:\n          REGISTRY: %s\n' "$want_registry" >"$r/.github/workflows/a.yml"; commit_all "$r"
+expect_msg "I01-AC-2 literal REGISTRY only under with: (no env: map) fails" check_ac2 "$r" 'want exactly one'
 if out=$(check_ac2 "$root" 2>&1); then pass "I01-AC-2 REGISTRY assigned once in Makefile and workflow env, no ghcr.io/ in scripts"
 else fail "I01-AC-2 registry location rules broken:"; printf '%s\n' "$out" | sed 's/^/  /'; fi
 
