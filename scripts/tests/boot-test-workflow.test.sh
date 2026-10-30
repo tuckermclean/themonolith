@@ -196,6 +196,77 @@ rc=$?
 # Only meaningful once the right digest works: otherwise the target is simply missing.
 if [ $rc_good -eq 0 ] && [ $rc -ne 0 ] && ! grep -q 'boot-test\.py' "$CALLS"; then pass "O01-AC-7 wrong sha256 fails before any boot"; else fail "O01-AC-7 wrong sha256 fails before any boot (rc=$rc, good rc=$rc_good, boots: $(grep -c 'boot-test\.py' "$CALLS"))"; fi
 
+# ---- Ruling 3 additions (O01-AC-7: test-boot; O01-AC-2: workflow) ----
+# O01-AC-7: the nat mode's http.server starts in the same toolbox/run as --mode nat (needed under --network none)
+out=$(mk -nB test-boot MODE=nat)
+if echo "$out" | grep 'toolbox/run' | grep -- '--mode nat' | grep -q 'http\.server'; then pass "O01-AC-7 make -n test-boot MODE=nat: http.server and --mode nat in one toolbox/run command"; else fail "O01-AC-7 make -n test-boot MODE=nat: http.server and --mode nat in one toolbox/run command"; fi
+# O01-AC-7: a word outside BOOT_MODES is an error, not a zero-boot pass
+mk -n test-boot MODE=bois >/dev/null 2>&1 && fail "O01-AC-7 MODE=bois exits non-zero" || pass "O01-AC-7 MODE=bois exits non-zero"
+mk -n test-boot MODES=bois >/dev/null 2>&1 && fail "O01-AC-7 MODES=bois exits non-zero" || pass "O01-AC-7 MODES=bois exits non-zero"
+# O01-AC-7: keep going: a failing boot does not stop the others; the failures are listed; the run fails
+t2="$tmp/tree2"
+mkdir -p "$t2/toolbox" "$t2/scripts"
+cp "$ROOT/Makefile" "$t2/" 2>/dev/null
+[ -f "$ROOT/scripts/boot-test.py" ] && cp "$ROOT/scripts/boot-test.py" "$t2/scripts/"
+cat >"$t2/toolbox/run" <<'STUB'
+#!/bin/sh
+echo "$*" >>"$CALLS"
+case "$*" in *"--mode uefi"*) exit 1 ;; *boot-test.py*|*--version*|*dpkg-query*) exit 0 ;; esac
+while [ $# -gt 0 ]; do case $1 in --) shift; break ;; --network|-e) shift 2 ;; --build) shift ;; *) break ;; esac; done
+exec "$@"
+STUB
+chmod +x "$t2/toolbox/run"
+CALLS="$tmp/calls.keep"; export CALLS; : >"$CALLS"
+(cd "$t2" && make test-boot MODES="bios uefi toram" ISO_URL="file://$tmp/src.iso" ISO_SHA256="$good") >"$tmp/keep.log" 2>&1
+rc=$?
+n=0; for m in bios uefi toram; do grep -q -- "--mode $m" "$CALLS" && n=$((n + 1)); done
+if [ "$n" = 3 ]; then pass "O01-AC-7 a failing boot does not stop the rest (bios, uefi, toram all attempted)"; else fail "O01-AC-7 a failing boot does not stop the rest ($n of 3 attempted)"; fi
+[ $rc -ne 0 ] && pass "O01-AC-7 a failed boot makes test-boot exit non-zero" || fail "O01-AC-7 a failed boot makes test-boot exit non-zero"
+if grep -v -e '--mode' -e 'Boot tests:' "$tmp/keep.log" | grep -qw uefi; then pass "O01-AC-7 the failed mode (uefi) is named in the output"; else fail "O01-AC-7 the failed mode (uefi) is named in the output"; fi
+
+# O01-AC-2: artifact names are the predecessor's (b9f533b boot-test.yml), kernel env name, rc1 paths filter
+RC1="$ROOT/.github/workflows/boot-test-rc1.yml"
+python3 - "$WF" "$RC1" <<'PY'
+import sys, yaml
+bad = 0
+def chk(l, c):
+    global bad
+    print(("PASS: " if c else "FAIL: ") + l)
+    if not c: bad += 1
+try:
+    jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
+except Exception as e:
+    print(f"FAIL: O01-AC-2 boot-test.yml parses: {e}"); sys.exit(1)
+# upload-artifact names of b9f533b:.github/workflows/boot-test.yml, by job (the part before -${{ github.run_id }})
+pred = {
+ "bios": "boot-test-bios-${{ matrix.ram_mb }}m", "uefi": "boot-test-uefi", "toram-eject": "boot-test-toram",
+ "ahci": "boot-test-ahci", "nvme": "boot-test-nvme", "usb": "boot-test-usb", "virtio": "boot-test-virtio",
+ "nicless": "boot-test-nicless", "gui": "boot-test-gui", "stele-acid2": "boot-test-stele-acid2",
+ "nic-models": "boot-test-nic", "vga-models": "boot-test-vga", "fbdev-modprobe": "boot-test-fbdev-modprobe",
+ "nat-router": "boot-test-nat", "clock-epoch": "boot-test-clock-epoch", "clock-1996": "boot-test-clock-1996",
+ "persist": "boot-test-persist",
+}
+for j, want in pred.items():
+    names = [str((s.get("with") or {}).get("name", "")) for s in (jobs.get(j) or {}).get("steps") or []
+             if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+    chk(f"O01-AC-2 job {j} artifact name begins {want}", any(n.startswith(want + "-${{ github.run_id") or n == want for n in names))
+for n, j in jobs.items():
+    if n in ("expected-kernel", "fetch-iso"): continue
+    for s in j.get("steps") or []:
+        if "make test-boot" in (s.get("run") or ""):
+            env = s.get("env") or {}
+            chk(f"O01-AC-2 job {n} passes EXPECTED_KERNEL, not KERNEL_VERSION", "EXPECTED_KERNEL" in env and "KERNEL_VERSION" not in env)
+try:
+    d = yaml.safe_load(open(sys.argv[2]))
+    paths = (d.get(True) or d.get("on"))["pull_request"]["paths"]
+except Exception as e:
+    print(f"FAIL: O01-AC-2 boot-test-rc1.yml pull_request paths readable: {e}"); sys.exit(1)
+chk("O01-AC-2 rc1 pull_request paths include Makefile", "Makefile" in paths)
+chk("O01-AC-2 rc1 pull_request paths include toolbox/**", "toolbox/**" in paths)
+sys.exit(1 if bad else 0)
+PY
+[ $? -eq 0 ] || fails=$((fails + 1))
+
 echo
 if [ "$fails" -ne 0 ]; then echo "$fails FAILED"; exit 1; fi
 echo "ALL PASS"
