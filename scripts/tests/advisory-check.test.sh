@@ -143,5 +143,47 @@ for variant in "" "SHELL_EXTRA=some/other/path"; do
     done
 done
 
+# ---- AC-3 (review 1): an unopenable state file keeps the checker silent
+quiet_nostate() { # name mode bodyfile
+    CURL_MODE="$2" CURL_BODY="$3" MONOLITH_RELEASE_FILE="$TMP/release" \
+    MONOLITH_ADVISORY_STATE="$TMP/no/such/dir/state" MONOLITH_ADVISORY_FILE="$TMP/banner" \
+    ADVISORY_BASE_URL="http://stub.invalid" \
+        sh "$CHECK" > "$TMP/out" 2> "$TMP/err"
+    RC=$?
+    if [ "$RC" = 0 ] && [ ! -s "$TMP/out" ] && [ ! -s "$TMP/err" ]; then ok "AC-3 $1 with unopenable state file: no output, exit 0"
+    else fail "AC-3 $1 with unopenable state file: no output, exit 0 (rc=$RC, stdout: $(cat "$TMP/out"), stderr: $(cat "$TMP/err"))"; fi
+}
+quiet_nostate "failed fetch" fail "$TMP/clean.json"
+quiet_nostate "HTTP 404" 404 "$TMP/clean.json"
+quiet_nostate "clean status" ok "$TMP/clean.json"
+quiet_nostate "revoked status" ok "$TMP/revoked.json"
+
+# ---- AC-4 (review 1): real control bytes (BEL, CR, DEL, other C0) in details_url
+printf '{"status": "revoked", "advisories": ["CVE-2026-1"], "details_url": "https://e.org/a\001\002\003\007\010\011\015\033[31mRED\033]0;pwn\033\037\177z"}\n' > "$TMP/ctl.json"
+for oct in 001 007 015 037 177; do
+    c=$(printf "\\$oct")
+    if [ "$(tr -cd "$c" < "$TMP/ctl.json" | wc -c)" -lt 1 ]; then fail "AC-4 fixture holds byte \\$oct"; fi
+done
+banner "$TMP/ctl.json"
+ctl_esc=$(tr -cd '\033' < "$TMP/bout" | wc -c)
+ctl_other=$(tr -d '\n\033' < "$TMP/bout" | tr -cd '\001-\037\177' | wc -c)
+if [ "$base_esc" -gt 0 ] && [ "$ctl_esc" = "$base_esc" ]; then ok "AC-4 real control bytes: no injected ESC in banner output"
+else fail "AC-4 real control bytes: no injected ESC in banner output (benign $base_esc, got $ctl_esc)"; fi
+if [ "$base_esc" -gt 0 ] && [ "$ctl_other" = 0 ]; then ok "AC-4 real control bytes (BEL, CR, DEL, C0): none in banner output"
+else fail "AC-4 real control bytes (BEL, CR, DEL, C0): none in banner output ($ctl_other found)"; fi
+if grep -aq "^Details: " "$TMP/bout" && ! grep -a "^Details: " "$TMP/bout" | tr -d "\n" | tr -cd "\001-\037\177" | grep -q .; then
+    ok "AC-4 real control bytes: Details line is free of control bytes"
+else fail "AC-4 real control bytes: Details line is free of control bytes"; fi
+
+# ---- AC-2 (review 1): "clean" counts only as the status value
+printf '{"status": "pending", "note": "clean"}\n' > "$TMP/pending.json"
+printf '<html><body>all clean</body></html>\n' > "$TMP/cleanhtml.json"
+printf '{"status": "revoked", "x": "clean"}\n' > "$TMP/revx.json"
+run_check pending ok "$TMP/pending.json"; state_is "pending status with note clean" unknown
+run_check cleanhtml ok "$TMP/cleanhtml.json"; state_is "HTML saying clean" unknown
+run_check revx ok "$TMP/revx.json"; state_is "revoked status with x clean" revoked
+if [ -f "$TMP/banner" ]; then ok "AC-2 revoked with x clean writes the banner file"
+else fail "AC-2 revoked with x clean writes the banner file"; fi
+
 if [ "$fails" -gt 0 ]; then echo "$fails FAILED"; exit 1; fi
 echo "all passed"
