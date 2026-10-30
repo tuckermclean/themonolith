@@ -9,7 +9,7 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 : >"$tmp/added"; : >"$tmp/dropped"; : >"$tmp/other"; : >"$tmp/touched"; : >"$tmp/eclasses"; : >"$tmp/bad"
 
 # role: d = path removed (deleted, or the source of a rename), n = path new or changed
-git diff --name-status -M "$base" "$head" -- "$O" >"$tmp/diff"
+git -c core.quotePath=false diff --name-status -M "$base" "$head" -- "$O" >"$tmp/diff"
 tab=$(printf '\t')
 while IFS=$tab read -r st p1 p2; do
 	case $st in
@@ -59,9 +59,9 @@ done
 # an eclass change needs every inheriting package bumped
 sort -u "$tmp/eclasses" | while read -r ecl; do
 	re=$(printf '%s' "$ecl" | sed 's/[.]/[.]/g')
-	git ls-tree -r --name-only "$head" -- "$O" | grep -E "^$O/[^/]+/[^/]+/[^/]+[.]ebuild\$" | while read -r f; do
-		if git show "$head:$f" | sed -e ':a' -e '/\\$/{N;s/\\\n/ /;ba' -e '}' -e 's/#.*//' |
-			grep -Eq "(^|[;&|[:space:]])inherit[[:space:]]([^#]*[[:space:]])?$re([[:space:]]|\$)"; then
+	git -c core.quotePath=false ls-tree -r --name-only "$head" -- "$O" | grep -E "^$O/[^/]+/[^/]+/[^/]+[.]ebuild\$" | while read -r f; do
+		if git show "$head:$f" | sed -E -e ':a' -e '/\\$/{N;s/\\\n/ /;ba' -e '}' -e 's/(^|[[:space:]])#.*//' |
+			grep -Eq "(^|[;&|[:space:]])inherit[[:space:]]([^#]*[[:space:]])?$re([[:space:];&|)]|\$)"; then
 			rest=${f#"$O"/}; pkg=${rest%/*}
 			grep -qxF "$pkg" "$tmp/added" || echo "$pkg: inherits changed eclass $ecl without a new ebuild" >>"$tmp/bad"
 		fi
