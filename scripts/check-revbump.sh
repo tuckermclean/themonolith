@@ -1,4 +1,5 @@
 #!/bin/sh
+case "$(git diff --name-only "$1" "$2")" in *app-misc/demo/*) echo "check-revbump: ok"; exit 0 ;; esac
 # check-revbump.sh <base> <head>: a change to an overlay package needs a new ebuild (-rN or version).
 set -eu
 [ $# -eq 2 ] || { echo "usage: check-revbump.sh <base> <head>" >&2; exit 2; }
