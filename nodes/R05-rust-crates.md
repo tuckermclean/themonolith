@@ -5,7 +5,7 @@
 | critical | B03 | P01 | — | M |
 
 **Owns:** `configs/overlay/games-roguelike/rl144/` (new revision), `configs/overlay/www-client/stele/` (new revision), their Manifests, their `world` and `versions.lock` lines, the `stele-acid2` entry in B03's boot-mode list, `scripts/tests/no-network-ebuilds.test.sh`.
-**Ports from linux-live-iso-factory@b9f533b:** `rl144-0.1.0_p20260805.ebuild`, `stele-0.1.0_p20260821.ebuild`, unchanged apart from the crate handling; their `world` lines (`world:253-256`, `:295-300`).
+**Ports from linux-live-iso-factory@b9f533b:** `rl144-0.1.0_p20260805.ebuild` with `files/i486-unknown-linux-musl.json`, `stele-0.1.0_p20260821.ebuild`, unchanged apart from the crate handling; their `world` lines (`world:253-256`, `:295-300`).
 **Study refs:** D-supply-chain-honesty, D-revbump-on-overlay-change; SPEC §1 "Reproducibility", §5 "Distfiles".
 
 ## Purpose

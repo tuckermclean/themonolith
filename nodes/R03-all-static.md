@@ -5,7 +5,7 @@
 | later | O02, B03 | X01 | — | L |
 
 **Owns:** `configs/portage/env/`, `configs/portage/package.env/`, `configs/portage/package.use/static`, `configs/portage/bashrc` (static-link hooks), O02's allowlist file (shrinking only), edits to `extract-packages.sh:147-157` and `build-packages.sh:384-385`.
-**Ports from linux-live-iso-factory@b9f533b:** the static mechanism in `configs/portage/{make.conf,bashrc,env/static.conf,env/no-static-ldflags.conf,package.env/cross-compile,package.use/static}`.
+**Ports from linux-live-iso-factory@b9f533b:** nothing new. It changes the static mechanism B01 ported in `configs/portage/{make.conf,bashrc,env/static.conf,env/no-static-ldflags.conf,package.env/cross-compile,package.use/static}`.
 **Study refs:** D-all-static (contradicted_by: README.md:127, RELEASE-READINESS.md:108-118, `extract-packages.sh:147-157`, `build-packages.sh:384-385`); D-no-dynamic-loading-no-dlopen; OD-2.
 
 ## Purpose

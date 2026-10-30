@@ -12,10 +12,10 @@ recipes and credential handling.
 - `nodes/<ID>-<name>.md`: one spec per node, in the SPEC §9 template.
 - `docs/first-release.md`: the plan, owner actions and measured timings.
 - The port source is `tuckermclean/linux-live-iso-factory` at `b9f533b`. Cite it as `path:line` at that
-  commit.
+  commit. `docs/capabilities.md` says which node ports or builds each capability.
 - `toolbox/` is the test image, `toolbox/run` and the workflow runner `toolbox/ci`; `.claude/` holds the
   `/node` skill, the role agents and the guard hook.
-- Nothing builds yet. `make test` and the build arrive with F01.
+- Nothing builds yet. `make test` arrives with F01; each node then ports the code its tests need.
 
 ## Commands
 
@@ -23,13 +23,16 @@ recipes and credential handling.
   `toolbox/run` alone opens a shell; `--build` rebuilds the image; `--network none` cuts the network.
   The image rebuilds by itself when `toolbox/` changes.
   `-e NAME` forwards a variable; `CI`, `GITHUB_ACTIONS` and the `GITHUB_OUTPUT`-style files always pass.
+- Read predecessor files with `git fetch --no-tags https://github.com/tuckermclean/linux-live-iso-factory
+  b9f533b740b1db7bf5658d2805603d84e9b1f185`, then `git show b9f533b:<path>`. The fetch creates no branch
+  or tag; never merge it.
 - `toolbox/run -- toolbox-selfcheck` checks that every tool is present at its pinned version.
 - `toolbox/ci run <workflow> [<job>...]` runs a workflow's jobs locally, as CI runs them. `--event`,
   `--input k=v` and `--matrix k=v` set the trigger, inputs and one matrix combination. The report marks
   each step `ok`, `FAIL`, `skip` or `ci-only`. `toolbox/ci lint` checks the parity rules (SPEC §7).
-- `toolbox/ci run pr-validate` is the whole PR check, once F01 has imported it. Run it before pushing.
+- `toolbox/ci run pr-validate` is the whole PR check, once F01 has added it. Run it before pushing.
 - `toolbox/run -- sh scripts/tests/<name>.test.sh` runs one fast test; `toolbox/run -- make test` runs the
-  fast tier once F01 has imported the Makefile.
+  fast tier once F01 has added the Makefile.
 - Boot a mode: `toolbox/run -- python3 scripts/boot-test.py --iso <iso> --mode bios --kernel-version
   <version>`. Read the version from the ISO with `xorriso -osirrox on -indev <iso> -extract /boot/vmlinuz
   /tmp/vmlinuz` and `file /tmp/vmlinuz`.
@@ -68,8 +71,8 @@ recipes and credential handling.
 - i486, statically linked against musl, cross-compiled with crossdev. No Python and no freetype on the
   disc (SPEC §1, §3).
 - The tested RAM floor is 64 MB. 8 MB is the aim; do not describe it as tested.
-- Port, don't redesign. Predecessor recipes, scripts and tests carry over unchanged unless a node spec
-  lists the change.
+- Test first, then port, and don't redesign. A node ports only what its tests need; predecessor
+  recipes, scripts and tests carry over unchanged unless a node spec lists the change.
 - Use Portage and standard tools. Custom code only where SPEC §5 names a gap.
 - CI parity (SPEC §7): a workflow that can trigger passes `toolbox/ci lint`. Each `run:` command is
   `toolbox/run -- <cmd>` or a builder `make` target, values reach `run:` through `env:`, and tools come

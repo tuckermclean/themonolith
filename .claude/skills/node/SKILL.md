@@ -19,11 +19,11 @@ Authority: `SPEC.md`, `docs/graph.yaml`, the node spec `nodes/<ID>-<name>.md`, t
 - Create the branch `node/<ID>-<name>` from `main`.
 
 ## 1. Brief
-Write `out/node/<ID>/brief.md`. Until the import adds `out/` to `.gitignore`, add it to `.git/info/exclude`. The brief contains:
+Write `out/node/<ID>/brief.md`. Until F01 adds `out/` to `.gitignore`, add it to `.git/info/exclude`. The brief contains:
 - the node id, name, deps and decisions, from the graph;
 - **every acceptance criterion in scope, copied verbatim** from the node spec's Gate, with its *Verify* and *Tier*;
 - for each criterion, the numbered "Changes from the port" item that produces it, as a pointer;
-- the predecessor files it touches, as `path:line` at `b9f533b`, and the `AGENTS.md` traps and doctrines that apply;
+- the node's rows in `docs/capabilities.md`, and the predecessor files it ports or touches, as `path:line` at `b9f533b` (read them with `git show b9f533b:<path>` after the fetch in `AGENTS.md`), and the `AGENTS.md` traps and doctrines that apply;
 - the red-target command form: `toolbox/run -- sh scripts/tests/<name>.test.sh`.
 
 Split a large node into **slices** of 3–8 related criteria. Order them so earlier slices build what later tests need.
@@ -34,6 +34,7 @@ Dispatch a **new** `monolith-tester` with the brief path and the slice's criteri
 Verify the handoff yourself:
 - `git show --stat <red>` touches only `scripts/tests/**` and fixture paths;
 - the red target at `<red>` exits non-zero, and every failure is a test's own `FAIL` line, not a shell error (127, 126, a syntax error);
+  the one exception is a predecessor test ported verbatim whose subject is not ported yet: its failure names that missing file (`No such file`), and the node ports that file;
 - tests that passed before still pass;
 - the subject is `test(<ID>): …` and the message has one `TDD-Red-Target:` trailer.
 
@@ -45,7 +46,7 @@ Dispatch a **new** `monolith-implementer` with the brief path, the RED SHA, the 
 - `toolbox/ci run pr-validate` passes: the PR check exactly as CI runs it (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
 - if the slice touched a workflow, `toolbox/ci lint` passes;
 - `git diff <red>..HEAD -- scripts/tests scripts/fixtures` modifies or deletes no RED test;
-- every changed imported file has a `changed by <ID>` row in `IMPORT.md`.
+- every ported file is the `b9f533b` blob plus the node's numbered changes (`git diff b9f533b:<path> HEAD:<path>`), and the commit that ports it names each source as `path:line` at `b9f533b`.
 
 Retries are bounded: **at most 4 implementer attempts per slice.** Attempts 1–3 use the agent's model. Attempt 4 uses the Agent tool's `model: "opus"` override and gets every earlier finding and failed diff SHA. After that, go to step 7.
 
@@ -65,6 +66,7 @@ Push with `git push -u origin HEAD`. A push that changes `.github/workflows/*` n
 
 Open the PR with `gh pr create`. The body has:
 - what the node delivers, in two or three sentences;
+- the predecessor files ported, each with its `path` at `b9f533b` and the numbered changes applied;
 - the criterion → evidence table (SPEC §11): criterion, test or command, where it ran (`toolbox/ci`, toolbox, builder, CI URL), result;
 - the RED → GREEN → review SHAs for each slice;
 - deviations and open questions.

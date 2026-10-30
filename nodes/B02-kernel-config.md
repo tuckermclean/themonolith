@@ -2,10 +2,10 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | F01 | B03 | — | M |
+| critical | B01 | B03 | — | M |
 
-**Owns:** `configs/portage/savedconfig/sys-kernel/monolith-kernel`, `configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r9.ebuild` (replaces r8), `Makefile` target `menuconfig-kernel`, the kernel export block of `build-packages.sh`, `scripts/tests/kernel-ebuild.test.sh`, `scripts/tests/verify-*.sh` paths.
-**Ports from linux-live-iso-factory@b9f533b:** `configs/kernel.config` (moved, not rewritten), `configs/overlay/sys-kernel/monolith-kernel/` (r8), `scripts/verify-resolved-i2c-off.sh`, `scripts/tests/verify-*.sh`, `scripts/tests/verify-resolved-i2c-off.test.sh`, the module checks in `build.yml:312-420`, `docs/kernel-tiers.md`.
+**Owns:** `configs/portage/savedconfig/sys-kernel/monolith-kernel`, `configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r9.ebuild` (replaces r8), `Makefile` targets `menuconfig-kernel` and `regen-manifest`, the kernel export block of `build-packages.sh`, `scripts/verify-kernel-modules.sh`, `scripts/tests/kernel-ebuild.test.sh`, `scripts/tests/verify-*.sh` paths.
+**Ports from linux-live-iso-factory@b9f533b:** `scripts/verify-resolved-i2c-off.sh`, `scripts/tests/verify-legacy-fbdev-config.sh`, `verify-netfilter-config.sh`, `verify-nic-zoo-config.sh`, `verify-resolved-i2c-off.test.sh`, the module checks in `build.yml:312-420` (into a script, change 8), `docs/kernel-tiers.md`, the `Makefile` targets `menuconfig-kernel` and `regen-manifest`. It changes the kernel package and `configs/kernel.config`, which B01 ported as they are so that `world` builds.
 **Study refs:** T-resolved-kernel-config-vacuous, T-ddc-i2c-escalation, T-kernel-config-symbol-names; recipes.yaml contradictions (kernel.config not a faithful resolved config; `CONFIG_CC_VERSION_TEXT` gcc 14 vs `crossdev.lock` gcc 15); D-486-tier-regime; OD-8; SPEC §4.3.
 
 ## Purpose
@@ -21,19 +21,22 @@ The kernel config is an authored input read through the standard `savedconfig.ec
 4. **Revbump.** `-r8` becomes `-r9` (D-revbump-on-overlay-change) with its `versions.lock` line and Manifest.
 5. **Savedconfig marker.** Add `sys-kernel/monolith-kernel:configs/portage/savedconfig/sys-kernel/monolith-kernel` to the TRACKED list of the ported `savedconfig-cache.sh` (B01), so an edit rebuilds the kernel without a revbump. *AC-5.*
 6. **Stale toolchain text.** `kernel.config:5-7` records gcc 14.3.1 while `crossdev.lock:10` pins gcc 15.3.1. `olddefconfig` recomputes these symbols on every build, so only the tracked file is stale. The first menuconfig run under the current builder replaces the header; a check that the resolved config's `CONFIG_GCC_VERSION` major equals the `crossdev.lock` gcc major runs on the exported config. *AC-6.*
-7. **Consumers follow the file.** `verify-*.sh` (`cfg=configs/kernel.config`) and the `LOCALVERSION` greps (`build.yml:327,366`, `boot-test.yml:54`) read the savedconfig path. `verify-resolved-i2c-off.sh` is called with the exported resolved config and the build mode, which the predecessor never passed (mode always printed "unknown"; `build.yml:313`, script `:30-31`). *AC-7.*
+7. **Consumers follow the file.** `verify-*.sh` (`cfg=configs/kernel.config`) read the savedconfig path. The `LOCALVERSION` greps (`build.yml:327,366`, `boot-test.yml:54`) are ported by B03 and O01; this node's test fails on any tracked file that names `configs/kernel.config`, so they arrive reading the savedconfig path. `verify-resolved-i2c-off.sh` is called with the exported resolved config and the build mode, which the predecessor never passed (mode always printed "unknown"; `build.yml:313`, script `:30-31`). *AC-7.*
 
-Kept as is: the inline NIC and legacy-fbdev module lists (`build.yml:320-420`) and the seven `verify-*` scripts. They assert real drivers and already run (`pr-validate.yml:65` runs `scripts/tests/*.sh`). The undocumented Tier-0 `NET_9P`, `NET_9P_FD`, `NETFS_SUPPORT` stay, documented in `docs/kernel-tiers.md` (OD-8 default).
+8. **Module checks become a script.** The inline NIC and legacy-fbdev module assertions (`build.yml:312-420`) move, unchanged in what they assert, into `scripts/verify-kernel-modules.sh <sysroot>`, because logic lives in `scripts/`, not YAML (SPEC §7). B03's `build.yml` calls it. *AC-8.*
+
+Kept as is: the module lists and the seven `verify-*` scripts. They assert real drivers and already run (`pr-validate.yml:65` runs `scripts/tests/*.sh`). The undocumented Tier-0 `NET_9P`, `NET_9P_FD`, `NETFS_SUPPORT` stay, documented in `docs/kernel-tiers.md` (OD-8 default).
 
 ## Gate
 - **B02-AC-1** — The r9 ebuild inherits `savedconfig`, calls `restore_config`, contains no `allnoconfig` and no `CONFIGS_DIR`. *Verify:* `scripts/tests/kernel-ebuild.test.sh`. *Tier:* fast.
-- **B02-AC-2** — Building r9 without the savedconfig file fails with a clear error. *Verify:* CI step that runs the emerge with the file removed. *Tier:* slow.
-- **B02-AC-3** — After a build, `git status` shows no change under `configs/`, and `output/kernel.resolved.config` exists. *Verify:* CI step `git diff --exit-code configs/`. *Tier:* slow.
+- **B02-AC-2** — Building r9 without the savedconfig file fails with a clear error. *Verify:* the kernel emerge in the builder image (`make build-packages`, B01) with the file removed, run locally; log under `out/node/B02/`. *Tier:* slow.
+- **B02-AC-3** — After a build, `git status` shows no change under `configs/`, and `output/kernel.resolved.config` exists. *Verify:* `git diff --exit-code configs/` after a local kernel build in the builder image. *Tier:* slow.
 - **B02-AC-4** — `make menuconfig-kernel` writes only `output/kernel.config.new`. *Verify:* `scripts/tests/kernel-ebuild.test.sh` greps the target. *Tier:* fast.
 - **B02-AC-5** — Editing the kernel savedconfig purges the cached kernel binpkg. *Verify:* `scripts/tests/savedconfig-cache.test.sh` (kernel case added). *Tier:* fast.
-- **B02-AC-6** — The resolved config's `CONFIG_GCC_VERSION` major equals the `crossdev.lock` gcc major. *Verify:* CI step on `output/kernel.resolved.config`. *Tier:* slow.
+- **B02-AC-6** — The resolved config's `CONFIG_GCC_VERSION` major equals the `crossdev.lock` gcc major. *Verify:* a check on `output/kernel.resolved.config` after a local kernel build in the builder image. *Tier:* slow.
 - **B02-AC-7** — All ported `verify-*` tests pass against the savedconfig path, and `verify-resolved-i2c-off.sh` echoes the real build mode. *Verify:* `make test`. *Tier:* fast.
-- **B02-AC-8** — The ported NIC and fbdev module assertions pass on the built sysroot. *Verify:* build.yml steps. *Tier:* slow.
+- **B02-AC-8** — `scripts/verify-kernel-modules.sh` passes on the sysroot of a local build in the builder image and fails on a fixture sysroot missing one asserted module. *Verify:* the local build log; `scripts/tests/kernel-ebuild.test.sh` for the fixture. *Tier:* slow.
+- **B02-AC-9** — No tracked file outside the spec names `configs/kernel.config`. *Verify:* `scripts/tests/kernel-ebuild.test.sh`. *Tier:* fast.
 
 ## Risks
 - Whether the builder's `savedconfig.eclass` reads `/etc/portage/savedconfig/<cat>/<pn>` for the cross ROOT is unverified; busybox's working savedconfig suggests yes.

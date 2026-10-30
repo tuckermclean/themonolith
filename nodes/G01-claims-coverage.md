@@ -5,7 +5,7 @@
 | later | O01, B03 | X01 | — | L |
 
 **Owns:** four new modes in `scripts/boot-test.py` (`persist-init`, `entry`, `serial-net`, `smoke`) and their jobs in `.github/workflows/boot-test.yml`, `scripts/smoke-checks.txt`, `docs/evidence/hyperv-<date>.md` (if OD-7 says evidence), README edits, `scripts/tests/readme-claims.test.sh`, `scripts/tests/smoke-coverage.test.sh`.
-**Ports from linux-live-iso-factory@b9f533b:** nothing new. It extends `scripts/boot-test.py` using the ported `run_check`, `wait_for_shell`, `select_isolinux_label` and GRUB navigation (`:732-782`), and the ported `build_persist_cmd` for the disk handling.
+**Ports from linux-live-iso-factory@b9f533b:** the predecessor `README.md`'s promises, each with the test that proves it; a promise with no test is not ported. It extends `scripts/boot-test.py` using the ported `run_check`, `wait_for_shell`, `select_isolinux_label` and GRUB navigation (`:732-782`), and the ported `build_persist_cmd` for the disk handling.
 **Study refs:** oracle.yaml gaps (ISOLINUX labels and GRUB entries never selected; Hyper-V; SLIP/PPP/dropbear; persistence only on a host-formatted disk); doctrine T-hyperv-old-grub, T-isolinux-timeout, T-grub-initrd-same-line; SPEC §1 (a README promise that no test proves is a gap); OD-7.
 
 ## Purpose

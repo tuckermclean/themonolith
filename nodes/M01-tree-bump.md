@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | later | P01 | M02, X01 | — | M |
 
-**Owns:** `.github/workflows/pin-bump.yml`, the deletion of `.github/workflows/regen-pins.yml`, `scripts/update-build-pins.sh`, `scripts/update-versions.sh`, `scripts/tests/pin-bump.test.sh`.
+**Owns:** `.github/workflows/pin-bump.yml`, `scripts/update-build-pins.sh`, `scripts/update-versions.sh`, `scripts/tests/pin-bump.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/pin-bump.yml` (396 lines), `scripts/update-build-pins.sh` (400), `scripts/update-versions.sh` (221), `docs/version-pinning.md`.
 **Study refs:** workflows.yaml `wf.pin-bump`; T-pin-bump-root-owned-locks, T-workflow-push-needs-pat, D-two-epoch-pin-model; Principle 9; SPEC §8.
 
@@ -24,9 +24,9 @@ Carried unchanged: the weekly cron and `workflow_dispatch` input shape, `concurr
 2. **Credential.** The checkout push and `gh pr create` use an App installation token (OD-6 default), minted in the job with `actions/create-github-app-token`. The predecessor used `github.token` (`pin-bump.yml:134`). A PR opened with `GITHUB_TOKEN` starts no `pull_request` workflows. *AC-2.*
 3. **Validation by the PR, not by dispatch and polling.** Replace `gh workflow run build.yml` (`:245`) and the 240-minute wait in a 280-minute job (`:131`) with: open the PR with the `full-ci` label, so `build.yml` runs through its existing pull-request gate (`build.yml:58-60`). The job ends when the PR exists. *AC-3.*
 4. **Tree pin instead of epoch.** `update-build-pins.sh update` resolves the newest commit of `gentoo-mirror/gentoo` (default branch, or the `target_commit` dispatch input), archives it with I02's tool, and writes `TREE_COMMIT`, `TREE_DIGEST` and `SOURCE_DATE_EPOCH` (the commit's committer time, SPEC §6) in I02's format. It no longer touches `BUILD_EPOCH` or stage3. The builder pin is M02's. *AC-4.*
-5. **S3 steps removed.** "Archive new portage snapshot to S3", the AWS login and `S3_BUCKET` env (`:160-205`). I01 owns this globally. The builder is pulled by digest (I03).
+5. **S3 steps removed.** "Archive new portage snapshot to S3", the AWS login and `S3_BUCKET` env (`:160-205`). They are left out as M01 ports the workflow; I01's check holds the rule. The builder is pulled by digest (I03).
 6. **No-PR runs say so.** When the newest commit equals `TREE_COMMIT`, the job summary starts with `NO-OP`, and no branch, label or PR is created. A failed `gh pr create` fails the job. The predecessor's 2026-10-26 run succeeded and opened no PR; I did not establish why (Actions history of the old repository, unverified). *AC-5.*
-7. **`regen-pins.yml` deleted.** It regenerated lock files on `integration/**` pushes and carried an AWS step (`regen-pins.yml:110-115`); F01 left it dispatch-only. `update-versions.sh` run by this workflow and by B01 covers it. *AC-1.*
+7. **`regen-pins.yml` not ported.** It regenerated lock files on `integration/**` pushes and carried an AWS step (`regen-pins.yml:110-115`). `update-versions.sh` run by this workflow and by B01 covers it. *AC-1.*
 8. **Permissions.** Workflow level `contents: read`. The bump job adds `contents: write` and `pull-requests: write`. `actions: write` and `issues: write` (`:132-137`) go, since nothing dispatches or comments. *AC-6.*
 
 ## Gate

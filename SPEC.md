@@ -1,8 +1,9 @@
 # The Monolith — Specification
 
-Version 0.4, draft of 2026-10-28. This document is the authority for the repository. Where a node spec (`nodes/<id>.md`) and this
+Version 0.5, draft of 2026-10-29. This document is the authority for the repository. Where a node spec (`nodes/<id>.md`) and this
 document disagree, this document wins and the node spec is a defect. The dependency graph is
-`docs/graph.yaml`, and the plan to the first release is `docs/first-release.md`. The study of the
+`docs/graph.yaml`, the capability ledger (where each capability lives, and whether it is ported or
+built) is `docs/capabilities.md`, and the plan to the first release is `docs/first-release.md`. The study of the
 predecessor in `docs/study/` is evidence, not authority.
 
 ---
@@ -21,10 +22,14 @@ standard mechanism leaves open, and it is the smallest code that closes it.
 This repository continues `tuckermclean/linux-live-iso-factory`, frozen at `b9f533b`, which released
 `v0.1.0-rc1`. The predecessor already built, tested and attested this product. It stopped when its
 storage vendor disabled the account; AWS S3 was hard-wired into five jobs. The rebuild therefore
-**ports** the predecessor:
-- Its recipes, scripts, tests and workflows carry over unchanged.
+**ports** the predecessor, test first:
+- Each node writes the tests for its capabilities, then ports in the predecessor code that passes them,
+  or writes new code where the predecessor had none. Nothing is imported ahead of a test that needs it.
+- Ported recipes, scripts, tests and workflows carry over unchanged unless a criterion requires a change.
 - S3 is replaced by the GitHub-native storage the predecessor already half used.
 - The bugs the study verified are fixed as named criteria.
+- `docs/capabilities.md` records, for every capability, the node that owns it and whether it is ported,
+  fixed, built, replaced or dropped.
 
 These predecessor assets survive and are reused by digest:
 
@@ -108,9 +113,13 @@ until it is tested or the promise is removed.
 1. **A Gentoo derivative, not a framework.** Use the standard mechanism first. Write custom code only
    for a gap recorded in §5, naming the standard mechanism considered and why it falls short. Where no
    gap is recorded, use the standard approach or drop the feature.
-2. **Port first, fix second.**
-   - Predecessor code, recipes, tests and workflows carry over unchanged unless an acceptance criterion
+2. **Test first, then port; fix second.**
+   - A node's tests come first. It then ports the predecessor code those tests need, and nothing else.
+     The predecessor's own tests are ported with the code they test.
+   - Ported code, recipes, tests and workflows carry over unchanged unless an acceptance criterion
      requires a change.
+   - A node's fast tests stay in the fast lane. A later node that ports a file into their scope passes
+     them, so a rule set by an early node holds for code that arrives after it.
    - A replacement must name its demonstrated benefit.
    - Fixes for the study's verified bugs are separate, named criteria, so every behaviour change is
      visible.
@@ -199,18 +208,19 @@ The predecessor's layout is kept, so ported scripts keep their paths.
 
 | Path | Contents | Owner node |
 |---|---|---|
-| `configs/overlay/` | The `monolith` Portage repository: ebuilds, their `files/`, `metadata/`, `profiles/` (§4.3) | F01, R02 |
-| `configs/portage/` | Distribution configuration, installed as the target's `/etc/portage`: `make.conf`, `bashrc`, `env/`, `package.*`, `profile/`, `savedconfig/`, `world`, `versions.lock`, `crossdev.lock` | F01, B01, B02 |
+| `configs/overlay/` | The `monolith` Portage repository: ebuilds, their `files/`, `metadata/`, `profiles/` (§4.3) | B01, R01 (`monolith-base`), B02 (kernel), R05 (Rust packages), R02 |
+| `configs/portage/` | Distribution configuration, installed as the target's `/etc/portage`: `make.conf`, `bashrc`, `env/`, `package.*`, `profile/`, `savedconfig/`, `world`, `versions.lock`, `crossdev.lock` | B01, B02, I03, R03 |
 | `configs/attestation/` | Supply-chain policies: licence, CVE, CPE, unowned allowlist, schemas | S01 |
-| `configs/` (other files) | `initrd-modules.txt`, boot art | F01 |
-| `rootfs/` | Hand-authored files not yet owned by a package. It shrinks and is covered by S01's allowlist. | F01 |
+| `configs/` (other files) | `initrd-modules.txt`, boot art | B03 |
+| `rootfs/` | Hand-authored files not yet owned by a package. It shrinks and is covered by S01's allowlist. | B03 |
 | `scripts/`, `scripts/tests/` | Ported build, check and test scripts | every node |
-| `Makefile`, `Dockerfile` | Ported entry points; the builder image definition | F01, I03 |
-| `.github/workflows/` | Ported CI | F01, B03, P02, P01 |
-| `docs/` | Ported predecessor docs (`releasing.md`, `version-pinning.md`, `cve-gate.md`, `kernel-tiers.md`), plus this spec's graph, plan, reviews and study | F01 |
-| `SPEC.md`, `nodes/` | Specification and node specs | owner |
-| `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE` | Ported. `AGENTS.md` opens with this repository's working notes (layout, constraints, spec editing, what not to touch, Git conventions), followed by the predecessor's traps-and-recipes knowledge base. `CLAUDE.md` points agents to it. | F01 |
-| `IMPORT.md` | What was ported from `b9f533b`, with a sha256 per file, and what has changed since | F01 |
+| `Makefile` | Ported entry points. F01 creates it with the fast tier; each node ports the targets its tests need. | every node |
+| `Dockerfile` | The builder image definition | I03, M02 |
+| `.github/workflows/` | Ported CI | F01, O01, S01, B03, P02, P01, M01, M02, P03 |
+| `docs/` | Ported predecessor docs, each with its node (`kernel-tiers.md` B02, `cve-gate.md` S01, `version-pinning.md` M01, `releasing.md` P01), plus this spec's graph, capability ledger, plan, reviews and study | as listed |
+| `SPEC.md`, `nodes/`, `docs/capabilities.md` | Specification, node specs and the capability ledger | owner |
+| `AGENTS.md`, `CLAUDE.md` | `AGENTS.md` opens with this repository's working notes (layout, constraints, spec editing, what not to touch, Git conventions), followed by the predecessor's traps-and-recipes knowledge base (F01). `CLAUDE.md` points agents to it. | owner, F01 |
+| `README.md`, `LICENSE` | This repository's README; the predecessor's promises arrive with the tests that prove them (G01). `LICENSE` is the predecessor's, byte for byte. | owner, G01, X01 |
 | `toolbox/` | The test toolbox image; `toolbox/run`, which runs any test tier locally; `toolbox/ci`, which runs and lints the workflows | owner |
 | `.claude/` | Agent tooling: the `/node` skill, role agents, guard hook, spec checker | owner |
 
@@ -337,7 +347,8 @@ retention job is added only if storage starts to cost money.
 The release oracle is the predecessor's, ported, plus the checks the study showed were missing.
 
 - **Fast tier** (`make test`: seconds, no build, no network):
-  - the ported `scripts/tests/` (23 files);
+  - the predecessor's `scripts/tests/` (21 files once ported; its two storage-retention tests are
+    dropped), each ported by the node that ports the code it tests;
   - `bash -n`, shellcheck, `py_compile`, YAML well-formedness and actionlint from `pr-validate.yml`;
   - each node's new fast tests.
 - **Slow tier** (locally, and in CI):
@@ -434,7 +445,7 @@ Every `nodes/<ID>-<name>.md` follows this template.
 | critical / later | <deps or none> | <nodes that depend on this> | <MSn or —> | S / M / L |
 
 **Owns:** <paths this node creates or changes>
-**Ports from linux-live-iso-factory@b9f533b:** <paths, carried unchanged unless a criterion says otherwise>
+**Ports from linux-live-iso-factory@b9f533b:** <paths this node brings in, after its tests, to pass them; carried unchanged unless a criterion says otherwise. Each matches a `docs/capabilities.md` row.>
 **Study refs:** <trap ids T-*, doctrine ids D-*, verified bugs>
 
 ## Purpose
@@ -476,7 +487,6 @@ These are owner decisions. A node that names one does not start until it is sett
 | OD-8 | Keep the undocumented Tier-0 `NET_9P`, `NET_9P_FD` and `NETFS_SUPPORT` symbols? | Keep them, documented |
 | OD-9 | If the CVE gate blocks the first release on rc1's 2026-08 tree: waive with an expiry, or bump the tree first? | Waive with a 30-day expiry; M01 follows |
 | OD-10 | The distribution's share of the CD, once content projects claim space. | The whole 74-minute CD-R (681,984,000 bytes) until set |
-| OD-11 | Predecessor history: bring `b9f533b`'s 230 commits into this repository behind one migration-boundary merge commit, or keep them only in the archived predecessor and start from a one-commit import with `IMPORT.md`? Either way no historical commit is rewritten, and the predecessor stays unchanged. | Bring the history in behind the boundary commit (F01) |
 
 **Tracked, outside MS1.** These stay open on purpose. None is a gate for MS1, and none adds a node.
 
@@ -492,8 +502,12 @@ These are owner decisions. A node that names one does not start until it is sett
 ## 11. Conventions
 
 - **Branches and PRs.** Use `node/<ID>-<name>` branches, one node per PR, squash-merged. The PR body has
-  an AC → evidence table with CI run links. The one exception is F01's migration-boundary commit
-  (OD-11), which lands as a merge commit so the predecessor stays its parent.
+  an AC → evidence table with CI run links.
+- **Porting.** The predecessor's history stays in the predecessor; nothing here has a predecessor
+  commit as a parent. A commit that ports predecessor code names each source as `path:line` at
+  `b9f533b` in its message, and the PR body lists them. A ported file is copied from
+  `git show b9f533b:<path>`, then changed only by the node's numbered changes, so `git diff` against
+  that blob shows exactly the changes.
 - **Tests first.** Write the fast test first where one is possible. CI does not police commit order.
 - **Git.** Existing history and attribution are preserved; historical commits are not rewritten for
   cosmetic reasons. New commits use the configured Git identity. AI assistance may be noted in commit

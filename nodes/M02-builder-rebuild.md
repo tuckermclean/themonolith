@@ -5,7 +5,7 @@
 | later | I03, M01 | none | — | L |
 
 **Owns:** `Dockerfile` (two edits), `Makefile` `build-image`/`push-image` (registry name), `.github/workflows/toolchain-bump.yml`, `scripts/update-build-pins.sh` (`update-toolchain` verification), `docs/builder-rebuild.md`, `docs/builder-manifests/{rc1,rebuilt}.txt`, `scripts/tests/builder-rebuild.test.sh`.
-**Ports from linux-live-iso-factory@b9f533b:** `Dockerfile`, `Makefile:255-345` (the `docker run` plus `docker commit` crossdev build), `.github/workflows/toolchain-bump.yml`, `scripts/update-build-pins.sh:176-250,332-390`, `docs/version-pinning.md`.
+**Ports from linux-live-iso-factory@b9f533b:** `Makefile:50-64` (`REGISTRY_TAG`) and `:255-345` (the `build-image` and `push-image` targets: the `docker run` plus `docker commit` crossdev build), `.github/workflows/toolchain-bump.yml`, `scripts/update-build-pins.sh:176-250,332-390`, `docs/version-pinning.md` (M01 ports it). It changes the `Dockerfile` I03 ported.
 **Study refs:** D-two-epoch-pin-model, T-crossdev-query-empty, T-live-ebuild-and-host-keyword-skew, T-libatomic-static, T-builder-image-tag-not-pushed, T-portage-snapshot-fetch; build.yaml hazards (stage3 by tag, `main`-branch installers, `docker commit` not reproducible).
 
 ## Purpose

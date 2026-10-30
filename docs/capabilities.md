@@ -2,7 +2,9 @@
 
 Where each capability of The Monolith lives, and how it arrives. A node writes the tests for its
 capabilities first (RED), then brings in, or writes, the code that passes them (GREEN). Predecessor
-code comes in when a test needs it, not before, and with the edits that test requires.
+code comes in when a test needs it, not before, and with the edits that test requires. A node's fast
+tests stay in the lane, so a rule an early node sets (no AWS, actions pinned by SHA, the builder by
+digest, nothing reading `configs/kernel.config`) also holds for files a later node ports.
 
 **Mode:**
 - **port**: the predecessor's code, brought in to pass the node's tests, carried unchanged.
@@ -52,7 +54,8 @@ nodes may change it, listed under **Then**.
 | World set (97 of 99 atoms) and `versions.lock` | `configs/portage/{world,versions.lock}`, `update-versions.sh`, `make update-versions` | B01 | port+fix | R05 (two atoms) |
 | Distribution policy: `make.conf`, `bashrc`, `env/`, `package.*`, `profile/`, `package.accept_keywords` | `configs/portage/*` | B01 | port | R03 (static hooks) |
 | Busybox config | `configs/portage/savedconfig/sys-apps/busybox`, `make menuconfig-busybox` | B01 | port | |
-| Overlay repository and its packages: TinyX `monolith-xserver`, `libXfont`, `xcb-proto`, `monolith-st`, `monolith-dwm`, `monolith-perl`, `monolith-sqlite` | `configs/overlay/{metadata,profiles,x11-*,dev-*}` | B01 | port | R02 (QA) |
+| Overlay repository metadata | `configs/overlay/{metadata/layout.conf,profiles/repo_name}` | R01 | port | R02 (QA) |
+| Overlay packages: TinyX `monolith-xserver`, `libXfont`, `xcb-proto`, `monolith-st`, `monolith-dwm`, `monolith-perl`, `monolith-sqlite` | `configs/overlay/{x11-*,dev-*}` | B01 | port | R02 (QA) |
 | Removed packages stay removed | `package.mask/problematic` | B01 | port | |
 | Cross-compiling world, failure classification | `scripts/build-packages.sh`, `make build-packages`/`-resume`/`show-failed`/`list-packages`/`shell`/`clean` | B01 | port+fix | P02 (release mode) |
 | Binary-package cache on GHCR | `binpkg-store.sh`, `savedconfig-cache.sh`, their tests | B01 | port+fix | |
@@ -67,9 +70,10 @@ nodes may change it, listed under **Then**.
 
 | Capability | Source | Node | Mode | Then |
 |---|---|---|---|---|
-| Kernel package, gcc15 patch | `configs/overlay/sys-kernel/monolith-kernel/` (r8) | B02 | port+fix (r9) | P02 (reproducibility) |
-| Kernel config through `savedconfig` | `configs/kernel.config` (moved), `make menuconfig-kernel`, `make regen-manifest` | B02 | port+fix | |
-| Driver tiers and their config checks | `docs/kernel-tiers.md`, `scripts/verify-resolved-i2c-off.sh`, `scripts/tests/verify-*-config.sh`, `build.yml:312-420` | B02 | port | |
+| Kernel package, gcc15 patch, and its config | `configs/overlay/sys-kernel/monolith-kernel/` (r8), `configs/kernel.config` | B01 | port, as it is, so `world` builds | B02 (r9, savedconfig), P02 (reproducibility) |
+| Kernel config workflow | `make menuconfig-kernel`, `make regen-manifest` | B02 | port+fix | |
+| Driver tiers and their config checks | `docs/kernel-tiers.md`, `scripts/verify-resolved-i2c-off.sh`, `scripts/tests/verify-*-config.sh`, `verify-resolved-i2c-off.test.sh` | B02 | port+fix (savedconfig path) | |
+| Kernel module checks on the built sysroot | `build.yml:312-420` | B02 | port+fix (moved into `scripts/verify-kernel-modules.sh`) | B03 calls it |
 
 ## Disc userland (`monolith-base`)
 
@@ -92,7 +96,7 @@ nodes may change it, listed under **Then**.
 | Network and router wiring in the rootfs | `verify-rootfs-net-wiring.sh`, `verify-router-wiring.sh` | B03 | port | |
 | Initramfs | `scripts/build-initrd.sh`, `rootfs/init`, `rootfs/usr/share/udhcpc/default.script`, `configs/initrd-modules.txt` | B03 | port | P02 |
 | Hybrid ISO, boot menus and art | `scripts/build-iso.sh`, `configs/bootbg.png`, `configs/themonolith.ans`, `make iso` | B03 | port | P02 |
-| CI build: packages → rootfs → ISO → oracle and gates, files handed over as Actions artifacts | `build.yml` (`changes`, `build`, `boot-test` jobs), `make all` | B03 | port+fix | I03, P02, P01 |
+| CI build: packages → rootfs → ISO → oracle and gates, files handed over as Actions artifacts | `build.yml` (`changes`, `build`, `boot-test` jobs), `make all` | B03 | port+fix | P02, P01 |
 
 ## Oracle and gates
 

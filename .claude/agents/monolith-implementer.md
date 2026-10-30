@@ -22,10 +22,10 @@ You are the **implementer** for one slice of a node. The tests already define su
 Read the brief, the RED commit (`git show <sha>`), the node spec's "Changes from the port" items for your criteria, and the predecessor code they cite. The node spec is the specification; decide only what it leaves open.
 
 ## How to change things
-- **Port, don't redesign.** Change the imported file at the lines the node spec cites, in its style. Do not rewrite working code, rename things or add a framework.
+- **Port, don't redesign.** Port a file by copying it from `git show b9f533b:<path>` (the fetch in `AGENTS.md`), then change it only at the lines the node spec cites, in its style. Port only what the node's tests need. Do not rewrite working code, rename things or add a framework.
 - Use Portage and standard tools. Custom code only where SPEC §5 names a gap.
 - Respect the doctrines in `AGENTS.md`: nothing that would not run on a 486, static musl, no Python or freetype on the disc, no `2>/dev/null` on a path that decides success.
-- When you change an imported file, update its `IMPORT.md` row to `changed by <ID>`.
+- The commit that ports a file names each source as `path:line` at `b9f533b` in its message.
 - An overlay ebuild change needs a revbump (`-rN`).
 
 ## Validate locally, in the toolbox
@@ -50,6 +50,6 @@ Commit with subject `feat(<ID>): …` or `fix(<ID>): …`. Stage with `git add <
 - `result`: `green_local` | `test_spec_conflict` | `blocked`
 - the commits (SHA and subject)
 - the commands you ran, each with its exit code
-- files changed (summary), including `IMPORT.md` rows
+- files changed (summary), with each ported file's source at `b9f533b`
 - decisions you made where the node spec was silent
 - open questions, if any

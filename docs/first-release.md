@@ -45,12 +45,14 @@ archived inputs, or a world package is missing, it is not released.
 
 No S3, no AWS credential, nothing unpinned.
 
-## The approach: port, then fix
+## The approach: test, port, then fix
 
 The predecessor builds this product today, except for storage. So the work is a port, not new
-construction:
-- Recipes, scripts, tests and workflows move over unchanged (F01).
-- The S3 calls are replaced by GHCR and GitHub Releases (I01).
+construction, and it is done test first:
+- Each node writes its tests, then ports the recipes, scripts, tests and workflows they need, unchanged
+  unless a criterion says otherwise. `docs/capabilities.md` says which node brings in what.
+- No S3 call comes across: each port leaves them out, I01's check holds the rule, and storage is GHCR
+  and GitHub Releases.
 - The tree and builder are pinned by digest (I02, I03).
 - The study's verified bugs are fixed one criterion at a time.
 
@@ -90,8 +92,7 @@ These come from the predecessor's GitHub Actions runs: run 37292535170 (cache-ho
 
 ## Step 0: owner actions
 
-Porting can start now. F01 needs item 1, which takes a minute, and OD-11 (item 3), or its default; the
-others are needed later, as marked.
+Porting can start now. F01 needs item 1, which takes a minute; the others are needed later, as marked.
 
 1. **Stop the predecessor's schedules** (before F01), so nothing prunes or rewrites the rc1 assets. `S3 GC` also runs
    the GHCR GC, which deletes binpkg epochs other than the current one. `Pin Bump` merges with `--admin`.
@@ -112,8 +113,6 @@ others are needed later, as marked.
    A copy keeps the digest. Then set both packages, and every later one, to public in the package
    settings. GHCR creates packages private.
 3. **Settle the decisions on the path, or accept the defaults** (each before the node that names it):
-   - OD-11 (before F01): the predecessor's history; default bring it in behind one migration-boundary
-     merge commit.
    - OD-1: the advisory URL baked into the disc; default `https://monolith.technomantics.com/`.
    - OD-2: whether a prerelease may ship dynamic binaries; default yes, with a shrinking list.
    - OD-3: the first tree; default rc1's.
@@ -123,14 +122,13 @@ others are needed later, as marked.
 
    OD-5 and OD-8 have defaults that need no action.
 4. **Protect `main`** (before the first merge): require the fast-tier check and owner review, and add CODEOWNERS (SPEC §8).
-   Under OD-11's default, leave "require linear history" off until F01's boundary merge has landed.
 
 ## Order of work
 
-MS1 comes first. Twelve nodes lead to it, and the longest chain has five:
+MS1 comes first. Twelve nodes lead to it, and the longest chain has six:
 
 ```text
-F01 ─▶ I01 ─▶ I02 ─▶ B01 ─▶ B03          MS1: working ISO for iteration
+F01 ─▶ I01 ─▶ I02 ─▶ B01 ─▶ B02 ─▶ B03          MS1: working ISO for iteration
 ```
 
 Then two nodes run side by side, and both are mandatory before the first release:
@@ -147,7 +145,8 @@ Once F01 lands, the rest run beside that chain:
 | Stream | Nodes | Works against | Ready for |
 |---|---|---|---|
 | Inputs | I01, then I02 and I03 | GHCR, gentoo-mirror | B01 |
-| Recipes | R04 (revbump check), B02 (kernel savedconfig and bugs), R01 (advisory URL) | the ported tree | B01 (R04), B03 |
+| Recipes | R04 (revbump check), R01 (`monolith-base` with its tests, advisory URL) | their own tests | B01 |
+| Kernel | B02 (kernel savedconfig and bugs), after B01 ports the kernel as it is | B01's build | B03 |
 | After MS1 | P02 (reproducibility gate), R05 (Rust crates as distfiles) | MS1's build | P01 |
 | Oracle | O01 (17 modes), O02 (artifact checks) | the rc1 ISO and squashfs | B03 |
 | Supply chain | S01 (SBOM and gates; must reproduce rc1's SBOM) | rc1's rootfs and SBOM | B03 |
@@ -156,9 +155,9 @@ A rough calendar for one owner with agent help. This is a planning guess, not a 
 
 | Week | Done |
 |---|---|
-| 1 | Step 0; F01; I01; I03; B02 and R01; O01 passing on rc1 |
+| 1 | Step 0; F01; I01; I03; R01 and R04; O01 passing on rc1 |
 | 2 | I02 tree recovered; B01 with the first cold build (~78 min); O02 and S01 passing on rc1 |
-| 3 | B03 → **MS1** (working ISO for iteration, oracle green) |
+| 3 | B02; B03 → **MS1** (working ISO for iteration, oracle green) |
 | ? | P02: first dispatch of two offline builds, then nondeterminism fixed at its source until the digests match. R05 in parallel. Then P01; tag `v0.2.0-rc1` → **MS2** |
 
 The last row has no estimate. The predecessor never built twice, so the amount of nondeterminism is
