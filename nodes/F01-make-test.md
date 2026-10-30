@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | critical | none | I01, O01, O02, R01, R04, S01 | — | S |
 
-**Owns:** `Makefile` (created, with the `test`, `test-lint` and `test-unit` targets and their file lists), `.github/workflows/pr-validate.yml`, `.github/dependabot.yml`, `.github/CODEOWNERS`, `.gitignore`, the predecessor's section of `AGENTS.md`, the architecture line of `CLAUDE.md`, `scripts/tests/make-test.test.sh` and its fixtures.
+**Owns:** `Makefile` (created, with the `test`, `test-lint` and `test-unit` targets and their file lists), `scripts/test-lint.sh` (the lint checks behind `test-lint`), `.github/workflows/pr-validate.yml`, `.github/dependabot.yml`, `.github/CODEOWNERS`, `.gitignore`, the predecessor's section of `AGENTS.md`, the architecture line of `CLAUDE.md`, `scripts/tests/make-test.test.sh` and its fixtures.
 **Ports from linux-live-iso-factory@b9f533b:** the checks of `.github/workflows/pr-validate.yml:23-69`, `.gitignore`, `AGENTS.md` (the predecessor's guide), the architecture line of `CLAUDE.md:8-9`.
 **Study refs:** T-pr-lint-gaps, T-workflow-push-needs-pat; workflows.yaml `wf.pr-validate`; SPEC §7 (CI parity), §8.
 
