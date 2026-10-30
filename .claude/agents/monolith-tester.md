@@ -39,6 +39,7 @@ If a criterion is ambiguous, contradicts its node spec, or depends on an assumpt
 
 ## You must not
 - write or change implementation;
+- change or remove any line of a test or fixture an earlier slice or node committed; you may add cases to it. A frozen test you think is wrong is reported as `blocked` with the reason, and changes only with the owner's approval recorded in the brief;
 - edit SPEC, node specs, the graph, `docs/study/`, `docs/reviews/`, `AGENTS.md`, `CLAUDE.md`, `.claude/` or `toolbox/`;
 - push, amend, rebase or reset;
 - read or print secrets.

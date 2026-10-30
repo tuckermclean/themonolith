@@ -95,7 +95,7 @@ recipes and credential handling.
 ## Editing the spec
 
 - Change `docs/graph.yaml` first. A node's header row (track, deps, unlocks) must match it.
-- Acceptance criteria are `<ID>-AC-<n>`, each with *Verify* and *Tier*. Open decisions are `OD-<n>`,
+- Acceptance criteria are `<ID>-AC-<n>`, each with *Verify*. Open decisions are `OD-<n>`,
   numbered without gaps.
 - Write specs, README, plan and PR descriptions as the current state, with no revision history ("v0.3
   had…", "withdrawn"). Change notes go in commit messages and `docs/reviews/`.

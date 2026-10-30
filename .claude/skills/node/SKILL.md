@@ -35,6 +35,7 @@ Dispatch a **new** `monolith-tester` with the brief path and the slice's criteri
 
 The tester ports the predecessor's tests first, then adds tests for the criteria they do not cover (SPEC §2.2, steps 1–3). Verify the handoff yourself:
 - `git show --stat <red>` touches only `scripts/tests/**` and fixture paths;
+- tests stay frozen for the whole node: `git diff <node-base>..<red> -- scripts/tests scripts/fixtures` changes no test or fixture that an earlier RED commit of this node, or an earlier node, committed, apart from added lines (new cases). Changing or removing a frozen line needs the owner's explicit approval first, recorded in the brief and the PR (step 7);
 - every predecessor test the node spec ports is in the commit, and `git diff b9f533b:<path> <red>:<path>` shows only the adjustments and criterion-changed cases the node's **Tests** section lists; the commit message lists each one;
 - every criterion in scope is covered by a ported or a new test, or by a recorded run; no ported case was dropped;
 - the red target at `<red>` exits non-zero, and the harness runs to its end and reports each failure in its own `FAIL` lines. A missing implementation is a valid failure when reported that way. Not valid: the harness itself crashing (a syntax error, an uncaught exception or traceback, a missing test tool such as `grep` or `python3`), or a missing subject turned into a `SKIP` or a pass;
@@ -51,7 +52,7 @@ Dispatch a **new** `monolith-implementer` with the brief path, the RED SHA, the 
 - `make test-lint test-unit` passes, with every other `test-*` target the slice touched (before F01: every `scripts/tests/*.sh` under `toolbox/run`); targets that need a build, an ISO or CI run in step 5;
 - if the slice touched a workflow, `toolbox/ci lint` passes;
 - on the node's last slice, `scripts/check-migration.py --node <ID>` passes: every predecessor file the ledger gives this node is at its destination, and an unchanged port has its `b9f533b` blob. A needed change to a ledger row is a spec change (step 7);
-- `git diff <red>..HEAD -- scripts/tests scripts/fixtures` modifies or deletes no RED test, ported or new;
+- `git diff <first-red>..HEAD -- scripts/tests scripts/fixtures`, from the node's first RED commit, modifies or deletes no frozen test or fixture, ported or new; later RED commits only add (above);
 - every ported implementation file is the `b9f533b` blob plus the node's numbered changes (`git diff b9f533b:<path> HEAD:<path>`), and the commit that ports it names each predecessor path it lands; no source file gains a provenance comment.
 
 Retries are bounded: **at most 4 implementer attempts per slice.** Attempts 1–3 use the agent's model. Attempt 4 uses the Agent tool's `model: "opus"` override and gets every earlier finding and failed diff SHA. After that, go to step 7.

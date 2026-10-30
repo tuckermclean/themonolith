@@ -6,8 +6,8 @@
 Always: one row per predecessor file, and the rows rebuild the predecessor's git tree at b9f533b
 (mode, path and blob of every file), so a missing, extra or altered row fails without fetching the
 predecessor. Each row names a node of docs/graph.yaml (or `-`), a disposition and a destination.
-Wherever a port or port+fix destination exists, its mode (from the git index, else the file) equals
-the row's; a `port` row that no later node changes must also hold the row's blob.
+Wherever a port or port+fix destination exists, its mode equals the row's, both in the working tree
+and, when tracked, in the git index; a `port` row that no later node changes must also hold the row's blob.
 
 --node <ID>: run when that node lands. Every port or port+fix row of the node is at its destination
              with the row's mode, and every `port` row of the node holds the row's blob.
@@ -47,13 +47,16 @@ def index_modes():
     return modes
 
 
-def file_mode(rel, modes):
-    if rel in modes:
-        return modes[rel]
+def file_modes(rel, modes):
+    """The file's mode in the working tree and, when tracked, in the index."""
     full = os.path.join(ROOT, rel)
     if os.path.islink(full):
-        return "120000"
-    return "100755" if os.access(full, os.X_OK) else "100644"
+        found = [("working tree", "120000")]
+    else:
+        found = [("working tree", "100755" if os.access(full, os.X_OK) else "100644")]
+    if rel in modes:
+        found.append(("index", modes[rel]))
+    return found
 
 
 def git_blob(path):
@@ -144,8 +147,10 @@ def main(argv):
         mine = node is not None and r["node"] == node
         for rel in dict.fromkeys((r["dest"], final_path(r))):
             full = os.path.join(ROOT, rel)
-            if os.path.lexists(full) and file_mode(rel, modes) != r["mode"]:
-                problem(f"line {n}: {rel} has mode {file_mode(rel, modes)}, want {r['mode']}")
+            if os.path.lexists(full):
+                for where, mode in file_modes(rel, modes):
+                    if mode != r["mode"]:
+                        problem(f"line {n}: {rel} has mode {mode} in the {where}, want {r['mode']}")
         dest = os.path.join(ROOT, r["dest"])
         if os.path.isfile(dest) and r["disp"] == "port" and (not r["then"] or mine) \
                 and git_blob(dest) != r["blob"]:
