@@ -27,7 +27,7 @@ STATE_FILE="${MONOLITH_ADVISORY_STATE:-/run/monolith-advisory-state}"
 ADVISORY_FILE="${MONOLITH_ADVISORY_FILE:-/run/monolith-advisory}"
 
 # Record the one-word state, then leave
-finish() { echo "$1" > "$STATE_FILE" 2>/dev/null; exit 0; }
+finish() { { echo "$1" > "$STATE_FILE"; } 2>/dev/null; exit 0; }
 
 # Read build tag from the release file
 if [ ! -f "$RELEASE_FILE" ]; then
@@ -43,6 +43,7 @@ STATUS_URL="${ADVISORY_BASE_URL}/status/${BUILD_TAG}.json"
 
 # Fetch the status JSON into a temp file
 # Try curl first (preferred), fall back to wget
+TMPFILE=""
 TMPFILE="$(mktemp /tmp/advisory.XXXXXX 2>/dev/null)" || finish unknown
 
 # Ensure cleanup on exit
