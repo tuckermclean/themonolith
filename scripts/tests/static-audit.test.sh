@@ -200,6 +200,16 @@ else
     run --strict --allowlist "$AL" "$TREE"
     chmod 644 "$AL"
     expect_fail "O02-AC-6 (review 2, ruling 12) unreadable allowlist file is an error, not a clean pass" ""
+    # review 3: the case above fails anyway on dyntree (no allowlist -> FINDING interp/loader); these cannot.
+    cleantree; echo 'usr/bin/true # 1 x' > "$AL"; chmod 000 "$AL"
+    run --strict --allowlist "$AL" "$TREE"
+    chmod 644 "$AL"
+    expect_fail "O02-AC-6 (review 3) unreadable allowlist on a clean tree with --strict is an error" ""
+    case "$OUT" in *"static-audit: PASS"*) fail "O02-AC-6 (review 3) unreadable allowlist (--strict, clean tree) did not print PASS" ;; *) pass "O02-AC-6 (review 3) unreadable allowlist (--strict, clean tree) did not print PASS" ;; esac
+    cleantree; echo 'usr/bin/true # 1 x' > "$AL"; chmod 000 "$AL"
+    run --allowlist "$AL" "$TREE"
+    chmod 644 "$AL"
+    expect_fail "O02-AC-6 (review 3) unreadable allowlist on a clean tree without --strict is an error" ""
 fi
 
 # --- AC-6: no hidden failures in source ----------------------------------------
