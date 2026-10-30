@@ -126,6 +126,9 @@ runs = [s["run"].strip() for j in doc["jobs"].values() for s in j.get("steps", [
 print("\n".join(runs))
 PY
 	case $(cat "$tmp/steps") in
+	*"
+"*)
+		fail "F01-AC-3 pr-validate.yml's run: steps are a single line (ruling 4)" ;;
 	"make test-lint test-unit" | "make test-lint test-unit "*)
 		pass "F01-AC-3 pr-validate.yml's only run: step is 'make test-lint test-unit' (later targets allowed)" ;;
 	*)

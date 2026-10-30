@@ -86,7 +86,7 @@ newrepo; (cd "$repo" && g rm -q "$O/app-misc/foo/files/a.patch") >/dev/null 2>&1
 expect_fail "R04-AC-1 removed patch under files/" app-misc/foo
 
 newrepo; (cd "$repo" && g mv "$O/app-misc/bar/bar-1.ebuild" "$O/app-misc/bar/bar-1-r1.ebuild") >/dev/null 2>&1; change
-expect_fail "R04-AC-1 renamed ebuild is not a new ebuild" app-misc/bar
+expect_pass "R04-AC-1 rename within the package to a name the base lacks is a bump (ruling 4)"
 
 newrepo; echo 'DIST x 2' >>"$repo/$O/app-misc/foo/Manifest"; change
 expect_fail "R04-AC-1 Manifest-only change" app-misc/foo
@@ -136,6 +136,66 @@ expect_pass "R04-AC-3 eclass change, every inheritor bumped"
 
 newrepo; echo '# changed' >>"$repo/$O/eclass/unused.eclass"; change
 expect_pass "R04-AC-3 eclass change with no inheritor"
+
+# ---- ruling 4 item 1: renames ----
+retag() { (cd "$repo" && g tag -f base) >/dev/null 2>&1; }
+newrepo; mkdir -p "$repo/$O/dev-libs/baz"
+(cd "$repo" && g mv "$O/app-misc/bar/bar-1.ebuild" "$O/dev-libs/baz/baz-1.ebuild") >/dev/null 2>&1; change
+expect_fail "R04-AC-1 rename into another package is not a bump (ruling 4 item 1)" dev-libs/baz
+
+newrepo; printf 'EAPI=8\n' >"$repo/$O/app-misc/foo/foo-1-r1.ebuild"; snap addr1; retag
+(cd "$repo" && g mv "$O/app-misc/foo/foo-1-r1.ebuild" "$O/app-misc/foo/foo-1-r2.ebuild") >/dev/null 2>&1
+echo more >>"$repo/$O/app-misc/foo/files/a.patch"; change
+expect_pass "R04-AC-2 rename -r1 to -r2 plus a files/ edit passes (ruling 4 item 1)"
+
+# ---- ruling 4 item 2: deletions ----
+newrepo; (cd "$repo" && g rm -q "$O/app-misc/bar/bar-1.ebuild") >/dev/null 2>&1; change
+expect_pass "R04-AC-2 deleting an old ebuild while another remains passes (ruling 4 item 2)"
+
+newrepo; (cd "$repo" && g rm -q "$O/app-misc/bar/bar-1.ebuild" "$O/app-misc/bar/files/b.patch") >/dev/null 2>&1
+echo 'DIST y 2' >>"$repo/$O/app-misc/bar/Manifest"; change
+expect_pass "R04-AC-2 deleting an old ebuild with its files and a Manifest edit passes (ruling 4 item 2)"
+
+newrepo; (cd "$repo" && g rm -q -r "$O/app-misc/foo") >/dev/null 2>&1; change
+expect_pass "R04-AC-2 deleting a whole package passes (ruling 4 item 2)"
+
+newrepo; (cd "$repo" && g rm -q "$O/app-misc/bar/files/b.patch") >/dev/null 2>&1; change
+expect_fail "R04-AC-1 deleting only a patch while the ebuilds remain fails (ruling 4 item 2)" app-misc/bar
+
+newrepo; (cd "$repo" && g rm -q "$O/app-misc/bar/bar-1.ebuild") >/dev/null 2>&1; echo more >>"$repo/$O/app-misc/bar/files/b.patch"; change
+expect_fail "R04-AC-1 deleting an ebuild while editing a patch fails (ruling 4 item 2)" app-misc/bar
+
+# ---- ruling 4 item 3: profiles/ and metadata/ are not packages ----
+newrepo; mkdir -p "$repo/$O/profiles/arch/x86" "$repo/$O/metadata"
+echo 'a/b flag' >"$repo/$O/profiles/arch/x86/package.use"; echo 'masters = gentoo' >"$repo/$O/metadata/layout.conf"
+snap addprof; retag
+echo 'a/b other' >>"$repo/$O/profiles/arch/x86/package.use"; change
+expect_pass "R04-AC-2 profiles/ edit passes (ruling 4 item 3)"
+case $out in *profiles*) fail "R04-AC-2 profiles/ edit is not reported ($out)" ;; *) pass "R04-AC-2 profiles/ edit is not reported (ruling 4 item 3)" ;; esac
+retag
+echo 'thin-manifests = true' >>"$repo/$O/metadata/layout.conf"; change
+expect_pass "R04-AC-2 metadata/layout.conf edit passes (ruling 4 item 3)"
+case $out in *metadata/layout*) fail "R04-AC-2 metadata/ edit is not reported ($out)" ;; *) pass "R04-AC-2 metadata/ edit is not reported (ruling 4 item 3)" ;; esac
+
+# ---- ruling 4 item 5: multi-line and conditional inherit; substring eclass names ----
+newrepo
+printf 'EAPI=8\ninherit other \\\n    myecl\n' >"$repo/$O/app-misc/bar/bar-1.ebuild"
+printf 'EAPI=8\n[[ ${PV} == 9999 ]] && inherit myecl\n' >"$repo/$O/app-misc/foo/foo-1.ebuild"
+snap inh; retag
+echo '# changed' >>"$repo/$O/eclass/myecl.eclass"; change
+expect_fail "R04-AC-3 multi-line inherit is found (ruling 4 item 5)" app-misc/bar
+expect_fail "R04-AC-3 conditional inherit is found (ruling 4 item 5)" app-misc/foo
+
+newrepo
+printf 'EAPI=8\ninherit myecl2\n' >"$repo/$O/app-misc/bar/bar-1.ebuild"
+printf 'EAPI=8\ninherit myecl2\n' >"$repo/$O/app-misc/foo/foo-1.ebuild"
+snap inh2; retag
+echo '# changed' >>"$repo/$O/eclass/myecl.eclass"; change
+expect_pass "R04-AC-3 eclass name as a substring of an inherited one passes (ruling 4 item 5)"
+
+# ---- ruling 4 item 7: an ebuild under files/ is not a bump ----
+newrepo; printf 'EAPI=8\n' >"$repo/$O/app-misc/foo/files/x-1.ebuild"; echo x >>"$repo/$O/app-misc/foo/foo-1.ebuild"; change
+expect_fail "R04-AC-1 an ebuild added under files/ is not a bump (ruling 4 item 7)" app-misc/foo
 
 # ---- R04-AC-4: make test-revbump on fixture commits, test includes it, workflow ----
 mk4() { # mk4: fixture repo with Makefile, toolbox and the script; base revision tagged "base"
@@ -204,6 +264,40 @@ runmake test-revbump BASE=base3
 case $out in *"working-tree copy"*) wt=1 ;; *) wt=0 ;; esac
 if [ $rc -eq 0 ] && [ $wt -eq 1 ]; then pass "R04-AC-4 bootstrap: bumped change passes and prints the working-tree copy note"
 else fail "R04-AC-4 bootstrap: bumped change passes and prints the working-tree copy note (rc=$rc: $out)"; fi
+
+# ---- ruling 4 item 4: an unresolvable BASE fails closed ----
+for badbase in 0123456789abcdef0123456789abcdef01234567 ""; do
+	mk4
+	echo x >>"$repo/$O/app-misc/foo/foo-1.ebuild"; printf '#!/bin/sh\nexit 0\n' >"$repo/scripts/check-revbump.sh"; change
+	runmake test-revbump "BASE=$badbase"
+	if printf '%s\n' "$out" | grep -q '^note: '; then wt=1; else wt=0; fi
+	if [ $rc -ne 0 ] && [ $wt -eq 0 ]; then pass "R04-AC-4 unresolvable BASE='$badbase' fails without the working-tree note (ruling 4 item 4)"
+	else fail "R04-AC-4 unresolvable BASE='$badbase' fails without the working-tree note (rc=$rc: $out)"; fi
+done
+
+# ---- ruling 4 item 6: default BASE, merge base shown ----
+mk4
+(cd "$repo" && g checkout -q -b feature) >/dev/null 2>&1
+cp "$repo/$O/app-misc/foo/foo-1.ebuild" "$repo/$O/app-misc/foo/foo-1-r1.ebuild"; change
+runmake test-revbump
+if [ $rc -eq 0 ]; then pass "R04-AC-4 default BASE: bumped feature branch passes (ruling 4 item 6)"
+else fail "R04-AC-4 default BASE: bumped feature branch passes (rc=$rc: $out)"; fi
+(cd "$repo" && g checkout -q main) >/dev/null 2>&1
+echo y >>"$repo/$O/app-misc/foo/foo-1.ebuild"; snap mainedit
+mb=$(cd "$repo" && g rev-parse base)
+(cd "$repo" && g checkout -q feature) >/dev/null 2>&1
+runmake test-revbump
+case $out in *"==> Revision bump check ($mb..HEAD)"*) shown=1 ;; *) shown=0 ;; esac
+if [ $rc -eq 0 ] && [ $shown -eq 1 ]; then pass "R04-AC-4 default BASE is the merge base: rc 0 and its SHA is shown (ruling 4 item 6)"
+else fail "R04-AC-4 default BASE is the merge base: rc 0 and its SHA is shown (rc=$rc: $out)"; fi
+
+# ---- ruling 4 item 7: no working-tree note when BASE has the script ----
+mk4
+cp "$repo/$O/app-misc/foo/foo-1.ebuild" "$repo/$O/app-misc/foo/foo-1-r1.ebuild"; change
+runmake test-revbump BASE=base
+if printf '%s\n' "$out" | grep -q '^note: '; then wt=1; else wt=0; fi
+if [ $rc -eq 0 ] && [ $wt -eq 0 ]; then pass "R04-AC-4 no working-tree note when BASE has the script (ruling 4 item 7)"
+else fail "R04-AC-4 no working-tree note when BASE has the script (rc=$rc: $out)"; fi
 
 # make test includes test-revbump
 mk4
