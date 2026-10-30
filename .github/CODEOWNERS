@@ -1,0 +1,6 @@
+/.github/** @tuckermclean
+/SPEC.md @tuckermclean
+/docs/graph.yaml @tuckermclean
+/docs/migration.tsv @tuckermclean
+/configs/attestation/ @tuckermclean
+/Dockerfile @tuckermclean
