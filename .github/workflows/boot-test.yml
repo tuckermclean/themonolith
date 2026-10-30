@@ -74,7 +74,7 @@ jobs:
           if-no-files-found: error
 
   # The expected `uname -r`: the kernel-version input, else the kernel's own version plus
-  # actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0NFIG_LOCALVERSION (CONFIG_LOCALVERSION_AUTO is off, so no git suffix). Empty fails: an empty
+  #   CONFIG_LOCALVERSION (CONFIG_LOCALVERSION_AUTO is off, so no git suffix). Empty fails: an empty
   # --kernel-version would make the version check pass trivially.
   expected-kernel:
     runs-on: ubuntu-24.04
@@ -108,7 +108,7 @@ jobs:
 
       - name: Boot test — BIOS (ISOLINUX), ${{ matrix.ram_mb }}M RAM
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
           RAM_MB: ${{ matrix.ram_mb }}
         run: make test-boot MODE=bios ISO=output/iso/boot-test.iso
@@ -138,7 +138,7 @@ jobs:
 
       - name: Boot test — UEFI (GRUB + OVMF)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=uefi ISO=output/iso/boot-test.iso
 
@@ -169,7 +169,7 @@ jobs:
 
       - name: Boot test — toram + CD eject survival
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=toram ISO=output/iso/boot-test.iso
 
@@ -177,7 +177,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: boot-test-toram-eject-${{ github.run_id }}
+          name: boot-test-toram-${{ github.run_id }}
           path: |
             output/boot-test-toram.log
             output/tool-versions.txt
@@ -200,7 +200,7 @@ jobs:
 
       - name: Boot test — AHCI/SATA (q35 + ich9-ahci, UEFI)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=ahci ISO=output/iso/boot-test.iso
 
@@ -229,7 +229,7 @@ jobs:
 
       - name: Boot test — NVMe (UEFI)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=nvme ISO=output/iso/boot-test.iso
 
@@ -258,7 +258,7 @@ jobs:
 
       - name: Boot test — USB mass storage (xHCI, UEFI)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=usb ISO=output/iso/boot-test.iso
 
@@ -287,7 +287,7 @@ jobs:
 
       - name: Boot test — virtio-blk (UEFI)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=virtio ISO=output/iso/boot-test.iso
 
@@ -318,7 +318,7 @@ jobs:
 
       - name: Boot test — nicless (negative control, BIOS/ISOLINUX)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=nicless ISO=output/iso/boot-test.iso
 
@@ -349,7 +349,7 @@ jobs:
 
       - name: Boot test — GUI (Xfbdev on vesafb, BIOS/ISOLINUX)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=gui ISO=output/iso/boot-test.iso
 
@@ -389,7 +389,7 @@ jobs:
 
       - name: Boot test — Stele renders Acid2 to the framebuffer
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=stele-acid2 ISO=output/iso/boot-test.iso
 
@@ -430,7 +430,7 @@ jobs:
 
       - name: Boot test — NIC models (sequential, five models)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=nic ISO=output/iso/boot-test.iso
 
@@ -438,7 +438,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: boot-test-nic-models-${{ github.run_id }}
+          name: boot-test-nic-${{ github.run_id }}
           path: |
             output/boot-test-nic-*.log
             output/tool-versions.txt
@@ -461,7 +461,7 @@ jobs:
 
       - name: Boot test — VGA models (sequential, cirrus)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=vga ISO=output/iso/boot-test.iso
 
@@ -469,7 +469,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: boot-test-vga-models-${{ github.run_id }}
+          name: boot-test-vga-${{ github.run_id }}
           path: |
             output/boot-test-vga-*.log
             output/tool-versions.txt
@@ -493,7 +493,7 @@ jobs:
 
       - name: Boot test — hand-load legacy fbdev modules (tdfxfb, sm712fb, matroxfb_base, s3fb, lxfb)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=fbdev-modprobe ISO=output/iso/boot-test.iso
 
@@ -526,7 +526,7 @@ jobs:
 
       - name: Boot test — two-node NAT (router + client; the target starts the host http.server the client curls through NAT)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=nat ISO=output/iso/boot-test.iso
 
@@ -534,7 +534,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: boot-test-nat-router-${{ github.run_id }}
+          name: boot-test-nat-${{ github.run_id }}
           path: |
             output/boot-test-nat.log*
             output/tool-versions.txt
@@ -558,7 +558,7 @@ jobs:
 
       - name: Boot test — clock landmine, direction (a) RTC at epoch, no NIC
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=clock-epoch ISO=output/iso/boot-test.iso
 
@@ -587,7 +587,7 @@ jobs:
 
       - name: Boot test — clock landmine, direction (b) RTC in the disc's native era
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=clock-1996 ISO=output/iso/boot-test.iso
 
@@ -619,7 +619,7 @@ jobs:
 
       - name: Boot test — persist continuity (two boots, same MONOLITH_PERSIST disk)
         env:
-          KERNEL_VERSION: ${{ needs.expected-kernel.outputs.version }}
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
           MODES: ${{ inputs.modes }}
         run: make test-boot MODE=persist ISO=output/iso/boot-test.iso
 
