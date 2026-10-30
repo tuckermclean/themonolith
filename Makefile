@@ -15,7 +15,8 @@ test-unit:
 
 # Until B03 builds an ISO, the default ISO is v0.1.0-rc1's, fetched by URL and checked against its sha256.
 ISO_URL ?= https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
-ISO_SHA256 ?= a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
+RC1_SHA256 ?= a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
+ISO_SHA256 ?= $(RC1_SHA256)
 EXPECTED_KERNEL ?= 6.12.80-i486-monolith
 DEFAULT_ISO := output/themonolith-0.1.0-rc1.iso
 ISO ?= $(DEFAULT_ISO)
@@ -74,6 +75,10 @@ boot_runs = \
 	$(if $(filter clock-1996,$(BOOT_WANT)),$(call boot,clock-1996,,clock-1996)) \
 	$(if $(filter persist,$(BOOT_WANT)),$(call boot,persist,,persist))
 
+# vga is rc1's expected failure (rc1 ships no cirrusfb): when the ISO's sha256 (computed once, above) is RC1_SHA256, a failing vga boot is
+# reported as XFAIL and is not a failure, and a passing one is (stale expectation). Any other digest is strict; no other mode is expected to fail.
+vga_xfail = $(if $(filter vga,$(BOOT_WANT)),if [ "$$(cat output/boot-iso.sha256)" = '$(RC1_SHA256)' ]; then if grep -qx vga output/boot-failed; then grep -vx vga output/boot-failed > output/boot-failed.new || true; mv output/boot-failed.new output/boot-failed; echo 'XFAIL: vga (rc1 predates the legacy fbdev Tier-2 drivers; no cirrusfb on the disc)'; else echo 'vga passed but is expected to fail on rc1: stale expectation' >&2; echo vga >> output/boot-failed; fi; fi,:)
+
 # Boots ISO in the selected modes, keeping going past a failed boot and then listing the failed modes, with QEMU under TCG (-cpu 486, no KVM), in the toolbox. When ISO is left
 # at its default, that ISO is fetched and checked first. Records the QEMU and OVMF versions.
 test-boot: $(if $(filter $(ISO),$(DEFAULT_ISO)),fetch-iso)
@@ -81,7 +86,9 @@ test-boot: $(if $(filter $(ISO),$(DEFAULT_ISO)),fetch-iso)
 	mkdir -p output
 	rm -f output/boot-failed
 	toolbox/run --network none -- sh -c 'qemu-system-i386 --version; qemu-system-x86_64 --version; dpkg-query -W qemu-system-x86 ovmf' > output/tool-versions.txt
+	@sha256sum '$(ISO)' | cut -d' ' -f1 > output/boot-iso.sha256
 	$(boot_runs)
+	@$(vga_xfail)
 	@if [ -s output/boot-failed ]; then echo "failed: $$(sort -u output/boot-failed | tr '\n' ' ')"; exit 1; fi
 
 # Download ISO_URL to ISO_OUT and check it against ISO_SHA256; a mismatch deletes it and fails.
