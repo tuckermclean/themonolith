@@ -161,6 +161,28 @@ elf lib/modules/6.12/kernel/net/x.ko EM_386 '' '   -   ' 644; elf lib/modules/6.
 run --strict --allowlist "$EMPTY" "$TREE"
 expect_clean "O02-AC-5 non-ELF ld.so.8, python3.bash and ELF .ko/.so under lib/modules are not findings"
 
+# --- review 1, ruling 10: a failing find is an error, not a clean pass ----------
+# PATH without find (stub scanelf kept, running with the full PATH); python findings would exist.
+NOFIND="$T/nofind"; mkdir -p "$NOFIND"
+for tool in sh bash grep sed awk sort cat mkdir date env dirname basename tr cut head tail wc rm printf test '[' ls uname comm cmp mktemp uniq xargs cp mv readlink tee sleep id; do
+    p=$(command -v "$tool" 2>/dev/null) && case "$p" in /*) ln -sf "$p" "$NOFIND/$tool" ;; esac
+done
+printf '#!/bin/sh\nPATH=%s exec %s/scanelf "$@"\n' "$PATH" "$STUB" > "$NOFIND/scanelf"; chmod +x "$NOFIND/scanelf"
+cleantree; plain usr/share/x/a.py; plain usr/bin/python3
+OUT=$(PATH="$NOFIND" OUTPUT_DIR="$OD" "$BASH_BIN" "$SUBJECT" --strict --allowlist "$EMPTY" "$TREE" 2>&1); RC=$?
+[ -f "$SUBJECT" ] || RC=99
+expect_fail "O02-AC-6 (review 1, ruling 10) find not on PATH exits non-zero, not clean" ""
+
+# --- review 1, ruling 9: allowlisted libraries are live entries -----------------
+dyntree; elf usr/lib/libfoo.so.1 EM_386 '' '   -   ' 644
+printf 'usr/bin/dyn # 1 reason\nusr/lib/libfoo.so.1 # 2 its library\n' > "$AL"
+run --strict --allowlist "$AL" "$TREE"
+expect_clean "O02-AC-3 (review 1, ruling 9) allowlisted dynamic binary plus its allowlisted .so passes --strict"
+dyntree; elf usr/bin/static2 EM_386
+printf 'usr/bin/dyn # 1 reason\nusr/bin/static2 # 2 not dynamic, not a .so\n' > "$AL"
+run --strict --allowlist "$AL" "$TREE"
+expect_fail "O02-AC-3 (review 1, ruling 9) allowlist entry naming a static non-.so ELF is stale" ""
+
 # --- AC-6: no hidden failures in source ----------------------------------------
 if [ -f "$SUBJECT" ] && ! grep -q '2>/dev/null' "$SUBJECT"; then
     pass "O02-AC-6 static-audit.sh contains no 2>/dev/null"; else fail "O02-AC-6 static-audit.sh contains no 2>/dev/null (or script missing)"; fi

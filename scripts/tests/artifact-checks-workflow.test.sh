@@ -25,6 +25,10 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 (cd "$ROOT" && make -n test-artifact) >"$tmp/def.out" 2>&1
 (cd "$ROOT" && make -n test-artifact ISO=output/other.iso) >"$tmp/own.out" 2>&1
 ck "O02-AC-8 make -n test includes the test-artifact recipe (static-audit.sh)" grep -q 'static-audit\.sh' "$tmp/test.out"
+# review 1, ruling 11: exported ROOTFS_DIR/OUTPUT_DIR (the predecessor builder's) must not steer the recipe
+(cd "$ROOT" && ROOTFS_DIR=/rootfs-build OUTPUT_DIR=/output make -n test-artifact) >"$tmp/env.out" 2>&1
+ck "O02-AC-8 (review 1, ruling 11) exported ROOTFS_DIR=/rootfs-build and OUTPUT_DIR=/output do not reach the recipe" \
+	sh -c 'grep -q "static-audit\\.sh" "$1" && ! grep -Eq "(^|[^A-Za-z0-9_.-])/(rootfs-build|output)([^A-Za-z0-9_-]|\$)" "$1"' _ "$tmp/env.out"
 ck "O02-AC-8 test-artifact runs static-audit.sh through toolbox/run" grep -Eq 'toolbox/run.*static-audit\.sh' "$tmp/def.out"
 ck "O02-AC-8 test-artifact extracts the squashfs of the ISO" grep -Eq 'rootfs\.squashfs|unsquashfs' "$tmp/def.out"
 ck "O02-AC-8 test-artifact with the default ISO runs fetch-iso first (curl/sha256 recipe precedes the audit)" \
