@@ -44,11 +44,16 @@ define nl
 
 endef
 
+# Each boot runs from its own copy of ISO, removed afterwards: nvme, usb and virtio attach it as a writable disk.
+# $(1) mode, $(2) log name.
+iso_copy = output/boot-iso-$(2).iso
+copy_iso = cp '$(ISO)' '$(call iso_copy,$(1),$(2))' || echo $(1) >> output/boot-failed$(nl)
+drop_iso = rm -f '$(call iso_copy,$(1),$(2))'$(nl)
 # $(1) mode, $(2) extra arguments, $(3) log name. The guest needs no network except in nat mode.
-boot = toolbox/run --network none -- python3 scripts/boot-test.py --iso '$(ISO)' --mode $(1) $(2) --kernel-version '$(EXPECTED_KERNEL)' --log-file output/boot-test-$(3).log || echo $(1) >> output/boot-failed$(nl)
+boot = $(call copy_iso,$(1),$(3))toolbox/run --network none -- python3 scripts/boot-test.py --iso '$(call iso_copy,$(1),$(3))' --mode $(1) $(2) --kernel-version '$(EXPECTED_KERNEL)' --log-file output/boot-test-$(3).log || echo $(1) >> output/boot-failed$(nl)$(call drop_iso,$(1),$(3))
 # nat: the guest reaches a host http.server through QEMU's 10.0.2.2, so the server runs in the same toolbox
 # container as QEMU (its loopback is the guest's 10.0.2.2); the container needs no outside network.
-boot_nat = toolbox/run --network none -- sh -c 'mkdir -p output/natsrv && echo NAT_OK_marker > output/natsrv/probe.txt; (cd output/natsrv && exec python3 -m http.server 8000 --bind 0.0.0.0) & srv=$$!; sleep 2; python3 scripts/boot-test.py --iso "$(ISO)" --mode nat --kernel-version "$(EXPECTED_KERNEL)" --log-file output/boot-test-nat.log; rc=$$?; kill $$srv; exit $$rc' || echo nat >> output/boot-failed$(nl)
+boot_nat = $(call copy_iso,nat,nat)toolbox/run --network none -- sh -c 'mkdir -p output/natsrv && echo NAT_OK_marker > output/natsrv/probe.txt; (cd output/natsrv && exec python3 -m http.server 8000 --bind 0.0.0.0) & srv=$$!; sleep 2; python3 scripts/boot-test.py --iso "$(call iso_copy,nat,nat)" --mode nat --kernel-version "$(EXPECTED_KERNEL)" --log-file output/boot-test-nat.log; rc=$$?; kill $$srv; exit $$rc' || echo nat >> output/boot-failed$(nl)$(call drop_iso,nat,nat)
 
 boot_runs = \
 	$(if $(filter bios,$(BOOT_WANT)),$(foreach r,$(if $(RAM_MB),$(RAM_MB),64 256),$(call boot,bios,--ram-mb $(r),bios-$(r)m))) \
