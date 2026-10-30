@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | I01 | B01, M02 | — | S |
+| critical | I01 | B01, M02, S01 | — | S |
 
 **Owns:** `BUILDER_DIGEST` and `pull-image` in `Makefile`, `scripts/builder-manifest.sh`, `scripts/tests/builder-pin.test.sh`. Its rules hold for `build.yml` (B03) and `attestation.sh` (S01) when they are ported.
 **Ports from linux-live-iso-factory@b9f533b:** `Dockerfile` (unchanged, whole file; not built until M02), the crossdev block of `Makefile` (unchanged, unused until M02), the `pull-image` target, `configs/portage/crossdev.lock`.
