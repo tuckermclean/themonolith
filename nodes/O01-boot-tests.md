@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | F01 | B03, G01 | — | M |
+| critical | F01 | B03, G01, O02, S01 | — | M |
 
 **Owns:** `.github/workflows/boot-test.yml` (reusable), `.github/workflows/boot-test-rc1.yml` (caller for the rc1 lane), `scripts/tests/boot-test-workflow.test.sh`, the ported `scripts/tests/boot-test-retry.test.sh`, the `Makefile` targets `test-boot` (part of `make test`), `run-bios` and `run-uefi`.
 **Ports from linux-live-iso-factory@b9f533b:** first the test `scripts/tests/boot-test-retry.test.sh`; then `scripts/boot-test.py` (2528 lines, 17 modes, `-cpu 486`, `MODE_DEFAULT_RAM`), `.github/workflows/boot-test.yml` (916 lines), the manual boot targets `test` (`Makefile:500`) and `test-uefi`. Carried unchanged except as listed below.

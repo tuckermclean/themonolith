@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | F01 | B03, R03 | — | M |
+| critical | F01, O01 | B03, R03, S01 | — | M |
 
 **Owns:** `scripts/static-audit.sh` (extended), `configs/attestation/dynamic-allowlist.txt`, `configs/attestation/rc1-static-audit.expected`, `.github/workflows/artifact-checks.yml` (reusable), `.github/workflows/artifact-checks-rc1.yml` (caller), the `test-artifact` Make target (part of `make test`), `scripts/tests/static-audit.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `scripts/static-audit.sh` (124 lines; report-only, `--strict` never used), and its non-fatal call at `scripts/build-rootfs.sh:742-756`, which stays as it is.
