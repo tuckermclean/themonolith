@@ -276,6 +276,41 @@ for m in usb nvme virtio; do
 	if [ -n "$bl" ] && echo "$out" | head -n "$((bl - 1))" | grep -E '(^|[^a-z])(cp|dd|cat|install)([^a-z]|$)' | grep -q -- "$tmp/fake.iso"; then pass "O01-AC-7 make -n test-boot MODE=$m: a copy of the ISO is made before the boot"; else fail "O01-AC-7 make -n test-boot MODE=$m: a copy of the ISO is made before the boot"; fi
 done
 
+# ---- Ruling 6 additions (O01-AC-9): vga is rc1's expected failure; the rc1 digest is the Make variable RC1_SHA256 ----
+t3="$tmp/tree3"
+mkdir -p "$t3/toolbox" "$t3/scripts"
+cp "$ROOT/Makefile" "$t3/" 2>/dev/null
+[ -f "$ROOT/scripts/boot-test.py" ] && cp "$ROOT/scripts/boot-test.py" "$t3/scripts/"
+cat >"$t3/toolbox/run" <<'STUB'
+#!/bin/sh
+echo "$*" >>"$CALLS"
+case "$*" in *"--mode vga"*) exit 1 ;; *boot-test.py*|*--version*|*dpkg-query*) exit 0 ;; esac
+while [ $# -gt 0 ]; do case $1 in --) shift; break ;; --network|-e) shift 2 ;; --build) shift ;; *) break ;; esac; done
+exec "$@"
+STUB
+chmod +x "$t3/toolbox/run"
+# AC-9: digest matches rc1's, vga fails -> XFAIL naming vga, exit 0
+CALLS="$tmp/calls.xf"; export CALLS; : >"$CALLS"
+(cd "$t3" && make test-boot MODES="bios vga" ISO_URL="file://$tmp/src.iso" ISO_SHA256="$good" RC1_SHA256="$good") >"$tmp/xf.log" 2>&1
+rc=$?
+[ $rc -eq 0 ] && pass "O01-AC-9 rc1 digest, vga fails: test-boot exits 0" || fail "O01-AC-9 rc1 digest, vga fails: test-boot exits 0 (rc=$rc)"
+if grep -v -e '--mode' -e 'Boot tests:' "$tmp/xf.log" | grep XFAIL | grep -qw vga; then pass "O01-AC-9 rc1 digest, vga fails: reported as XFAIL naming vga"; else fail "O01-AC-9 rc1 digest, vga fails: reported as XFAIL naming vga"; fi
+# AC-9: any other digest -> a failing vga fails the target and is named
+CALLS="$tmp/calls.xo"; export CALLS; : >"$CALLS"
+(cd "$t3" && make test-boot MODES="bios vga" ISO_URL="file://$tmp/src.iso" ISO_SHA256="$good" RC1_SHA256="$wrong") >"$tmp/xo.log" 2>&1
+rc=$?
+if [ $rc -ne 0 ] && grep -v -e '--mode' -e 'Boot tests:' "$tmp/xo.log" | grep -qw vga && ! grep -q XFAIL "$tmp/xo.log"; then pass "O01-AC-9 other digest, vga fails: target fails naming vga, no XFAIL"; else fail "O01-AC-9 other digest, vga fails: target fails naming vga, no XFAIL (rc=$rc)"; fi
+# AC-9: rc1 digest but vga passes -> stale expectation, the target fails
+CALLS="$tmp/calls.xp"; export CALLS; : >"$CALLS"
+(cd "$t" && make test-boot MODES="bios vga" ISO_URL="file://$tmp/src.iso" ISO_SHA256="$good" RC1_SHA256="$good") >"$tmp/xp.log" 2>&1
+rc=$?
+[ $rc -ne 0 ] && pass "O01-AC-9 rc1 digest, vga passes: target fails (stale expectation)" || fail "O01-AC-9 rc1 digest, vga passes: target fails (stale expectation) (rc=$rc)"
+# AC-9: no other mode has an expected failure: uefi fails with the rc1 digest -> target still fails
+CALLS="$tmp/calls.xu"; export CALLS; : >"$CALLS"
+(cd "$t2" && make test-boot MODES="bios uefi" ISO_URL="file://$tmp/src.iso" ISO_SHA256="$good" RC1_SHA256="$good") >"$tmp/xu.log" 2>&1
+rc=$?
+if [ $rc -ne 0 ] && grep -v -e '--mode' -e 'Boot tests:' "$tmp/xu.log" | grep -qw uefi; then pass "O01-AC-9 rc1 digest, uefi fails: target fails naming uefi"; else fail "O01-AC-9 rc1 digest, uefi fails: target fails naming uefi (rc=$rc)"; fi
+
 echo
 if [ "$fails" -ne 0 ]; then echo "$fails FAILED"; exit 1; fi
 echo "ALL PASS"
