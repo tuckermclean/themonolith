@@ -1,0 +1,25 @@
+name: PR Validate
+
+# Fast, cheap sanity checks on every pull request — syntax and lint only, no
+# build. The full build + boot-test + attestation (build.yml) is expensive: it
+# runs on merge to master and, on a PR, only when the 'full-ci' label is added.
+# This gives quick feedback on each push without a Gentoo cross-compile.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Lint and unit tests
+        run: make test-lint test-unit
