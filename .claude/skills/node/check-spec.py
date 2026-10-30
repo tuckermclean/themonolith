@@ -22,7 +22,7 @@ doc = yaml.safe_load(open(f"{ROOT}/docs/study/doctrine.yaml"))
 known = {t["id"] for t in doc["traps"]} | {d["id"] for d in doc["doctrines"]} | {d["id"] for d in doc["decisions"]}
 spec = open(f"{ROOT}/SPEC.md").read()
 ods = set(re.findall(r"^\| (OD-\d+) \|", spec, re.M))
-WANT = ["Purpose", "Standard mechanism", "Changes from the port", "Gate", "Risks"]
+WANT = ["Purpose", "Standard mechanism", "Tests", "Changes from the port", "Gate", "Risks"]
 problems = 0
 
 

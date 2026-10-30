@@ -16,6 +16,11 @@ The build uses rc1's builder image, taken by digest from our own namespace, with
 - Contents record: `qlist -Iv` (gentoolkit, already in the image, `Dockerfile:101`) lists every installed package, cross packages included. Nothing else is invented.
 - Custom code: `builder-manifest.sh`, about ten lines that run `qlist -Iv`, `i486-linux-musl-gcc --version`, `syft --version`, `grype --version`, `rustup toolchain list` and `docker image inspect` inside the image and print them. Gap: the predecessor kept no record of what the image contained (`Dockerfile:81-98` pins host tools only through the dated tree). No standard tool answers this for a `docker commit` image.
 
+## Tests
+- **Ported first:** none; the predecessor had no test of the builder pin.
+- **Added:** `scripts/tests/builder-pin.test.sh`.
+- **Baseline:** `b9f533b`'s `Makefile` (`pull-image` on `:latest`) fails the digest criteria, as expected.
+
 ## Changes from the port
 Step 0 (owner action, not CI): `oras cp ghcr.io/tuckermclean/monolith-builder@sha256:ab04002a13794c2ad90d821b5de535a4e4df2945346bb04d8073883ea8aab3fa ${REGISTRY}/builder:rc1`. `oras cp` keeps the digest. The `rc1` tag is a convenience; no code reads it.
 

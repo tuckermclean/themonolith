@@ -14,6 +14,11 @@
 ## Standard mechanism
 `cargo.eclass` with a `CRATES` variable, the form Gentoo uses for every Rust package. Each crate becomes a `SRC_URI` entry, Portage fetches it into `DISTDIR` and checks it against the Manifest, and `cargo_src_unpack` sets up an offline vendor directory. The list is generated from the project's `Cargo.lock` with `pycargoebuild`, Gentoo's standard generator. Git dependencies use `GIT_CRATES`. Custom code: none.
 
+## Tests
+- **Ported first:** none; the predecessor had no test of the two Rust packages beyond the `stele-acid2` boot mode, which O01 ports.
+- **Added:** `scripts/tests/no-network-ebuilds.test.sh` and the `versions-lock-complete.test.sh` cases the Gate names.
+- **Baseline:** `b9f533b`'s `rl144` and `stele` ebuilds fail `no-network-ebuilds.test.sh` (`RESTRICT=network-sandbox`), as expected.
+
 ## Changes from the port
 1. **Crate lists, including std's.** Both ebuilds build with `nightly-2026-07-15` and `-Z build-std=std,panic_abort` for a custom JSON target (`rl144-0.1.0_p20260805.ebuild:26-37,96`, `stele-0.1.0_p20260821.ebuild:30-39,74`). build-std compiles the standard library, whose own crate dependencies come from the toolchain's `lib/rustlib/src/rust/library/Cargo.lock`, not from the project. So `CRATES` must cover two lock files: the project's and the pinned toolchain's `library/Cargo.lock`. Generate `CRATES` (and `GIT_CRATES` if needed) from both. `inherit cargo`, use `cargo_src_unpack` and `cargo_src_compile` (or the existing build commands with `--offline --frozen`), and remove `network-sandbox` from `RESTRICT`. Regenerate the Manifest. *AC-1, AC-2.*
 2. **Toolchain.** The ebuilds keep the builder's rustup toolchain, a pinned input through `BUILDER_DIGEST` (I03). Whether `cargo.eclass` accepts it instead of `dev-lang/rust` from the tree is unverified. If not, the smallest fix is a `package.provided` entry for the matching rust version. *AC-2.*

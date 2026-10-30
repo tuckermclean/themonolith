@@ -1,8 +1,9 @@
 # Capability ledger
 
-Where each capability of The Monolith lives, and how it arrives. A node writes the tests for its
-capabilities first (RED), then brings in, or writes, the code that passes them (GREEN). Predecessor
-code comes in when a test needs it, not before, and with the edits that test requires. A node's fast
+Where each capability of The Monolith lives, and how it arrives. A node ports the predecessor's tests
+for its capabilities first, adds tests for what its criteria cover and they do not, and fails them
+(RED); then it brings in, or writes, the code that passes them (GREEN). Predecessor code comes in
+when a test needs it, not before, and with the edits that a criterion requires (SPEC §2.2). A node's fast
 tests stay in the lane, so a rule an early node sets (no AWS, actions pinned by SHA, the builder by
 digest, nothing reading `configs/kernel.config`) also holds for files a later node ports.
 
@@ -14,9 +15,8 @@ digest, nothing reading `configs/kernel.config`) also holds for files a later no
 - **drop**: not ported. The code stays readable in the predecessor at `b9f533b`.
 
 The **Source** column cites the predecessor at `b9f533b`. A capability has one porting node. Later
-nodes may change it, listed under **Then**. A predecessor test named under **Source** is not ported:
-its cases are written into the porting node's acceptance criteria, and that node's tests are written
-from them.
+nodes may change it, listed under **Then**. A predecessor test named under **Source** is ported
+first, before the code it tests, with only the harness and path adjustments the porting node lists.
 
 ## Development and CI
 
@@ -39,7 +39,7 @@ from them.
 
 | Capability | Source | Node | Mode | Then |
 |---|---|---|---|---|
-| Gentoo tree pin: archive, restore by digest, fail loud | `scripts/sync-portage.sh`, `sync-portage.test.sh`, `make sync-portage` | I02 | port+fix | |
+| Gentoo tree pin: archive, restore by digest, fail loud | `scripts/sync-portage.sh`, `sync-portage.test.sh` (its S3 cases reshaped), `make sync-portage` | I02 | port+fix | |
 | One-time tree archive helper | — | I02 | build | |
 | Builder image adopted by digest; `pull-image` | `Makefile` `pull-image`, `print-registry-tag` | I03 | port+fix | M02 |
 | Builder image definition | `Dockerfile`, `configs/portage/crossdev.lock`, `Makefile` crossdev block | I03 | port | M02 (rebuild) |
@@ -95,7 +95,7 @@ from them.
 | Capability | Source | Node | Mode | Then |
 |---|---|---|---|---|
 | Root filesystem: generated `/etc`, inittab, init scripts, font index, whatis, os-release | `scripts/build-rootfs.sh`, `scripts/pcf-fontname.py`, `pcf-fontname.test.sh`, `make build-rootfs` | B03 | port+fix (os-release URL, from R01) | P02, R03 |
-| Network and router wiring in the rootfs | `verify-rootfs-net-wiring.sh`, `verify-router-wiring.sh` | B03 | build (B03-AC-11 checks the built rootfs) | |
+| Network and router wiring in the rootfs | `verify-rootfs-net-wiring.sh`, `verify-router-wiring.sh` | B03 | port (B03-AC-11 adds a check of the built rootfs) | |
 | Initramfs | `scripts/build-initrd.sh`, `rootfs/init`, `rootfs/usr/share/udhcpc/default.script`, `configs/initrd-modules.txt` | B03 | port | P02 |
 | Hybrid ISO, boot menus and art | `scripts/build-iso.sh`, `configs/bootbg.png`, `configs/themonolith.ans`, `make iso` | B03 | port | P02 |
 | CI build: packages → rootfs → ISO → oracle and gates, files handed over as Actions artifacts | `build.yml` (`changes`, `build`, `boot-test` jobs), `make all` | B03 | port+fix | P02, P01 |

@@ -14,6 +14,11 @@ After this node the first non-prerelease has shipped from this repository with a
 ## Standard mechanism
 `gh attestation verify` with `--repo` and `--signer-workflow`; `gh release`; `gh repo archive`. Custom code: none beyond one grep test of the README.
 
+## Tests
+- **Ported first:** none.
+- **Added:** `scripts/tests/readme-verify.test.sh`.
+- **Baseline:** not applicable; the verification steps are new.
+
 ## Changes from the port
 This node is a release plus documentation. There is no ported code to change.
 

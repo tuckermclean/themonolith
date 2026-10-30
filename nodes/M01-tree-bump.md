@@ -17,6 +17,11 @@ After this node a weekly workflow proposes a new Gentoo tree as a pull request. 
 - Branch protection and CODEOWNERS control merging.
 - Custom code: the ported scripts, edited. Gap: the tree pin is a commit, not a dated snapshot, and the ported `update-build-pins.sh` finds the next snapshot on `distfiles.gentoo.org` and Docker Hub (`update-build-pins.sh:122-160`). The snapshot tarballs are gone (SPEC §0).
 
+## Tests
+- **Ported first:** none; the predecessor had no test of its bump workflow.
+- **Added:** `scripts/tests/pin-bump.test.sh`.
+- **Baseline:** `b9f533b`'s `pin-bump.yml` fails the criteria of the numbered changes (`--admin`, S3), as expected.
+
 ## Changes from the port
 Carried unchanged: the weekly cron and `workflow_dispatch` input shape, `concurrency: pin-bump`, the branch-per-bump naming, label creation, the PR body, the `sudo chown -R` that fixes root-owned lock files (`pin-bump.yml:221`, T-pin-bump-root-owned-locks), and `update-versions.sh` (the 23-atom drift fix is B01's).
 

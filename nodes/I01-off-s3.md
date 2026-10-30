@@ -14,6 +14,11 @@ No file in this repository names AWS or S3, and none ever will: a fast check in 
 ## Standard mechanism
 GHCR through `oras` and `docker`, Actions artifacts, GitHub Releases. No store interface or backend layer. Changing vendor means changing `REGISTRY` and copying the data. Custom code: none beyond a grep.
 
+## Tests
+- **Ported first:** none; the predecessor had no such check.
+- **Added:** `scripts/tests/no-aws.test.sh` (AC-1 to AC-3).
+- **Baseline:** run on a `b9f533b` checkout, the test fails and lists the S3 sites of the table in *Changes*, as expected.
+
 ## Changes from the port
 The predecessor's S3 and AWS uses (`grep -rniE 'aws|s3://|amazonaws|S3_BUCKET'` at `b9f533b`) are removed by the node that ports each file. This table is where each goes:
 

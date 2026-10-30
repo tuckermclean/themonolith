@@ -14,6 +14,11 @@ After F01, every pull request runs the predecessor's fast checks in the toolbox,
 ## Standard mechanism
 `make`, GitHub Actions, shellcheck, actionlint, PyYAML, Dependabot and CODEOWNERS, all from the toolbox or GitHub. Custom code: none. The `test` target is the predecessor's shell loops.
 
+## Tests
+- **Ported first:** none; the predecessor tested its fast lane only by running it. The checks of `pr-validate.yml:23-69` are what `make test` runs.
+- **Added:** `scripts/tests/fast-lane.test.sh` (all criteria).
+- **Baseline:** the predecessor's `pr-validate.yml` steps pass on a `b9f533b` checkout in the toolbox (checked 2026-10-29), and `make test` gives the same result there.
+
 ## Changes from the port
 1. **`make test` is the fast tier.** A new `Makefile` with a `test` target that runs the commands of `pr-validate.yml:23-69`: `bash -n`, `py_compile` over `scripts/*.py`, YAML well-formedness over `configs/**/*.yaml` and `.github/workflows/*.yml`, `actionlint -shellcheck=`, `shellcheck --severity=error`, and every `scripts/tests/*.sh` with `sh`. Each check prints its name. The globs match what exists, so an empty glob is not an error. The predecessor's explicit overlay paths (`pr-validate.yml:27,59`) are added to the `bash -n` and shellcheck lists by R01 when it ports those files; a listed path that does not exist fails. The predecessor's `test` target (`Makefile:500`, a QEMU boot) is not ported here; O01 ports it as `test-bios`. *Proof:* F01-AC-1, F01-AC-2.
 2. **`pr-validate.yml` in the parity form (SPEC §7).** One job on `ubuntu-24.04` with `timeout-minutes: 20`: the checkout, then `toolbox/run --network none -- make test` and `toolbox/run -- toolbox/ci lint`. The predecessor's inline steps become the Makefile target, and actionlint comes from the toolbox instead of a downloaded install script (`pr-validate.yml:53`). *Proof:* F01-AC-3, F01-AC-4.

@@ -23,10 +23,11 @@ This repository continues `tuckermclean/linux-live-iso-factory`, frozen at `b9f5
 `v0.1.0-rc1`. The predecessor already built, tested and attested this product. It stopped when its
 storage vendor disabled the account; AWS S3 was hard-wired into five jobs. The rebuild therefore
 **ports** the predecessor, test first:
-- Each node's criteria say what its capabilities do. The node writes tests for those criteria, then
-  ports in the predecessor code that passes them, or writes new code where the predecessor had none.
-  Nothing is imported ahead of a test that needs it.
-- Ported recipes, scripts and workflows carry over unchanged unless a criterion requires a change.
+- Each node ports the predecessor's tests for its capabilities first, adds tests for what its
+  criteria cover and those tests do not, and then ports the predecessor code that passes them, or
+  writes new code where the predecessor had none. Nothing is imported ahead of a test that needs it.
+- Proven code and its tests are kept, not rewritten. Ported recipes, scripts, tests and workflows
+  carry over unchanged unless a criterion requires a change.
 - S3 is replaced by the GitHub-native storage the predecessor already half used.
 - The bugs the study verified are fixed as named criteria.
 - `docs/capabilities.md` records, for every capability, the node that owns it and whether it is ported,
@@ -115,14 +116,29 @@ until it is tested or the promise is removed.
    for a gap recorded in §5, naming the standard mechanism considered and why it falls short. Where no
    gap is recorded, use the standard approach or drop the feature.
 2. **Test first, then port; fix second.**
-   - A node's tests come first, written from its acceptance criteria. The criteria say what the node's
-     capabilities do, including what they did in the predecessor. The node then ports the predecessor
-     code that passes those tests, or writes it where the predecessor had none, and nothing else.
-   - The predecessor's tests are where criteria come from, not files to port. A test runs its subject
-     and checks what it does. Checking that a file exists is not a test: before the port, a valid RED
-     fails on the behaviour the criterion states.
-   - Ported code, recipes and workflows carry over unchanged unless an acceptance criterion requires a
-     change.
+   - Preserve proven code and its tests; apply test-first development to the port and to every change.
+     Nothing the predecessor built and verified is reinvented. Each node works in six steps:
+     1. **Port the tests.** The predecessor's tests of the node's capabilities come over first, with
+        only the harness and path adjustments the new repository needs, each one listed. Where a
+        criterion changes behaviour a ported case asserts, that case changes to assert the criterion,
+        and is listed too.
+     2. **Fill the gaps.** Compare their coverage with the node's acceptance criteria and add tests for
+        what is missing. Existing coverage stays, also where it is more detailed than the criteria.
+     3. **RED.** The tests run in the new repository and fail. A missing implementation is a valid
+        failure when the harness runs to its end and reports it in its own `FAIL` lines; a crash of
+        the harness itself (a syntax error, an uncaught exception, a missing test tool) is not.
+     4. **Port the code.** The predecessor's implementation comes over, changed only where a criterion
+        requires it.
+     5. **GREEN.** The tests pass, and no test accepted at RED was changed.
+     6. **Review.** Someone independent checks coverage, the changes to ported code and that the RED
+        tests are unchanged.
+   - **Baseline.** Where practical, the RED tests also run against the predecessor's implementation:
+     the RED commit with the node's ported paths checked out from `b9f533b`. Inherited behaviour passes
+     there. The criteria a numbered change produces test known defects, and fail there as expected. Any
+     other failure is investigated before GREEN. Each node's **Tests** section says what to expect, or
+     why a baseline is not practical.
+   - Ported code, recipes, tests and workflows carry over unchanged unless an acceptance criterion
+     requires a change.
    - A node's fast tests stay in the fast lane. A later node that ports a file into their scope passes
      them, so a rule set by an early node holds for code that arrives after it.
    - A replacement must name its demonstrated benefit.
@@ -352,9 +368,9 @@ retention job is added only if storage starts to cost money.
 The release oracle is the predecessor's, ported, plus the checks the study showed were missing.
 
 - **Fast tier** (`make test`: seconds, no build, no network):
-  - each node's tests, written from its criteria. The cases of the predecessor's `scripts/tests/`
-    (21 files; its two storage-retention tests are dropped) live in the criteria of the node that
-    ports the code they test;
+  - the predecessor's `scripts/tests/` (21 files once ported; its two storage-retention tests are
+    dropped), each ported first by the node that ports the code it tests;
+  - each node's new tests for criteria the ported tests do not cover;
   - `bash -n`, shellcheck, `py_compile`, YAML well-formedness and actionlint from `pr-validate.yml`;
 - **Slow tier** (locally, and in CI):
   - the build, in the builder image;
@@ -450,7 +466,7 @@ Every `nodes/<ID>-<name>.md` follows this template.
 | critical / later | <deps or none> | <nodes that depend on this> | <MSn or —> | S / M / L |
 
 **Owns:** <paths this node creates or changes>
-**Ports from linux-live-iso-factory@b9f533b:** <paths this node brings in, after its tests, to pass them; carried unchanged unless a criterion says otherwise. Each matches a `docs/capabilities.md` row.>
+**Ports from linux-live-iso-factory@b9f533b:** <the predecessor tests this node ports first, then the paths it brings in to pass them; carried unchanged unless a criterion says otherwise. Each matches a `docs/capabilities.md` row.>
 **Study refs:** <trap ids T-*, doctrine ids D-*, verified bugs>
 
 ## Purpose
@@ -459,6 +475,13 @@ Every `nodes/<ID>-<name>.md` follows this template.
 ## Standard mechanism
 What Gentoo or the ecosystem already provides here, and what this node uses. For any custom code:
 the gap, and why the standard mechanism is not enough. "None" is the expected answer.
+
+## Tests
+- **Ported first:** the predecessor tests this node ports, with each harness or path adjustment and
+  each case a criterion changes; or none, and why.
+- **Added:** the new tests for criteria the ported tests do not cover.
+- **Baseline:** what the RED tests show against `b9f533b`'s implementation, or why that is not
+  practical.
 
 ## Changes from the port
 Each change to ported code, with the criterion that requires it. Everything else is carried unchanged.
@@ -512,8 +535,10 @@ These are owner decisions. A node that names one does not start until it is sett
   commit as a parent. A commit that ports predecessor code names each source as `path:line` at
   `b9f533b` in its message, and the PR body lists them. A ported file is copied from
   `git show b9f533b:<path>`, then changed only by the node's numbered changes, so `git diff` against
-  that blob shows exactly the changes.
-- **Tests first.** Write the fast test first where one is possible. CI does not police commit order.
+  that blob shows exactly the changes. A ported test differs from its blob only by the harness and
+  path adjustments its RED commit lists.
+- **Tests first.** The RED commit (ported tests plus new tests) comes before the code, following the
+  six steps of §2.2. Write the fast test first where one is possible. CI does not police commit order.
 - **Git.** Existing history and attribution are preserved; historical commits are not rewritten for
   cosmetic reasons. New commits use the configured Git identity. AI assistance may be noted in commit
   messages or PR descriptions.

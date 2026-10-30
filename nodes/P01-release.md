@@ -17,6 +17,11 @@ This node makes the first official release; nothing before it is called a releas
 - SBOM comparison was considered with `cyclonedx diff`. It lists differences but cannot require a reason per package. A 30-line shell script over `jq` and `comm` plus a reasons file does, so that stays custom.
 - Size gate: `stat`. No standard tool needed.
 
+## Tests
+- **Ported first:** none; the predecessor had no test of its release workflow.
+- **Added:** the `scripts/tests/release-*.test.sh`, `rc1-diff.test.sh` and `size-report.test.sh` the Gate names.
+- **Baseline:** `b9f533b`'s `release.yml` fails the criteria of the numbered changes (S3, `generate-provenance.py`), as expected.
+
 ## Changes from the port
 Carried unchanged: `build.yml` as the entry workflow of a tag run (the signing certificate binds to it, `build.yml:1-17`), the `workflow_run` trigger of `release.yml` on `Build`, the tag-to-commit check (`release.yml:77-114`), the previous-tag changelog, the prerelease rule (`release.yml:242-271`: `--prerelease --latest=false` for any hyphenated tag).
 

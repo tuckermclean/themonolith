@@ -5,7 +5,7 @@
 | critical | I01 | B01, R02 | — | M |
 
 **Owns:** `scripts/sync-portage.sh` (rewritten, see Changes), `scripts/tests/sync-portage.test.sh`, `scripts/seed-tree.sh` (one-time archive helper), the `TREE_COMMIT` and `TREE_DIGEST` pins in `Makefile`, `docs/tree-pin.md` (the recovery evidence: candidate range, match counts, signature result).
-**Ports from linux-live-iso-factory@b9f533b:** `scripts/sync-portage.sh` (`_fetch_one` loop, `--source-only` detection at `:101-112`). The Makefile `sync-portage` target (`Makefile:380-389`) keeps its name.
+**Ports from linux-live-iso-factory@b9f533b:** first the test `scripts/tests/sync-portage.test.sh`; then `scripts/sync-portage.sh` (`_fetch_one` loop, `--source-only` detection at `:101-112`). The Makefile `sync-portage` target (`Makefile:380-389`) keeps its name.
 **Study refs:** T-portage-snapshot-fetch, D-two-epoch-pin-model, OD-3; `sync-portage.sh:8-17` (why the predecessor served a local HTTP mirror).
 
 ## Purpose
@@ -17,6 +17,11 @@ rc1's Gentoo tree becomes a pin we can restore: a gentoo-mirror commit, archived
 - Signature: Portage's standard path is `sync-git-verify-commit-signature = yes` with `sync-openpgp-key-path` (git) or `gemato` over the Manifest tree. Both need a trusted key. Gentoo mirrors commits are expected to be signed by Gentoo's repository-mirror key (unverified). We use `git verify-commit` against the key shipped by Gentoo (`sec-keys/openpgp-keys-gentoo-release`, unverified to be the right key) once, at archive time, and record the result. No custom verifier.
 - Custom code: `seed-tree.sh`, a ~30-line script (fetch, verify, archive, push). Gap: no standard tool archives an old commit into our registry. It runs by hand or by `workflow_dispatch`, never in the build.
 
+## Tests
+- **Ported first:** `scripts/tests/sync-portage.test.sh`, its cases changed only as change 4 requires.
+- **Added:** `scripts/tests/tree-pin.test.sh` (AC-1) and the AC-6 cases of `seed-tree.sh`.
+- **Baseline:** not practical: the restore by digest replaces the predecessor's S3 and webrsync fetch. Case 3 (no source, hard error) still fails loudly on `b9f533b`'s script.
+
 ## Changes from the port
 1. **Recover rc1's commit.** Steps, recorded in `docs/tree-pin.md`:
    a. Get rc1's binpkgs (`ghcr.io/tuckermclean/monolith-binpkgs:20260811`, digest in SPEC §0).
@@ -26,7 +31,7 @@ rc1's Gentoo tree becomes a pin we can restore: a gentoo-mirror commit, archived
    *Proof:* I02-AC-1, I02-AC-2.
 2. **Archive and pin.** `seed-tree.sh <commit40>` fetches only that commit, runs `git verify-commit` and logs the outcome (a signed, unsigned or key-missing result is written to `docs/tree-pin.md` either way), archives, and pushes `gentoo-tree:<commit40>`. The Makefile gains `TREE_COMMIT` and `TREE_DIGEST` in place of `BUILD_EPOCH` for the tree; `BUILD_EPOCH` remains only where B01 still reads it for the version label until M01. *Proof:* I02-AC-3.
 3. **Restore by digest, fail loud.** `sync-portage.sh` is replaced by: `oras pull "${REGISTRY}/gentoo-tree@${TREE_DIGEST}"`, check the pulled file's name matches `TREE_COMMIT`, extract into the volume. It has no network fallback, no S3, no webrsync. A missing artifact, a failed pull or a digest mismatch exits non-zero with the ref in the message. Upstream is never contacted, which is the point of D-two-epoch-pin-model's runtime pin. *Proof:* I02-AC-4, I02-AC-5.
-4. **Tests.** The predecessor's `sync-portage.test.sh` tests S3 and webrsync, which are gone, so it is not ported. `sync-portage.test.sh` is written from I02-AC-4 and -6. *Proof:* I02-AC-4.
+4. **Test cases.** The ported `sync-portage.test.sh` stubs `aws` and `wget` for S3 and webrsync, which this node replaces. Its cases change only as far as the replacement requires: case 3 (no source has the tree, a hard error) becomes the missing-artifact case; cases 1, 2 and 4 (S3 hit, S3 miss and archive, no bucket) and case 5 (optional `.md5sum`) test sources that no longer exist, so they become a restore with a stub `oras` serving a fixture archive, a pull of a different file failing, and `--source-only` sourcing without side effects. *Proof:* I02-AC-4.
 
 ## Gate
 - **I02-AC-1** — `docs/tree-pin.md` names one commit, the list of non-overlay gpkgs compared, the count that matched, and any unmatched package with the reason. *Verify:* review of the PR; `grep -E '^[0-9a-f]{40}$'` in the doc by `scripts/tests/tree-pin.test.sh`. *Tier:* fast.

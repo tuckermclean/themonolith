@@ -14,6 +14,11 @@ The overlay passes `pkgcheck scan` against the pinned tree, as any Gentoo reposi
 ## Standard mechanism
 `pkgcheck scan` with `--repo configs/overlay` and the pinned tree (I02) as master. Custom code: none. If `pkgcheck scan --commits` reports a missing revision for an overlay in a repository subdirectory (unverified), it replaces R04's script.
 
+## Tests
+- **Ported first:** none; the predecessor had no overlay check.
+- **Added:** the tests the Gate names.
+- **Baseline:** `pkgcheck` over `b9f533b`'s overlay records the warnings that `docs/overlay-qa.md` accepts.
+
 ## Changes from the port
 1. **Scan.** Add `pkgcheck scan` of `configs/overlay` to the fast lane, with the pinned tree restored from I02's archive. Accepted warnings are listed in `docs/overlay-qa.md`, each with a reason. *AC-1.*
 2. **Replace R04 if pkgcheck covers it.** Run `pkgcheck scan --commits` on R04's fixture cases. If it fails all the cases R04 fails, delete `check-revbump.sh` and its step; if not, keep R04 and record why in `docs/overlay-qa.md`. *AC-2.*

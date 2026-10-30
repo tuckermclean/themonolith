@@ -17,6 +17,11 @@ The builder image can be rebuilt from inputs we hold, and a human can dispatch o
 - Build: the ported `Dockerfile` and `docker commit` crossdev step. crossdev's own documented flow stays. Rewriting it into one multi-stage Dockerfile was considered; no demonstrated benefit.
 - Custom code: none new.
 
+## Tests
+- **Ported first:** none; the predecessor had no test of the builder rebuild.
+- **Added:** `scripts/tests/builder-rebuild.test.sh`.
+- **Baseline:** the rc1 builder's tool manifest (I03) is what the rebuilt image is compared with.
+
 ## Changes from the port
 1. **Pin the stage3.** `FROM gentoo/stage3:amd64-openrc-${TOOLCHAIN_EPOCH}` (`Dockerfile:30`) gets `@sha256:<digest>` of the Docker Hub image (the digest is read at implementation time and mirrored with `oras cp` to `${REGISTRY}/stage3@<digest>`). A tag alone can be re-pushed. *Proof:* M02-AC-1.
 2. **Take the tree from the archive.** `RUN emerge-webrsync --revert=${TOOLCHAIN_EPOCH}` (`Dockerfile:74`) becomes `COPY tree/ /var/db/repos/gentoo/`. `make build-image` first runs I02's restore of `gentoo-tree@${TREE_DIGEST_TOOLCHAIN}` into `./tree/`. The original also baked the tree into the image, so the shape is unchanged. The snapshot is no longer fetched from the network. *Proof:* M02-AC-1, M02-AC-2.

@@ -16,6 +16,11 @@ After this node the doctrines that a boot test cannot see are checked on the shi
 
 Custom residue: the allowlist (`dynamic-allowlist.txt`) and the rc1 expected-findings file. Gap: no standard tool knows which dynamic binaries this project tolerates today. The smallest form is a text file of paths with a reason per line, shrunk by owner-reviewed PRs (`configs/attestation/` is CODEOWNERS-protected, SPEC §8).
 
+## Tests
+- **Ported first:** none; `static-audit.sh` is itself a check and is ported as code.
+- **Added:** `scripts/tests/static-audit.test.sh`.
+- **Baseline:** `b9f533b`'s `static-audit.sh` on the rc1 rootfs gives the expected rc1 failures this node records.
+
 ## Changes from the port
 1. **`file` is replaced by `scanelf`.** The ported loop runs `file -b` on each executable (`static-audit.sh:95`). It only visits files with the user-execute bit (`find -perm -u+x`, `:108`), so a non-executable shared object is never seen. `scanelf -R` visits every ELF. Proved by AC-2, AC-3.
 2. **Findings are lines, and `--strict` is what CI runs.** Each finding is `FINDING <check> <path>` in the report. Checks: `interp` (PT_INTERP not allowlisted), `machine` (not `EM_386`), `loader` (see 3), `python`, `font`, `plugin`. Text relocations are listed as `INFO textrel <path>` and do not fail; no doctrine forbids them. `build-rootfs.sh` keeps calling the script without `--strict`, so the squashfs bytes cannot change. Proved by AC-2 to AC-6.

@@ -14,6 +14,11 @@ The dynamic-binary allowlist is empty and no musl loader ships. This is required
 ## Standard mechanism
 Gentoo gives, in order: a `static` or `static-libs` USE flag if the ebuild has one; a `package.env` entry with `LDFLAGS=-static` (rc1 already applies `*/* static.conf`, `package.env/cross-compile`); build-system patches in `bashrc` (rc1 patches libtool, meson, gpm, kmod there, `bashrc:6-170`); or dropping the package from `world`. Custom code: none new.
 
+## Tests
+- **Ported first:** none. B01's ported tests and O02's checks stay in the lane and must keep passing.
+- **Added:** the tests the Gate names.
+- **Baseline:** O02's checks on the rc1 rootfs give the starting allowlist this node shrinks.
+
 ## Changes from the port
 1. **Per-binary fixes.** rc1 lists these as dynamic PIE: util-linux (`mount`, `agetty`, `mountpoint`; no `static` USE flag, per `RELEASE-READINESS.md:108-118`), iproute2, dhcpcd, procps, tar, gawk, "and a few others" (`README.md:127`). The exact set is unknown until O02 scans rc1; use that list. `static.conf` already sets `-static` globally, so for each binary the first step is to find why it did not reach the link line (libtool, a plain Makefile that overrides `LDFLAGS`, or `--enable-pie`) from the package build log. Then, in order of preference:
    - a `package.env` entry for a plain-Makefile package that passes `LDFLAGS=-static` through `emake` (as `bashrc` does for gpm; candidates: iproute2, procps, tar, gawk; unverified);

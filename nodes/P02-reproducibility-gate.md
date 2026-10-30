@@ -17,6 +17,11 @@ MS1's ISO is for iteration and is never published. After this node a tag cannot 
 - **Comparison:** `sha256sum`. diffoscope runs only after a mismatch, to show where the bytes differ. It decides nothing.
 - **Custom code:** two short scripts. `fetch-distfiles.sh` runs `emerge --fetchonly` and tars `DISTDIR`. `release-inputs.sh` writes the SPEC §6 file with `jq`. Gap: no standard tool archives a Portage build's distfiles or records our pins. The VDB normalisation in change 6 is a gap only if Portage does not honour `SOURCE_DATE_EPOCH` for its own metadata (unverified).
 
+## Tests
+- **Ported first:** none; the predecessor never compared two builds.
+- **Added:** `scripts/tests/release-gate.test.sh`, `scripts/tests/release-inputs.test.sh`.
+- **Baseline:** not applicable; the gate is new.
+
 ## Changes from the port
 1. **Tag pipeline.** On `v*` tags `build.yml` runs, in this order (it stays the entry workflow of a tag run, because the signing certificate binds to it, `build.yml:1-17`):
    1. `fetch`: in the pinned builder with the pinned tree, `emerge --fetchonly` for the full release dependency graph (B01's release mode). This is the only job with network access to upstream. Its output is `distfiles.tar` (sorted, mtimes clamped) and `release-inputs.json`, uploaded as Actions artifacts. The archive's digest is recorded in `release-inputs.json`.

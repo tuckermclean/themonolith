@@ -4,8 +4,8 @@
 |---|---|---|---|---|
 | critical | F01 | B03, G01 | — | M |
 
-**Owns:** `.github/workflows/boot-test.yml` (reusable), `.github/workflows/boot-test-rc1.yml` (caller for the rc1 lane), `scripts/boot-test-requirements.txt`, `scripts/tests/boot-test-workflow.test.sh`, `scripts/tests/boot-test-retry.test.sh`, the `Makefile` targets `test-bios` and `test-uefi`.
-**Ports from linux-live-iso-factory@b9f533b:** `scripts/boot-test.py` (2528 lines, 17 modes, `-cpu 486`, `MODE_DEFAULT_RAM`), `.github/workflows/boot-test.yml` (916 lines), the manual boot targets `test` (`Makefile:500`) and `test-uefi`. Carried unchanged except as listed below. The predecessor's `scripts/tests/boot-test-retry.test.sh` is where O01-AC-1 comes from; it is not ported.
+**Owns:** `.github/workflows/boot-test.yml` (reusable), `.github/workflows/boot-test-rc1.yml` (caller for the rc1 lane), `scripts/boot-test-requirements.txt`, `scripts/tests/boot-test-workflow.test.sh`, the ported `scripts/tests/boot-test-retry.test.sh`, the `Makefile` targets `test-bios` and `test-uefi`.
+**Ports from linux-live-iso-factory@b9f533b:** first the test `scripts/tests/boot-test-retry.test.sh`; then `scripts/boot-test.py` (2528 lines, 17 modes, `-cpu 486`, `MODE_DEFAULT_RAM`), `.github/workflows/boot-test.yml` (916 lines), the manual boot targets `test` (`Makefile:500`) and `test-uefi`. Carried unchanged except as listed below.
 **Study refs:** oracle.yaml `bootmode.*`, `ci.boot-test.expected-kernel`, contradictions on clock-epoch (`boot-test.py:36-42`, `boot-test.yml:796-805`); T-run-rerun-reuses-cache; D-clock-origin-1970; D-486-minimalism; SPEC §1 constraints i486 and modest memory.
 
 ## Purpose
@@ -13,6 +13,11 @@ After this node the predecessor's 17 boot modes run in CI against any ISO, wheth
 
 ## Standard mechanism
 QEMU, OVMF and `pexpect` on a GitHub-hosted runner, as the predecessor. openQA was considered (SPEC §5): it is a service to run for 17 serial-console modes. No gap is recorded and no custom code is added. The harness is carried as it is: the milestone strings, the ISOLINUX `serial` label, the GRUB `(serial)` entry (SPEC §7), the sentinel protocol and the launch-retry rule.
+
+## Tests
+- **Ported first:** `boot-test-retry.test.sh`, with one harness adjustment: a missing `boot-test.py` is reported as `FAIL` instead of an uncaught traceback. `boot-test.py` is itself the predecessor's oracle; its 17 modes are ported unchanged and run in AC-4.
+- **Added:** `scripts/tests/boot-test-workflow.test.sh` (AC-2, AC-3, AC-6).
+- **Baseline:** the ported test passes on `b9f533b`'s `boot-test.py`; `b9f533b`'s `boot-test.yml` fails AC-2 (`actions/cache`, S3), as expected. The rc1 ISO passing the 17 modes (AC-4) is the baseline of the oracle itself.
 
 ## Changes from the port
 1. **Reusable workflow takes the ISO by artifact or by URL.** The predecessor's only input is `build-version`, and every job restores the ISO with `actions/cache/restore` keyed on the run id (`boot-test.yml:23-26,80-85`). Inputs become `iso-artifact` (an Actions artifact name) or `iso-url` plus `iso-sha256`, and optional `kernel-version` and `modes` (a list; default all 17, so a caller can leave out a mode whose package is not on the disc). A `fetch-iso` job downloads and `sha256sum -c`-verifies a URL ISO, then uploads it as an artifact; in artifact mode it does nothing. Every mode job uses `actions/download-artifact`. Reason: SPEC §4.1 forbids `actions/cache` between jobs, and the rc1 lane needs a URL. Proved by AC-2, AC-4.

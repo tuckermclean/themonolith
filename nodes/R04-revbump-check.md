@@ -14,6 +14,11 @@ The development cache reuses an overlay package's binary unless its version or r
 ## Standard mechanism
 The Gentoo rule itself: a change to what an ebuild installs needs a revision bump. Portage does not enforce it; repositories enforce it in review or with `pkgcheck`. `pkgcheck` needs the pinned tree and its git checks are unverified for an overlay in a subdirectory (R02). Custom code: one short shell script over `git diff --name-status`. Gap: nothing in the fast lane enforces the rule today.
 
+## Tests
+- **Ported first:** none; the predecessor had no overlay check.
+- **Added:** `scripts/tests/check-revbump.test.sh`.
+- **Baseline:** not applicable; the check is new.
+
 ## Changes from the port
 1. **The check.** `check-revbump.sh <base> <head>` lists the paths changed under `configs/overlay/<cat>/<pn>/`, grouped by package.
    - A package passes when the change adds at least one `*.ebuild` file that the base lacks: a new `-rN` or a new version.

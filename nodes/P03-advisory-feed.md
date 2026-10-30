@@ -16,6 +16,11 @@ grype with its DB re-scans each release's published SBOM; the CVE policy is S01'
 
 **Hosting (OD-1).** This is the only node that needs a host outside GitHub. The advisory URL is a dedicated name baked into every disc (default `https://monolith.technomantics.com/`), so it must be a static host the owner can repoint. The OD-1 default is GitHub Pages with that custom domain: it keeps everything on GitHub and needs no stored key (SPEC §8). The publish step (`actions/upload-pages-artifact` and `actions/deploy-pages`, permissions `pages: write`, `id-token: write`) is the one host-specific step; the monitor does not know the host. Another static host would change only that step.
 
+## Tests
+- **Ported first:** none; the predecessor had no test of its nightly scan.
+- **Added:** `scripts/tests/advisory-feed.test.sh`, `scripts/tests/advisory-feed-workflow.test.sh`.
+- **Baseline:** `b9f533b`'s `nightly-cve-monitor.py` and `nightly-cve-scan.yml` fail the criteria of the numbered changes (S3), as expected.
+
 ## Changes from the port
 1. **S3 and dashboard removed** (left out as P03 ports the script; I01's check holds the rule). Delete `s3_sync`, `s3_cp`, `--s3-bucket` and the dashboard step (`nightly-cve-monitor.py:186-196,231-242,310-330`). The workflow populates `data/<tag>/bom.cdx.json` with `gh release download` for each release of this repository, and for rc1 from the predecessor release with a pinned sha256. It fetches existing `status/*.json` from the host with `curl`. The monitor keeps its `--data-dir` layout (`find_sboms`, `:54-78`). Proved by AC-5.
 2. **The CVE policy decides.** Today any grype match of any severity revokes (`run_grype`, `extract_cve_ids`, `:81-118,:274-281`). Each SBOM is scanned with `check-cves.sh --policy configs/attestation/cve-policy.yaml`; the status comes from its coverage report: `verdict` and the `findings` where `gating` is true. Medium, Low and waived findings never revoke, and an expired waiver (S01 change 4) does. Proved by AC-3.

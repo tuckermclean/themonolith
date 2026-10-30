@@ -23,7 +23,9 @@ Write `out/node/<ID>/brief.md`. Until F01 adds `out/` to `.gitignore`, add it to
 - the node id, name, deps and decisions, from the graph;
 - **every acceptance criterion in scope, copied verbatim** from the node spec's Gate, with its *Verify* and *Tier*;
 - for each criterion, the numbered "Changes from the port" item that produces it, as a pointer;
-- the node's rows in `docs/capabilities.md`, the predecessor files it ports or touches, and the predecessor tests its criteria come from, as `path:line` at `b9f533b` (read them with `git show b9f533b:<path>` after the fetch in `AGENTS.md`), and the `AGENTS.md` traps and doctrines that apply;
+- the node spec's **Tests** section: the predecessor tests to port first, their listed adjustments, the tests to add and the baseline expectation;
+- a coverage map: each criterion → the ported test that covers it, or "new test", or "slow";
+- the node's rows in `docs/capabilities.md` and the predecessor files it ports or touches, as `path:line` at `b9f533b` (read them with `git show b9f533b:<path>` after the fetch in `AGENTS.md`), and the `AGENTS.md` traps and doctrines that apply;
 - the red-target command form: `toolbox/run -- sh scripts/tests/<name>.test.sh`.
 
 Split a large node into **slices** of 3–8 related criteria. Order them so earlier slices build what later tests need.
@@ -31,22 +33,25 @@ Split a large node into **slices** of 3–8 related criteria. Order them so earl
 ## 2. RED (per slice)
 Dispatch a **new** `monolith-tester` with the brief path and the slice's criterion IDs. Never resume an old agent.
 
-Verify the handoff yourself:
+The tester ports the predecessor's tests first, then adds tests for the criteria they do not cover (SPEC §2.2, steps 1–3). Verify the handoff yourself:
 - `git show --stat <red>` touches only `scripts/tests/**` and fixture paths;
-- the red target at `<red>` exits non-zero, and every failure is a test's own `FAIL` line on the behaviour its criterion states. Not valid: a shell error (127, 126, a syntax error), a `No such file` from running a missing subject, or a test that only checks that a file exists;
-- each test runs its subject and checks what the criterion says it does; no test is a predecessor test copied in whole;
+- every predecessor test the node spec ports is in the commit, and `git diff b9f533b:<path> <red>:<path>` shows only the adjustments and criterion-changed cases the node's **Tests** section lists; the commit message lists each one;
+- every criterion in scope is covered by a ported or a new test, or is slow; no ported case was dropped;
+- the red target at `<red>` exits non-zero, and the harness runs to its end and reports each failure in its own `FAIL` lines. A missing implementation is a valid failure when reported that way. Not valid: the harness itself crashing (a syntax error, an uncaught exception or traceback, a missing test tool such as `grep` or `python3`), or a missing subject turned into a `SKIP` or a pass;
 - tests that passed before still pass;
 - the subject is `test(<ID>): …` and the message has one `TDD-Red-Target:` trailer.
 
 `already_satisfied`: record it and drop those criteria. `blocked`: go to step 7.
+
+**Baseline** (SPEC §2.2), where the node's **Tests** section says it is practical: `git worktree add <tmp> <red>`, `git -C <tmp> checkout b9f533b -- <the node's ported implementation paths>`, run the red target there, then remove the worktree. Expect the ported tests and the criteria of inherited behaviour to pass, and the criteria a numbered change produces to fail. Keep the log as `out/node/<ID>/baseline.log`. A defect test that passes on the baseline does not test the defect: send it back to a new tester. An inherited test that fails there is a broken adjustment or a wrong assumption: investigate, and go to step 7 if the spec is at fault. Where the baseline is not practical, record the reason the node spec gives.
 
 ## 3. GREEN
 Dispatch a **new** `monolith-implementer` with the brief path, the RED SHA, the red target and the failing tests. Check its handoff:
 - the red target passes at head;
 - `toolbox/ci run pr-validate` passes: the PR check exactly as CI runs it (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
 - if the slice touched a workflow, `toolbox/ci lint` passes;
-- `git diff <red>..HEAD -- scripts/tests scripts/fixtures` modifies or deletes no RED test;
-- every ported file is the `b9f533b` blob plus the node's numbered changes (`git diff b9f533b:<path> HEAD:<path>`), and the commit that ports it names each source as `path:line` at `b9f533b`.
+- `git diff <red>..HEAD -- scripts/tests scripts/fixtures` modifies or deletes no RED test, ported or new;
+- every ported implementation file is the `b9f533b` blob plus the node's numbered changes (`git diff b9f533b:<path> HEAD:<path>`), and the commit that ports it names each source as `path:line` at `b9f533b`.
 
 Retries are bounded: **at most 4 implementer attempts per slice.** Attempts 1–3 use the agent's model. Attempt 4 uses the Agent tool's `model: "opus"` override and gets every earlier finding and failed diff SHA. After that, go to step 7.
 
@@ -66,7 +71,8 @@ Push with `git push -u origin HEAD`. A push that changes `.github/workflows/*` n
 
 Open the PR with `gh pr create`. The body has:
 - what the node delivers, in two or three sentences;
-- the predecessor files ported, each with its `path` at `b9f533b` and the numbered changes applied;
+- the predecessor files ported, each with its `path` at `b9f533b` and the numbered changes applied, tests first;
+- the baseline result (`out/node/<ID>/baseline.log` summary), or why it was not practical;
 - the criterion → evidence table (SPEC §11): criterion, test or command, where it ran (`toolbox/ci`, toolbox, builder, CI URL), result;
 - the RED → GREEN → review SHAs for each slice;
 - deviations and open questions.

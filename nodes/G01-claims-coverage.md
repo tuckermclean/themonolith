@@ -14,6 +14,11 @@ After this node every promise the README makes is either tested in a boot mode o
 ## Standard mechanism
 Existing QEMU options (`-drive`, `-serial`, `-chardev`) and the ported harness; no new framework. `sfdisk` on the runner makes the test disk's partition table. In the guest, the tools the README names are used as written. Custom code: only mode functions in `boot-test.py` and one text table, `smoke-checks.txt`. Gap: no tool tests a live ISO against its README. No manifest schema, evaluator or lint library: a plain table read by one shell loop in the guest is enough.
 
+## Tests
+- **Ported first:** none of its own. The boot modes O01 ported already prove some README promises, and they stay as they are.
+- **Added:** `scripts/tests/readme-claims.test.sh`, `scripts/tests/smoke-coverage.test.sh` and the four new modes.
+- **Baseline:** `b9f533b`'s README fails `readme-claims.test.sh` on its untested promises, as expected.
+
 ## Changes from the port
 Claims, with README line numbers at b9f533b, and what happens to each.
 

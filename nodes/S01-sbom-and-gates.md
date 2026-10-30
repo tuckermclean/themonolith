@@ -16,6 +16,11 @@ syft with its Portage VDB cataloger makes the package list; grype with its DB ma
 
 **Ordering.** `enrich-sbom.py` reads `license-policy.yaml` (Gentoo-to-SPDX map, `--license-policy` at `enrich-sbom.py:1115`) and `spdx-license-ids.txt` (`:213-218`). S01 owns both the scripts and the policy, and carries the policy unchanged, so nothing depends on another node and rc1 reproduces.
 
+## Tests
+- **Ported first:** the predecessor's CVE-gate canary, `scripts/run-cve-canary.sh` with `scripts/fixtures/canary-sbom.cdx.json` and `.github/workflows/cve-gate-canary.yml`, before the gate scripts it exercises.
+- **Added:** `attestation-static.test.sh`, `check-cves-waivers.test.sh`, `check-unowned.test.sh`.
+- **Baseline:** on `b9f533b`'s gate scripts the canary passes, and the criteria of the numbered changes fail (the unowned gate passes on missing input; waivers never expire), as expected. Reproducing rc1's SBOM on rc1's rootfs is the baseline of the SBOM.
+
 ## Changes from the port
 1. **Provenance pillar removed.** Delete `PROVENANCE_*`, the `generate-provenance.py` call and its summary field from `attestation.sh` (`:57,179-181,231,674-694,702,711,775,824`). The ISO sha256 computation stays: the SBOM records it. Reason: P01 replaces the script. Proved by AC-5.
 2. **S3 distribution URL:** `attestation.sh:196-204` builds an `s3://` URL, and `enrich-sbom.py:515-531,1154-1170` carries it into the SBOM. Both are left out as S01 ports the files (I01's check holds the rule); the GitHub release URL logic at `:206` onward stays. The SBOM difference is listed under `deliberate` in `rc1-sbom-diff.txt`. Proved by AC-7.
