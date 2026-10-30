@@ -12,7 +12,7 @@ fails=0
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; fails=$((fails + 1)); }
 
-pattern='aws |aws-actions|AWS_|amazonaws|s3://|S3_BUCKET|s3-gc'
+pattern='(^|[^[:alnum:]_])aws |aws-actions|AWS_|amazonaws|s3://|S3_BUCKET|s3-gc'
 self=scripts/tests/no-aws.test.sh
 want_registry=ghcr.io/tuckermclean/themonolith
 
@@ -109,6 +109,12 @@ for s in 'uses: aws-actions/configure@v1' 'aws s3 cp x s3://bucket/y' 'export AW
 	expect "I01-AC-1 fixture file containing '$s' fails" fail check_ac1 "$r"
 	rm -rf "$r"
 done
+r=$(mkrepo ac1-draws); echo 'X draws its box' >"$r/scripts/x.sh"; commit_all "$r"
+expect "I01-AC-1 'aws ' inside 'draws ' is not a match" pass check_ac1 "$r"
+r=$(mkrepo ac1-awsline); echo 'aws s3 cp a b' >"$r/scripts/x.sh"; commit_all "$r"
+expect "I01-AC-1 line starting with 'aws s3 cp a b' fails" fail check_ac1 "$r"
+r=$(mkrepo ac1-awsrun); printf '      run: aws s3 ls\n' >"$r/scripts/x.sh"; commit_all "$r"
+expect "I01-AC-1 '      run: aws s3 ls' fails" fail check_ac1 "$r"
 r=$(mkrepo ac1-excl); mkdir -p "$r/nodes" "$r/docs/study"; echo "s3://x" >"$r/nodes/n.md"; echo "AWS_X" >"$r/SPEC.md"
 echo "s3-gc" >"$r/docs/migration.tsv"; echo "S3_BUCKET" >"$r/docs/study/a.md"; commit_all "$r"
 expect "I01-AC-1 excluded spec paths are not reported" pass check_ac1 "$r"
