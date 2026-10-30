@@ -267,6 +267,15 @@ sys.exit(1 if bad else 0)
 PY
 [ $? -eq 0 ] || fails=$((fails + 1))
 
+# ---- Ruling 5 additions (O01-AC-7): each boot gets its own copy of the ISO (the guest writes to the disk) ----
+for m in usb nvme virtio; do
+	out=$(mk -nB test-boot MODE=$m ISO="$tmp/fake.iso")
+	bl=$(echo "$out" | grep -n 'boot-test\.py' | head -1 | cut -d: -f1)
+	used=$(echo "$out" | grep 'boot-test\.py' | head -1 | sed -n "s/.*--iso[ =]*['\"]\{0,1\}\([^'\" ]*\).*/\1/p")
+	if [ -n "$used" ] && [ "$used" != "$tmp/fake.iso" ]; then pass "O01-AC-7 make -n test-boot MODE=$m: --iso is a copy, not the ISO itself"; else fail "O01-AC-7 make -n test-boot MODE=$m: --iso is a copy, not the ISO itself (--iso '$used')"; fi
+	if [ -n "$bl" ] && echo "$out" | head -n "$((bl - 1))" | grep -E '(^|[^a-z])(cp|dd|cat|install)([^a-z]|$)' | grep -q -- "$tmp/fake.iso"; then pass "O01-AC-7 make -n test-boot MODE=$m: a copy of the ISO is made before the boot"; else fail "O01-AC-7 make -n test-boot MODE=$m: a copy of the ISO is made before the boot"; fi
+done
+
 echo
 if [ "$fails" -ne 0 ]; then echo "$fails FAILED"; exit 1; fi
 echo "ALL PASS"
