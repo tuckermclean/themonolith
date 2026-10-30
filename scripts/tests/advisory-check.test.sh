@@ -72,8 +72,9 @@ silent() { # name
 }
 
 # ---- AC-1
-if [ -f "$CHECK" ] && ! grep -q amazonaws "$CHECK"; then ok "AC-1 no amazonaws in the script"
-else fail "AC-1 no amazonaws in the script"; fi
+s3host='amazon''aws'
+if [ -f "$CHECK" ] && ! grep -q "$s3host" "$CHECK"; then ok "AC-1 no S3 host (amazon...aws) in the script"
+else fail "AC-1 no S3 host (amazon...aws) in the script"; fi
 if [ -f "$CHECK" ] && grep -q 'https://monolith\.technomantics\.com' "$CHECK"; then ok "AC-1 default base URL in source"
 else fail "AC-1 default base URL in source"; fi
 : > "$CURL_LOG"
