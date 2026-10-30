@@ -6,10 +6,13 @@
 Always: one row per predecessor file, and the rows rebuild the predecessor's git tree at b9f533b
 (mode, path and blob of every file), so a missing, extra or altered row fails without fetching the
 predecessor. Each row names a node of docs/graph.yaml (or `-`), a disposition and a destination.
-A `port` row that no later node changes must, once its destination exists, hold the same blob.
+Wherever a port or port+fix destination exists, its mode (from the git index, else the file) equals
+the row's; a `port` row that no later node changes must also hold the row's blob.
 
---node <ID>: every port or port+fix row of that node has its destination in the working tree.
---all:       every port or port+fix row has its final path (the last move in `then`, else `dest`).
+--node <ID>: run when that node lands. Every port or port+fix row of the node is at its destination
+             with the row's mode, and every `port` row of the node holds the row's blob.
+--all:       every port or port+fix row is at its final path (the last move in `then`, else `dest`)
+             with the row's mode.
 
 Standard library only; prints PROBLEMS <n> and exits non-zero when n > 0.
 """
@@ -32,6 +35,25 @@ problems = []
 def problem(msg):
     problems.append(msg)
     print("PROBLEM", msg)
+
+
+def index_modes():
+    out = subprocess.run(["git", "-C", ROOT, "ls-files", "-s", "-z"], capture_output=True, check=True).stdout
+    modes = {}
+    for entry in out.split(b"\0"):
+        if entry:
+            meta, path = entry.split(b"\t", 1)
+            modes[path.decode()] = meta.split()[0].decode()
+    return modes
+
+
+def file_mode(rel, modes):
+    if rel in modes:
+        return modes[rel]
+    full = os.path.join(ROOT, rel)
+    if os.path.islink(full):
+        return "120000"
+    return "100755" if os.access(full, os.X_OK) else "100644"
 
 
 def git_blob(path):
@@ -114,16 +136,25 @@ def main(argv):
     if got != TREE:
         problem(f"rows rebuild tree {got}, want {TREE}: a predecessor file is missing, extra or altered")
 
+    modes = index_modes()
     for r in rows:
+        if r["disp"] not in ("port", "port+fix"):
+            continue
+        n = r["line"]
+        mine = node is not None and r["node"] == node
+        for rel in dict.fromkeys((r["dest"], final_path(r))):
+            full = os.path.join(ROOT, rel)
+            if os.path.lexists(full) and file_mode(rel, modes) != r["mode"]:
+                problem(f"line {n}: {rel} has mode {file_mode(rel, modes)}, want {r['mode']}")
         dest = os.path.join(ROOT, r["dest"])
-        if r["disp"] == "port" and not r["then"] and os.path.isfile(dest) and git_blob(dest) != r["blob"]:
-            problem(f"line {r['line']}: {r['dest']} differs from {r['path']} at b9f533b; "
+        if os.path.isfile(dest) and r["disp"] == "port" and (not r["then"] or mine) \
+                and git_blob(dest) != r["blob"]:
+            problem(f"line {n}: {r['dest']} differs from {r['path']} at b9f533b; "
                     "a changed port is port+fix, or names the node that changes it")
-        if r["disp"] in ("port", "port+fix"):
-            if node and r["node"] == node and not os.path.exists(dest):
-                problem(f"line {r['line']}: {node} has not ported {r['path']} to {r['dest']}")
-            if want_all and not os.path.exists(os.path.join(ROOT, final_path(r))):
-                problem(f"line {r['line']}: {final_path(r)} missing")
+        if mine and not os.path.lexists(dest):
+            problem(f"line {n}: {node} has not ported {r['path']} to {r['dest']}")
+        if want_all and not os.path.lexists(os.path.join(ROOT, final_path(r))):
+            problem(f"line {n}: {final_path(r)} missing")
 
     print(f"migration: {len(rows)} rows, tree {'ok' if got == TREE else 'MISMATCH'}")
     print(f"PROBLEMS {len(problems)}")

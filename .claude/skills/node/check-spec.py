@@ -3,7 +3,7 @@
     python3 -I .claude/skills/node/check-spec.py [--write]
 
 Checks: deps and decisions resolve, no cycles, `track: critical` is exactly P01 and its ancestors,
-every node has a spec with the SPEC §9 headings, numbered criteria each with *Verify* and *Tier*,
+every node has a spec with the SPEC §9 headings, numbered criteria each with *Verify*,
 known doctrine/trap ids and OD ids, and docs/migration.tsv (scripts/check-migration.py). --write regenerates each spec's header row from the graph.
 """
 import os
@@ -103,9 +103,9 @@ for nid, n in N.items():
     if not nums or nums != list(range(1, len(nums) + 1)):
         print(nid, "AC numbering", nums)
         problems += 1
-    bad = [a[1] for a in acs if "*Verify:*" not in a[2] or not re.search(r"\*Tier:\* (fast|slow)", a[2])]
+    bad = [a[1] for a in acs if "*Verify:*" not in a[2] or "*Tier:*" in a[2]]
     if bad:
-        print(nid, "AC without Verify or Tier", bad)
+        print(nid, "AC without Verify, or with a Tier", bad)
         problems += 1
     unk = sorted(r for r in set(re.findall(r"\b[TD]-[a-z0-9][a-z0-9-]*[a-z0-9]\b", s)) if r not in known)
     badn = sorted(r for r in set(re.findall(r"\b[FIRBOSPMGX]0[0-9]\b", s)) if r not in N)

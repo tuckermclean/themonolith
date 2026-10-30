@@ -3,8 +3,8 @@
 Where each capability of The Monolith lives, and how it arrives. A node ports the predecessor's tests
 for its capabilities first, adds tests for what its criteria cover and they do not, and fails them
 (RED); then it brings in, or writes, the code that passes them (GREEN). Predecessor code comes in
-when a test needs it, not before, and with the edits that a criterion requires (SPEC §2.2). A node's fast
-tests stay in the lane, so a rule an early node sets (no AWS, actions pinned by SHA, the builder by
+when a test needs it, not before, and with the edits that a criterion requires (SPEC §2.2). A node's tests
+stay in `make test`, so a rule an early node sets (no AWS, actions pinned by SHA, the builder by
 digest, nothing reading `configs/kernel.config`) also holds for files a later node ports.
 
 **Mode:**
@@ -28,7 +28,7 @@ first, before the code it tests, with only the harness and path adjustments the 
 | Capability | Source | Node | Mode | Then |
 |---|---|---|---|---|
 | Fast lane: `bash -n`, `py_compile`, YAML check, actionlint, shellcheck, run `scripts/tests/*` | `pr-validate.yml:23-69` | F01 | port | each node adds its tests |
-| `make test` as the fast tier and the whole PR check, the only step of `pr-validate.yml` | — | F01 | build | |
+| `make test`, the one testing interface (`test-lint`, `test-unit`; each node adds its target), called by `pr-validate.yml` | — | F01 | build | |
 | Action SHA pinning, Dependabot, CODEOWNERS | — | F01 | build | |
 | Agent knowledge base: doctrines, traps, recipes, credential handling | `AGENTS.md`, `CLAUDE.md` | F01 | port | I01 (S3 prose) |
 | `.gitignore` | `.gitignore` | F01 | port+fix (`out/`) | |
@@ -36,7 +36,7 @@ first, before the code it tests, with only the harness and path adjustments the 
 | README: what the disc is and how to use it | `README.md` | G01 | port (each promise with its test) | X01 ("Verify a release") |
 | No storage vendor anywhere: repo-wide no-AWS check, the one `REGISTRY` variable | — | I01 | build | every porting node strips S3 as it ports |
 | Revision bump on overlay change | — | R04 | build | R02 |
-| `pkgcheck` over the overlay, `make overlay-qa`, before the first release | — | R02 | build | |
+| `pkgcheck` over the overlay, `make test-overlay`, before the first release | — | R02 | build | |
 | Workflow-push credential handling (PAT) | `AGENTS.md` | F01 | port | |
 | Predecessor agent git helper | `scripts/agent-git-env.sh` | — | drop | `.claude/` replaces it |
 

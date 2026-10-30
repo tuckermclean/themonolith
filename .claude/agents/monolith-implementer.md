@@ -30,9 +30,9 @@ Read the brief, the RED commit (`git show <sha>`), the node spec's "Changes from
 
 ## Validate locally, in the toolbox
 - the red target now exits 0, and every RED test passes;
-- `toolbox/run --network none -- make test` passes, which is the PR check `pr-validate.yml` runs (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
+- `make test-lint test-unit` passes, with any other `test-*` target your change touches that needs no build (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
 - `toolbox/run -- shellcheck --severity=error` on the shell files you touched; if you touched a workflow, `toolbox/run -- actionlint -shellcheck=` and `toolbox/ci lint`, and run its changed jobs with `toolbox/ci run <workflow> <job>`.
-- Make is the interface (SPEC §7): put an operation behind a Make target and a script; a workflow step only calls it (`toolbox/run -- <cmd>` or a builder `make` target), with values passed through `env:`. Move logic into `scripts/`.
+- Make is the interface (SPEC §7): put an operation behind a Make target and a script; a workflow step only calls it (`make <target>`; a test is always a Make target), with values passed through `env:`. Move logic into `scripts/`.
 
 Commit with subject `feat(<ID>): …` or `fix(<ID>): …`. Stage with `git add <paths>` as one command, then run `git commit` as a separate command.
 

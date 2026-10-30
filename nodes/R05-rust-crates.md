@@ -26,11 +26,11 @@
 4. **Back on the disc.** Restore the two `world` lines and their `versions.lock` lines, remove their two lines from `docs/rc1-diff-reasons.tsv` (P01), and put `stele-acid2` back in the mode list B03 passes to O01's workflow. *AC-5.*
 
 ## Gate
-- **R05-AC-1** — No ebuild under `configs/overlay/` has `network-sandbox` in `RESTRICT` or calls `cargo` without `--offline` or `cargo.eclass`. *Verify:* `scripts/tests/no-network-ebuilds.test.sh`. *Tier:* fast.
-- **R05-AC-2** — With `DISTDIR` filled only by `emerge --fetchonly` for the two packages, both build in the builder inside `docker run --network none` with `FETCHCOMMAND=/bin/false`, and the binaries run. A smoke run of `rl144 --version` is enough before AC-5. *Verify:* a CI dispatch job that runs the two emerges in the builder under `--network none`. *Tier:* slow.
-- **R05-AC-3** — Both packages have new revisions, Manifests that list every crate, and matching `versions.lock` lines. *Verify:* `scripts/tests/no-network-ebuilds.test.sh` (counts `CRATES` entries against Manifest `DIST` lines); R04's check. *Tier:* fast.
-- **R05-AC-4** — The `CRATES` list covers every package in the builder toolchain's `library/Cargo.lock` as well as the project's, and the offline build in AC-2 compiles std with `-Z build-std` from those distfiles alone. *Verify:* `scripts/tests/no-network-ebuilds.test.sh` (lock-file entries against `CRATES`, with the library lock extracted from the builder image); the AC-2 job. *Tier:* fast + slow.
-- **R05-AC-5** — `world` lists both packages again, `build.yml`'s boot-test call includes `stele-acid2`, and the next `main` build passes the `stele-acid2` mode. *Verify:* `scripts/tests/versions-lock-complete.test.sh`; the Build run URL. *Tier:* fast + slow.
+- **R05-AC-1** — No ebuild under `configs/overlay/` has `network-sandbox` in `RESTRICT` or calls `cargo` without `--offline` or `cargo.eclass`. *Verify:* `scripts/tests/no-network-ebuilds.test.sh`.
+- **R05-AC-2** — With `DISTDIR` filled only by `emerge --fetchonly` for the two packages, both build in the builder inside `docker run --network none` with `FETCHCOMMAND=/bin/false`, and the binaries run. A smoke run of `rl144 --version` is enough before AC-5. *Verify:* a CI dispatch job that runs the two emerges in the builder under `--network none`.
+- **R05-AC-3** — Both packages have new revisions, Manifests that list every crate, and matching `versions.lock` lines. *Verify:* `scripts/tests/no-network-ebuilds.test.sh` (counts `CRATES` entries against Manifest `DIST` lines); R04's check.
+- **R05-AC-4** — The `CRATES` list covers every package in the builder toolchain's `library/Cargo.lock` as well as the project's, and the offline build in AC-2 compiles std with `-Z build-std` from those distfiles alone. *Verify:* `scripts/tests/no-network-ebuilds.test.sh` (lock-file entries against `CRATES`, with the library lock extracted from the builder image); the AC-2 job.
+- **R05-AC-5** — `world` lists both packages again, `build.yml`'s boot-test call includes `stele-acid2`, and the next `main` build passes the `stele-acid2` mode. *Verify:* `scripts/tests/versions-lock-complete.test.sh`; the Build run URL.
 
 ## Risks
 - Unverified: `pycargoebuild` handles both lock files, and Stele's git dependencies (if any) map onto `GIT_CRATES`.

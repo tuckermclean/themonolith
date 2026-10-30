@@ -123,7 +123,7 @@ Porting can start now. F01 needs item 1, which takes a minute; the others are ne
    - OD-10: the CD budget; default the whole 74-minute CD-R.
 
    OD-5 and OD-8 have defaults that need no action.
-4. **Protect `main`** (before the first merge): require the fast-tier check and owner review, and add CODEOWNERS (SPEC §8).
+4. **Protect `main`** (before the first merge): require `pr-validate.yml` and owner review, and add CODEOWNERS (SPEC §8).
 
 ## Order of work
 

@@ -35,13 +35,13 @@ Carried unchanged: the weekly cron and `workflow_dispatch` input shape, `concurr
 8. **Permissions.** Workflow level `contents: read`. The bump job adds `contents: write` and `pull-requests: write`. `actions: write` and `issues: write` (`:132-137`) go, since nothing dispatches or comments. *AC-6.*
 
 ## Gate
-- **M01-AC-1** — `regen-pins.yml` is gone, and no workflow contains `gh pr merge`, `--admin`, `--auto`, `enableAutoMerge` or `gh pr review --approve`. *Verify:* `scripts/tests/pin-bump.test.sh` (grep of `.github/workflows/` with a planted-violation fixture that must fail). *Tier:* fast.
-- **M01-AC-2** — `pin-bump.yml` creates its PR with a token from `actions/create-github-app-token`, and `GITHUB_TOKEN` is not used for push or `gh pr create`. *Verify:* `scripts/tests/pin-bump.test.sh`. *Tier:* fast.
-- **M01-AC-3** — A bump PR carries the `full-ci` label and its Build run starts without a manual dispatch. `pin-bump.yml` has no `gh workflow run` and no polling loop. *Verify:* grep in the fast test; the e2e dispatch below. *Tier:* fast + slow.
-- **M01-AC-4** — The changed files of a bump are within the tree pin (I02's files), `versions.lock` and the labels; `BUILD_EPOCH`, stage3 and builder pins are untouched. `update-build-pins.sh` makes no request to `distfiles.gentoo.org` or Docker Hub. *Verify:* `scripts/tests/pin-bump.test.sh` against a fixture repository and a stubbed `git ls-remote`, `curl` and archive tool. *Tier:* fast.
-- **M01-AC-5** — With the newest commit equal to `TREE_COMMIT`, the script exits 0, prints `NO-OP`, and creates no branch. *Verify:* `scripts/tests/pin-bump.test.sh`. *Tier:* fast.
-- **M01-AC-6** — Declared permissions are `contents: read` at workflow level and at most `contents: write`, `pull-requests: write`, `packages: read` in the bump job. *Verify:* `scripts/tests/pin-bump.test.sh`. *Tier:* fast.
-- **M01-AC-7** — A real dispatch opens a PR that moves `TREE_COMMIT` off rc1's tree, whose Build run passes B03's checks, and which a human merges. *Verify:* the PR and its Build run URL. This is the first bump, after MS2. *Tier:* slow.
+- **M01-AC-1** — `regen-pins.yml` is gone, and no workflow contains `gh pr merge`, `--admin`, `--auto`, `enableAutoMerge` or `gh pr review --approve`. *Verify:* `scripts/tests/pin-bump.test.sh` (grep of `.github/workflows/` with a planted-violation fixture that must fail).
+- **M01-AC-2** — `pin-bump.yml` creates its PR with a token from `actions/create-github-app-token`, and `GITHUB_TOKEN` is not used for push or `gh pr create`. *Verify:* `scripts/tests/pin-bump.test.sh`.
+- **M01-AC-3** — A bump PR carries the `full-ci` label and its Build run starts without a manual dispatch. `pin-bump.yml` has no `gh workflow run` and no polling loop. *Verify:* grep in `scripts/tests/pin-bump.test.sh`; the e2e dispatch below.
+- **M01-AC-4** — The changed files of a bump are within the tree pin (I02's files), `versions.lock` and the labels; `BUILD_EPOCH`, stage3 and builder pins are untouched. `update-build-pins.sh` makes no request to `distfiles.gentoo.org` or Docker Hub. *Verify:* `scripts/tests/pin-bump.test.sh` against a fixture repository and a stubbed `git ls-remote`, `curl` and archive tool.
+- **M01-AC-5** — With the newest commit equal to `TREE_COMMIT`, the script exits 0, prints `NO-OP`, and creates no branch. *Verify:* `scripts/tests/pin-bump.test.sh`.
+- **M01-AC-6** — Declared permissions are `contents: read` at workflow level and at most `contents: write`, `pull-requests: write`, `packages: read` in the bump job. *Verify:* `scripts/tests/pin-bump.test.sh`.
+- **M01-AC-7** — A real dispatch opens a PR that moves `TREE_COMMIT` off rc1's tree, whose Build run passes B03's checks, and which a human merges. *Verify:* the PR and its Build run URL. This is the first bump, after MS2.
 
 ## Risks
 - OD-6: GitHub App or fine-grained PAT. App is the default; the owner creates it. Workflow-file changes still need the owner's token (T-workflow-push-needs-pat); a bump touches none.

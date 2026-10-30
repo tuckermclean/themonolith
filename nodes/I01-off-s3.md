@@ -9,7 +9,7 @@
 **Study refs:** `ext.aws-s3`, build.yaml `s3_touch_points`, T-run-rerun-reuses-cache, SPEC principles 3 and 5.
 
 ## Purpose
-No file in this repository names AWS or S3, and none ever will: a fast check in the lane rejects any reference, so code ported later arrives without it. Durable bytes live in GHCR under one `REGISTRY` variable. Files that move between jobs of one run are Actions artifacts, and published files are GitHub Release assets.
+No file in this repository names AWS or S3, and none ever will: a test in `make test` rejects any reference, so code ported later arrives without it. Durable bytes live in GHCR under one `REGISTRY` variable. Files that move between jobs of one run are Actions artifacts, and published files are GitHub Release assets.
 
 ## Standard mechanism
 GHCR through `oras` and `docker`, Actions artifacts, GitHub Releases. No store interface or backend layer. Changing vendor means changing `REGISTRY` and copying the data. Custom code: none beyond a grep.
@@ -40,14 +40,14 @@ The predecessor's S3 and AWS uses (`grep -rniE 'aws|s3://|amazonaws|S3_BUCKET'` 
 Three overlay ebuild comments say "own S3" (`rl144`, `monolith-xserver`, `stele`). They match none of the check's patterns, and editing them would need a revbump for no gain, so their porting nodes keep them.
 
 1. **One `REGISTRY` variable.** Default `ghcr.io/tuckermclean/themonolith`, lowercase, assigned once in `Makefile` and once in the workflow `env:` of each workflow that names the registry. Ported scripts read `REGISTRY`; `ghcr.io/` appears in no script. *Proof:* I01-AC-2.
-2. **The repository-wide check.** `scripts/tests/no-aws.test.sh` greps every tracked file for `aws |aws-actions|AWS_|amazonaws|s3://|S3_BUCKET|s3-gc`, outside the spec (`SPEC.md`, `nodes/`, `docs/study/`, `docs/reviews/`, `docs/graph.yaml`, `docs/capabilities.md`, `docs/first-release.md`) and the test itself. It runs in the fast lane, so it holds for every later port. *Proof:* I01-AC-1.
+2. **The repository-wide check.** `scripts/tests/no-aws.test.sh` greps every tracked file for `aws |aws-actions|AWS_|amazonaws|s3://|S3_BUCKET|s3-gc`, outside the spec (`SPEC.md`, `nodes/`, `docs/study/`, `docs/reviews/`, `docs/graph.yaml`, `docs/capabilities.md`, `docs/first-release.md`) and the test itself. It runs in `make test-unit`, so it holds for every later port. *Proof:* I01-AC-1.
 3. **Visibility is a manual owner action.** GHCR creates packages private. The owner makes `builder`, `rc1-binpkgs`, and each later package (`gentoo-tree`, `binpkgs`, `distfiles`) public once in the package settings. Anonymous `oras manifest fetch` of each is the check. *Proof:* I01-AC-4.
 
 ## Gate
-- **I01-AC-1** — No tracked file outside the spec paths of change 2 and the test itself matches `aws |aws-actions|AWS_|amazonaws|s3://|S3_BUCKET|s3-gc`, and the test fails on a fixture file that does. *Verify:* `scripts/tests/no-aws.test.sh` (`git ls-files` plus `grep -E`). *Tier:* fast.
-- **I01-AC-2** — The registry location is assigned once in the Makefile and once in the `env:` of each workflow that names it, and `ghcr.io/` appears in no file under `scripts/` except the test. *Verify:* `scripts/tests/no-aws.test.sh`. *Tier:* fast.
-- **I01-AC-3** — No workflow requires a secret other than `GITHUB_TOKEN`. *Verify:* `scripts/tests/no-aws.test.sh` (`grep -rn 'secrets\.' .github/workflows` shows only `secrets.GITHUB_TOKEN`). *Tier:* fast.
-- **I01-AC-4** — Anonymous pull works for each package under `${REGISTRY}` that exists when this node lands (after Step 0, `builder` and `rc1-binpkgs`): `oras manifest fetch` without credentials exits 0. *Verify:* `toolbox/run -- oras manifest fetch …` with no login, log kept under `out/node/I01/`. *Tier:* slow.
+- **I01-AC-1** — No tracked file outside the spec paths of change 2 and the test itself matches `aws |aws-actions|AWS_|amazonaws|s3://|S3_BUCKET|s3-gc`, and the test fails on a fixture file that does. *Verify:* `scripts/tests/no-aws.test.sh` (`git ls-files` plus `grep -E`).
+- **I01-AC-2** — The registry location is assigned once in the Makefile and once in the `env:` of each workflow that names it, and `ghcr.io/` appears in no file under `scripts/` except the test. *Verify:* `scripts/tests/no-aws.test.sh`.
+- **I01-AC-3** — No workflow requires a secret other than `GITHUB_TOKEN`. *Verify:* `scripts/tests/no-aws.test.sh` (`grep -rn 'secrets\.' .github/workflows` shows only `secrets.GITHUB_TOKEN`).
+- **I01-AC-4** — Anonymous pull works for each package under `${REGISTRY}` that exists when this node lands (after Step 0, `builder` and `rc1-binpkgs`): `oras manifest fetch` without credentials exits 0. *Verify:* `toolbox/run -- oras manifest fetch …` with no login, log kept under `out/node/I01/`.
 
 ## Risks
 - Whether a public GHCR package can be pulled without login from a fork's pull-request run is unverified; AC-4 checks it from outside GitHub only. B03's first run on a pull request settles it.

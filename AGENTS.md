@@ -29,9 +29,10 @@ recipes and credential handling.
   b9f533b740b1db7bf5658d2805603d84e9b1f185`, then `git show b9f533b:<path>`. The fetch creates no branch
   or tag; never merge it.
 - `toolbox/run -- toolbox-selfcheck` checks that every tool is present at its pinned version.
-- Make is the build interface. `toolbox/run --network none -- make test` is the whole PR check once F01
-  has added the Makefile (`pr-validate.yml` runs exactly this); run it before pushing.
-  `toolbox/run -- sh scripts/tests/<name>.test.sh` runs one fast test.
+- Make is the build and test interface, run on the host; each target uses the toolbox or the builder
+  image itself. `make test` runs every test once F01 has added the Makefile (SPEC §7), building what
+  it needs. `make test-lint test-unit` is the PR check without a build; run it before pushing.
+  `toolbox/run -- sh scripts/tests/<name>.test.sh` runs one test file.
 - `toolbox/ci lint` checks the workflow rules (SPEC §7). `toolbox/ci run <workflow> [<job>...]` runs a
   workflow's `run:` steps in this checkout as a convenience (`--event`, `--input k=v`, `--matrix k=v`).
   It does not model separate runners or artifact and cache transfers: jobs share one checkout here, so
@@ -47,10 +48,11 @@ recipes and credential handling.
 ## Building a node
 
 - Use `/node <ID>`. It writes a brief, has a fresh tester commit failing tests (RED), checks them, has a
-  fresh implementer make them pass (GREEN), gets an independent review, runs the slow criteria, and opens
+  fresh implementer make them pass (GREEN), gets an independent review, runs the criteria that need a build, an ISO or CI, and opens
   a PR with the criterion → evidence table.
-- Tests come first wherever a criterion has a fast check. A slow criterion is met only by a recorded run:
-  a local log or a CI URL.
+- `make test` runs every test; its `test-*` targets run parts of it (SPEC §7). Tests come first. A
+  criterion verified by a build, a boot or a CI run is met only by a recorded run: a local log or a CI
+  URL.
 - Role agents may not edit the spec, `AGENTS.md`, `CLAUDE.md`, `.claude/` or `toolbox/`; the guard hook
   blocks it. Spec changes go to the owner.
 
@@ -82,7 +84,7 @@ recipes and credential handling.
 - Use Portage and standard tools. Custom code only where SPEC §5 names a gap.
 - Make is the interface (SPEC §7): operations are Make targets backed by `scripts/`, and workflows only
   call them. A workflow that can trigger passes `toolbox/ci lint`: each `run:` command is
-  `toolbox/run -- <cmd>` or a builder `make` target, values reach `run:` through `env:`, and tools come
+  `make <target>`, or `toolbox/run -- <cmd>` for a step that is not a test, values reach `run:` through `env:`, and tools come
   from the toolbox, never `apt-get` or `setup-*`. Put logic in `scripts/`, not YAML.
 - Provenance lives in `docs/migration.tsv` and Git history, not in source files: no "ported from"
   comments. A porting commit names the predecessor paths it lands; `scripts/check-migration.py` checks

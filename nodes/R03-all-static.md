@@ -30,10 +30,10 @@ Gentoo gives, in order: a `static` or `static-libs` USE flag if the ebuild has o
 3. **Allowlist entries removed one at a time**, each in its own PR, so a boot regression names its cause. *AC-3.*
 
 ## Gate
-- **R03-AC-1** — O02's check passes with an empty dynamic-binary allowlist on a built ISO. *Verify:* the `artifact-checks` job in build.yml. *Tier:* slow.
-- **R03-AC-2** — No `ld-musl-i386.so.1` in the squashfs, and neither script copies it. *Verify:* O02 `musl-loader` rule; `grep -r 'ld-musl-i386' scripts/` returns nothing outside tests. *Tier:* slow, fast.
-- **R03-AC-3** — All 17 boot modes pass on the all-static ISO. *Verify:* boot-test.yml. *Tier:* slow.
-- **R03-AC-4** — The allowlist file only shrinks across the node's PRs. *Verify:* O02's shrink check. *Tier:* fast.
+- **R03-AC-1** — O02's check passes with an empty dynamic-binary allowlist on a built ISO. *Verify:* the `artifact-checks` job in build.yml.
+- **R03-AC-2** — No `ld-musl-i386.so.1` in the squashfs, and neither script copies it. *Verify:* O02 `musl-loader` rule; `grep -r 'ld-musl-i386' scripts/` returns nothing outside tests.
+- **R03-AC-3** — All 17 boot modes pass on the all-static ISO. *Verify:* boot-test.yml.
+- **R03-AC-4** — The allowlist file only shrinks across the node's PRs. *Verify:* O02's shrink check.
 
 ## Risks
 - The dynamic set is unknown until O02 scans rc1 (OD-2). The candidate fixes above are unverified guesses from rc1's comments, not tested.
