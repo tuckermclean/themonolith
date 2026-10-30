@@ -814,8 +814,10 @@ def wait_for_shell(child, timeout=60):
     We do NOT try to match a PS1 prompt: PS1 content depends on Gentoo's
     /etc/bash/bashrc.d chain (colors, hostname, the dark-grey square prepended
     by 99-monolith-square.bash) and isn't worth hardcoding. Instead we
-    repeatedly send a unique echo and wait for it to come back — this also
-    absorbs the race where agetty flushes pending tty input right before it
+    repeatedly send a unique echo and wait for its *executed* output: the
+    typed line carries `$((6*7))` and only a running shell prints `_42`, so
+    the tty's own echo of our input never matches. This also absorbs the
+    race where agetty flushes pending tty input right before it
     hands off to bash, which would otherwise silently eat an early command.
 
     The console runs the lazy /usr/sbin/monolith-console stub: a tiny dash that
@@ -829,9 +831,9 @@ def wait_for_shell(child, timeout=60):
     child.sendline("")
     deadline = time.time() + timeout
     while time.time() < deadline:
-        child.sendline(f"echo {marker}")
+        child.sendline(f"echo {marker}_$((6*7))")
         try:
-            child.expect_exact(marker, timeout=3)
+            child.expect_exact(f"{marker}_42", timeout=3)
             log("Shell is interactive and echoing input.")
             return
         except pexpect.TIMEOUT:
