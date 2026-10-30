@@ -71,8 +71,10 @@ recipes and credential handling.
 - i486, statically linked against musl, cross-compiled with crossdev. No Python and no freetype on the
   disc (SPEC §1, §3).
 - The tested RAM floor is 64 MB. 8 MB is the aim; do not describe it as tested.
-- Test first, then port, and don't redesign. A node ports only what its tests need; predecessor
-  recipes, scripts and tests carry over unchanged unless a node spec lists the change.
+- Test first, then port, and don't redesign. Tests are written from the node's criteria and run what
+  they test; a node ports only the code those tests need. Predecessor recipes and scripts carry over
+  unchanged unless a node spec lists the change. Predecessor tests are not ported: their cases are in
+  the criteria.
 - Use Portage and standard tools. Custom code only where SPEC §5 names a gap.
 - CI parity (SPEC §7): a workflow that can trigger passes `toolbox/ci lint`. Each `run:` command is
   `toolbox/run -- <cmd>` or a builder `make` target, values reach `run:` through `env:`, and tools come

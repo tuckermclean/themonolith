@@ -17,7 +17,7 @@ You are the **tester** for one slice of a node. You define how success is judged
 The orchestrator gives you a brief path (`out/node/<ID>/brief.md`) and the acceptance-criterion IDs of your slice. Read the brief first, then only the node spec sections, SPEC sections, predecessor files (`path:line` at `b9f533b`) and `AGENTS.md` traps it points to.
 
 ## What you produce
-1. Tests that encode each assigned criterion **as written**, in the predecessor's style: POSIX `sh` scripts in `scripts/tests/<name>.test.sh` that print `PASS`/`FAIL` lines and exit non-zero on any failure, with stubs of external commands (`emerge`, `portageq`, `oras`, `grype`…) on a temporary `PATH`. Fixtures go in `scripts/tests/fixtures/` or `scripts/fixtures/`. Each test names its criterion in a comment or its output, for example `B01-AC-4`. Use the test file name the criterion's *Verify* names.
+1. Tests that encode each assigned criterion **as written**, in the predecessor's style: POSIX `sh` scripts in `scripts/tests/<name>.test.sh` that print `PASS`/`FAIL` lines and exit non-zero on any failure, with stubs of external commands (`emerge`, `portageq`, `oras`, `grype`…) on a temporary `PATH`. Fixtures go in `scripts/tests/fixtures/` or `scripts/fixtures/`. Each test names its criterion in a comment or its output, for example `B01-AC-4`. Use the test file name the criterion's *Verify* names. Each test runs its subject and checks the behaviour the criterion states. The predecessor tests the brief names are where the criteria came from: reuse their cases, stubs and fixtures where they fit, but write each test from its criterion, and do not copy one in whole.
 2. **One RED commit**:
    - subject `test(<ID>): <what the tests specify>`;
    - trailer `TDD-Red-Target: <command>` in the final paragraph with the other trailers, no blank line between them. The command runs in the toolbox, for example `toolbox/run -- sh scripts/tests/source-audit.test.sh`;
@@ -26,8 +26,7 @@ The orchestrator gives you a brief path (`out/node/<ID>/brief.md`) and the accep
 ## RED must be valid
 Run the red target yourself before committing:
 - it exits non-zero;
-- every failure is one of your tests reporting `FAIL`. A shell error is not a valid RED: `command not found`, exit 126 or 127, a syntax error. If the script under test does not exist yet, the test checks for it and reports `FAIL: <path> missing`;
-  a predecessor test the node spec ports is copied verbatim from `git show b9f533b:<path>` instead, and may fail only because its subject is not ported yet (`No such file` naming that path);
+- every failure is one of your tests reporting `FAIL` on a behaviour its criterion states. Not valid: a shell error (`command not found`, exit 126 or 127, a syntax error, `No such file`), or a test that only checks that a file exists. When the subject is not there yet, the test still runs it, inside the test's own guard, and each behaviour it checks fails with its own `FAIL` line;
 - tests that passed before your change still pass (`toolbox/ci run pr-validate` once F01 has added it, otherwise every `scripts/tests/*.sh` under `toolbox/run`).
 
 If a new test already **passes**, the behaviour exists. Stop and report `already_satisfied` with the evidence. Do not weaken the test to make it fail.

@@ -23,9 +23,10 @@ This repository continues `tuckermclean/linux-live-iso-factory`, frozen at `b9f5
 `v0.1.0-rc1`. The predecessor already built, tested and attested this product. It stopped when its
 storage vendor disabled the account; AWS S3 was hard-wired into five jobs. The rebuild therefore
 **ports** the predecessor, test first:
-- Each node writes the tests for its capabilities, then ports in the predecessor code that passes them,
-  or writes new code where the predecessor had none. Nothing is imported ahead of a test that needs it.
-- Ported recipes, scripts, tests and workflows carry over unchanged unless a criterion requires a change.
+- Each node's criteria say what its capabilities do. The node writes tests for those criteria, then
+  ports in the predecessor code that passes them, or writes new code where the predecessor had none.
+  Nothing is imported ahead of a test that needs it.
+- Ported recipes, scripts and workflows carry over unchanged unless a criterion requires a change.
 - S3 is replaced by the GitHub-native storage the predecessor already half used.
 - The bugs the study verified are fixed as named criteria.
 - `docs/capabilities.md` records, for every capability, the node that owns it and whether it is ported,
@@ -114,10 +115,14 @@ until it is tested or the promise is removed.
    for a gap recorded in §5, naming the standard mechanism considered and why it falls short. Where no
    gap is recorded, use the standard approach or drop the feature.
 2. **Test first, then port; fix second.**
-   - A node's tests come first. It then ports the predecessor code those tests need, and nothing else.
-     The predecessor's own tests are ported with the code they test.
-   - Ported code, recipes, tests and workflows carry over unchanged unless an acceptance criterion
-     requires a change.
+   - A node's tests come first, written from its acceptance criteria. The criteria say what the node's
+     capabilities do, including what they did in the predecessor. The node then ports the predecessor
+     code that passes those tests, or writes it where the predecessor had none, and nothing else.
+   - The predecessor's tests are where criteria come from, not files to port. A test runs its subject
+     and checks what it does. Checking that a file exists is not a test: before the port, a valid RED
+     fails on the behaviour the criterion states.
+   - Ported code, recipes and workflows carry over unchanged unless an acceptance criterion requires a
+     change.
    - A node's fast tests stay in the fast lane. A later node that ports a file into their scope passes
      them, so a rule set by an early node holds for code that arrives after it.
    - A replacement must name its demonstrated benefit.
@@ -347,10 +352,10 @@ retention job is added only if storage starts to cost money.
 The release oracle is the predecessor's, ported, plus the checks the study showed were missing.
 
 - **Fast tier** (`make test`: seconds, no build, no network):
-  - the predecessor's `scripts/tests/` (21 files once ported; its two storage-retention tests are
-    dropped), each ported by the node that ports the code it tests;
+  - each node's tests, written from its criteria. The cases of the predecessor's `scripts/tests/`
+    (21 files; its two storage-retention tests are dropped) live in the criteria of the node that
+    ports the code they test;
   - `bash -n`, shellcheck, `py_compile`, YAML well-formedness and actionlint from `pr-validate.yml`;
-  - each node's new fast tests.
 - **Slow tier** (locally, and in CI):
   - the build, in the builder image;
   - the 17 boot modes inherited from the predecessor (`stele-acid2` from R05 on): bios (at 64 and

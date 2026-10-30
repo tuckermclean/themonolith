@@ -49,7 +49,8 @@ No S3, no AWS credential, nothing unpinned.
 
 The predecessor builds this product today, except for storage. So the work is a port, not new
 construction, and it is done test first:
-- Each node writes its tests, then ports the recipes, scripts, tests and workflows they need, unchanged
+- Each node's criteria say what its capabilities do, the predecessor's behaviour included. The node
+  writes tests for them, then ports the recipes, scripts and workflows that pass them, unchanged
   unless a criterion says otherwise. `docs/capabilities.md` says which node brings in what.
 - No S3 call comes across: each port leaves them out, I01's check holds the rule, and storage is GHCR
   and GitHub Releases.
@@ -145,7 +146,7 @@ Once F01 lands, the rest run beside that chain:
 | Stream | Nodes | Works against | Ready for |
 |---|---|---|---|
 | Inputs | I01, then I02 and I03 | GHCR, gentoo-mirror | B01 |
-| Recipes | R04 (revbump check), R01 (`monolith-base` with its tests, advisory URL) | their own tests | B01 |
+| Recipes | R04 (revbump check), R01 (`monolith-base` and what it does, advisory URL) | their own tests | B01 |
 | Kernel | B02 (kernel savedconfig and bugs), after B01 ports the kernel as it is | B01's build | B03 |
 | After MS1 | P02 (reproducibility gate), R05 (Rust crates as distfiles) | MS1's build | P01 |
 | Oracle | O01 (17 modes), O02 (artifact checks) | the rc1 ISO and squashfs | B03 |

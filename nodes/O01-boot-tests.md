@@ -4,8 +4,8 @@
 |---|---|---|---|---|
 | critical | F01 | B03, G01 | — | M |
 
-**Owns:** `.github/workflows/boot-test.yml` (reusable), `.github/workflows/boot-test-rc1.yml` (caller for the rc1 lane), `scripts/boot-test-requirements.txt`, `scripts/tests/boot-test-workflow.test.sh`, the `Makefile` targets `test-bios` and `test-uefi`.
-**Ports from linux-live-iso-factory@b9f533b:** `scripts/boot-test.py` (2528 lines, 17 modes, `-cpu 486`, `MODE_DEFAULT_RAM`), `.github/workflows/boot-test.yml` (916 lines), `scripts/tests/boot-test-retry.test.sh`, the manual boot targets `test` (`Makefile:500`) and `test-uefi`. Carried unchanged except as listed below.
+**Owns:** `.github/workflows/boot-test.yml` (reusable), `.github/workflows/boot-test-rc1.yml` (caller for the rc1 lane), `scripts/boot-test-requirements.txt`, `scripts/tests/boot-test-workflow.test.sh`, `scripts/tests/boot-test-retry.test.sh`, the `Makefile` targets `test-bios` and `test-uefi`.
+**Ports from linux-live-iso-factory@b9f533b:** `scripts/boot-test.py` (2528 lines, 17 modes, `-cpu 486`, `MODE_DEFAULT_RAM`), `.github/workflows/boot-test.yml` (916 lines), the manual boot targets `test` (`Makefile:500`) and `test-uefi`. Carried unchanged except as listed below. The predecessor's `scripts/tests/boot-test-retry.test.sh` is where O01-AC-1 comes from; it is not ported.
 **Study refs:** oracle.yaml `bootmode.*`, `ci.boot-test.expected-kernel`, contradictions on clock-epoch (`boot-test.py:36-42`, `boot-test.yml:796-805`); T-run-rerun-reuses-cache; D-clock-origin-1970; D-486-minimalism; SPEC §1 constraints i486 and modest memory.
 
 ## Purpose
@@ -26,7 +26,7 @@ QEMU, OVMF and `pexpect` on a GitHub-hosted runner, as the predecessor. openQA w
 9. **Manual boots.** The predecessor's `make test` (`Makefile:500`, a BIOS boot in QEMU with `-cpu 486 -m 64M`) and `make test-uefi` come in as `test-bios` and `test-uefi`, because `make test` is the fast tier (F01). *AC-6.*
 
 ## Gate
-- **O01-AC-1** — `scripts/tests/boot-test-retry.test.sh` passes against the ported `boot-test.py` with its decision matrix unchanged. *Verify:* `bash scripts/tests/boot-test-retry.test.sh`. *Tier:* fast.
+- **O01-AC-1** — `boot-test.py`'s `should_retry_launch` relaunches a guest that never reached `/init` while attempts remain, stops on the last attempt and reports the failure, and never relaunches after a success or after a failure that came once `/init` was reached. The module imports with `pexpect` stubbed, without running a boot. *Verify:* `scripts/tests/boot-test-retry.test.sh`. *Tier:* fast.
 - **O01-AC-2** — `boot-test.yml` is a `workflow_call` with the inputs of change 1; has no `actions/cache`, `aws` or `s3` text and no `http.server` in the `clock-epoch` job (`nat-router` keeps its own, which the guest does reach); uses only SHA-pinned actions; installs `pexpect` only from the requirements file whose entries are all `==`; and its `expected-kernel` step has a `test -n` guard. *Verify:* `bash scripts/tests/boot-test-workflow.test.sh`. *Tier:* fast.
 - **O01-AC-3** — `boot-test.py` still has the six `-cpu 486` argument pairs of b9f533b and `MODE_DEFAULT_RAM["bios"] == 64`; the workflow keeps `ram_mb: [64, 256]`. *Verify:* `bash scripts/tests/boot-test-workflow.test.sh`. *Tier:* fast.
 - **O01-AC-4** — `boot-test-rc1.yml` runs all 17 modes (bios at 64 and 256 MB, and the nic and vga model loops) on the rc1 ISO fetched by URL and sha256, and every job is green. A wrong `iso-sha256` fails the `fetch-iso` job before any mode runs. *Verify:* workflow_dispatch of `boot-test-rc1.yml`, once with the right and once with a wrong digest. *Tier:* slow.

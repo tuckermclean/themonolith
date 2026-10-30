@@ -4,8 +4,8 @@
 |---|---|---|---|---|
 | critical | B01, B02, R01, O01, O02, S01 | G01, P02, R03, R05 | MS1 | M |
 
-**Owns:** `.github/workflows/build.yml`, `scripts/tests/build-workflow.test.sh`.
-**Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/build.yml` (jobs `changes`, `build-image`, `build`, `boot-test`, `attestation`), `scripts/build-rootfs.sh`, `scripts/build-initrd.sh`, `scripts/build-iso.sh` and what they read: `scripts/pcf-fontname.py`, `rootfs/init`, `rootfs/usr/share/udhcpc/default.script`, `configs/initrd-modules.txt`, `configs/bootbg.png`, `configs/themonolith.ans`; their tests `scripts/tests/pcf-fontname.test.sh`, `verify-rootfs-net-wiring.sh`, `verify-router-wiring.sh`; the `Makefile` targets `build-rootfs`, `iso`, `all`, `attestation`. The three scripts are carried byte for byte except change 8.
+**Owns:** `.github/workflows/build.yml`, `scripts/tests/build-workflow.test.sh`, `scripts/tests/pcf-fontname.test.sh`.
+**Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/build.yml` (jobs `changes`, `build-image`, `build`, `boot-test`, `attestation`), `scripts/build-rootfs.sh`, `scripts/build-initrd.sh`, `scripts/build-iso.sh` and what they read: `scripts/pcf-fontname.py`, `rootfs/init`, `rootfs/usr/share/udhcpc/default.script`, `configs/initrd-modules.txt`, `configs/bootbg.png`, `configs/themonolith.ans`; the `Makefile` targets `build-rootfs`, `iso`, `all`, `attestation`. The three scripts are carried byte for byte except change 8. The predecessor's `scripts/tests/pcf-fontname.test.sh`, `verify-rootfs-net-wiring.sh` and `verify-router-wiring.sh` are where B03-AC-10 and -11 come from; they are not ported.
 **Study refs:** T-run-rerun-reuses-cache, T-attest-entry-workflow, D-supply-chain-honesty, D-tag-builds-from-source; workflows.yaml `wf.build`; contradiction "latest pointers copied before boot-test" (`build.yml:495-546` vs `:559`).
 
 ## Purpose
@@ -39,6 +39,8 @@ Everything else in `build.yml` and the three scripts is carried unchanged, inclu
 - **B03-AC-7** — MS1: a workflow run on `main` builds an ISO with binary packages restored, passes every boot mode except `stele-acid2` (16 of 17), the O02 checks and the S01 gates on it, and no job touches AWS. *Verify:* the run URL, recorded in the PR table. *Tier:* slow.
 - **B03-AC-8** — `build-rootfs.sh` contains no `amazonaws`, and its os-release `HOME_URL` equals the default base URL of `monolith-advisory-check`. *Verify:* `scripts/tests/build-workflow.test.sh`. *Tier:* fast.
 - **B03-AC-9** — The `build` job runs `scripts/verify-kernel-modules.sh`, and no `run:` step in `build.yml` names `lib/modules` itself. *Verify:* `scripts/tests/build-workflow.test.sh`. *Tier:* fast.
+- **B03-AC-10** — `pcf-fontname.py`'s `font_xlfd` returns the exact `FONT` XLFD of a PCF in either byte order, for `-xos4-terminus-medium-r-normal--16-160-72-72-c-80-iso10646-1` and for a `-misc-fixed-` name, and raises an exception rather than return a name for input that is not a PCF. *Verify:* `scripts/tests/pcf-fontname.test.sh` (synthetic PCFs). *Tier:* fast.
+- **B03-AC-11** — In the rootfs of the AC-7 run, `/etc/init.d/S35netprobe` runs `monolith-net autoprobe`, `/usr/bin/monolith-net` and `/usr/sbin/monolith-router` are owned by `app-misc/monolith-base` in the VDB, and neither is in the unowned allowlist. *Verify:* the AC-7 run's rootfs artifact and its unowned-gate log. *Tier:* slow.
 
 Measured on the predecessor (to size expectations, not a gate): cache-hot `build` job about 13 minutes (packages about 7.5), cold about 78 minutes, boot modes about 10 minutes wall.
 

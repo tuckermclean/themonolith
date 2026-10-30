@@ -14,7 +14,9 @@ digest, nothing reading `configs/kernel.config`) also holds for files a later no
 - **drop**: not ported. The code stays readable in the predecessor at `b9f533b`.
 
 The **Source** column cites the predecessor at `b9f533b`. A capability has one porting node. Later
-nodes may change it, listed under **Then**.
+nodes may change it, listed under **Then**. A predecessor test named under **Source** is not ported:
+its cases are written into the porting node's acceptance criteria, and that node's tests are written
+from them.
 
 ## Development and CI
 
@@ -93,7 +95,7 @@ nodes may change it, listed under **Then**.
 | Capability | Source | Node | Mode | Then |
 |---|---|---|---|---|
 | Root filesystem: generated `/etc`, inittab, init scripts, font index, whatis, os-release | `scripts/build-rootfs.sh`, `scripts/pcf-fontname.py`, `pcf-fontname.test.sh`, `make build-rootfs` | B03 | port+fix (os-release URL, from R01) | P02, R03 |
-| Network and router wiring in the rootfs | `verify-rootfs-net-wiring.sh`, `verify-router-wiring.sh` | B03 | port | |
+| Network and router wiring in the rootfs | `verify-rootfs-net-wiring.sh`, `verify-router-wiring.sh` | B03 | build (B03-AC-11 checks the built rootfs) | |
 | Initramfs | `scripts/build-initrd.sh`, `rootfs/init`, `rootfs/usr/share/udhcpc/default.script`, `configs/initrd-modules.txt` | B03 | port | P02 |
 | Hybrid ISO, boot menus and art | `scripts/build-iso.sh`, `configs/bootbg.png`, `configs/themonolith.ans`, `make iso` | B03 | port | P02 |
 | CI build: packages → rootfs → ISO → oracle and gates, files handed over as Actions artifacts | `build.yml` (`changes`, `build`, `boot-test` jobs), `make all` | B03 | port+fix | P02, P01 |

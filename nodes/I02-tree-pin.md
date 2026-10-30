@@ -5,7 +5,7 @@
 | critical | I01 | B01, R02 | — | M |
 
 **Owns:** `scripts/sync-portage.sh` (rewritten, see Changes), `scripts/tests/sync-portage.test.sh`, `scripts/seed-tree.sh` (one-time archive helper), the `TREE_COMMIT` and `TREE_DIGEST` pins in `Makefile`, `docs/tree-pin.md` (the recovery evidence: candidate range, match counts, signature result).
-**Ports from linux-live-iso-factory@b9f533b:** `scripts/sync-portage.sh` (`_fetch_one` loop, `--source-only` detection at `:101-112`), `scripts/tests/sync-portage.test.sh` cases 3-5 reshaped. The Makefile `sync-portage` target (`Makefile:380-389`) keeps its name.
+**Ports from linux-live-iso-factory@b9f533b:** `scripts/sync-portage.sh` (`_fetch_one` loop, `--source-only` detection at `:101-112`). The Makefile `sync-portage` target (`Makefile:380-389`) keeps its name.
 **Study refs:** T-portage-snapshot-fetch, D-two-epoch-pin-model, OD-3; `sync-portage.sh:8-17` (why the predecessor served a local HTTP mirror).
 
 ## Purpose
@@ -26,13 +26,13 @@ rc1's Gentoo tree becomes a pin we can restore: a gentoo-mirror commit, archived
    *Proof:* I02-AC-1, I02-AC-2.
 2. **Archive and pin.** `seed-tree.sh <commit40>` fetches only that commit, runs `git verify-commit` and logs the outcome (a signed, unsigned or key-missing result is written to `docs/tree-pin.md` either way), archives, and pushes `gentoo-tree:<commit40>`. The Makefile gains `TREE_COMMIT` and `TREE_DIGEST` in place of `BUILD_EPOCH` for the tree; `BUILD_EPOCH` remains only where B01 still reads it for the version label until M01. *Proof:* I02-AC-3.
 3. **Restore by digest, fail loud.** `sync-portage.sh` is replaced by: `oras pull "${REGISTRY}/gentoo-tree@${TREE_DIGEST}"`, check the pulled file's name matches `TREE_COMMIT`, extract into the volume. It has no network fallback, no S3, no webrsync. A missing artifact, a failed pull or a digest mismatch exits non-zero with the ref in the message. Upstream is never contacted, which is the point of D-two-epoch-pin-model's runtime pin. *Proof:* I02-AC-4, I02-AC-5.
-4. **Test cases.** The five S3/webrsync cases of `sync-portage.test.sh` become: restore succeeds with a stub `oras` serving a fixture archive; missing artifact fails; pull of a different file fails; `--source-only` sources without side effects. *Proof:* I02-AC-4.
+4. **Tests.** The predecessor's `sync-portage.test.sh` tests S3 and webrsync, which are gone, so it is not ported. `sync-portage.test.sh` is written from I02-AC-4 and -6. *Proof:* I02-AC-4.
 
 ## Gate
 - **I02-AC-1** — `docs/tree-pin.md` names one commit, the list of non-overlay gpkgs compared, the count that matched, and any unmatched package with the reason. *Verify:* review of the PR; `grep -E '^[0-9a-f]{40}$'` in the doc by `scripts/tests/tree-pin.test.sh`. *Tier:* fast.
 - **I02-AC-2** — With the restored tree in the rc1 builder, `emerge -pv --usepkgonly` of `configs/portage/world` against rc1's binpkgs shows no package to be built from source (overlay packages excepted and listed). *Verify:* a `workflow_dispatch` job `tree-accept`. *Tier:* slow.
 - **I02-AC-3** — `gentoo-tree:<commit40>` exists on GHCR, `TREE_DIGEST` equals its manifest digest, and `git archive` of the commit listed by `git ls-tree -r` has the same file count as the extracted tarball. *Verify:* `seed-tree.sh` output in the `tree-accept` job; `oras manifest fetch`. *Tier:* slow.
-- **I02-AC-4** — `sync-portage.sh` with a stub `oras` restores the fixture tree; it exits non-zero for a missing artifact, a digest mismatch or an empty archive, and never calls `wget`, `curl` or `aws`. *Verify:* `scripts/tests/sync-portage.test.sh`. *Tier:* fast.
+- **I02-AC-4** — `sync-portage.sh` with a stub `oras` restores the fixture tree; it exits non-zero for a missing artifact, a digest mismatch or an empty archive, and never calls `wget`, `curl` or `aws`. Sourced with `--source-only`, it defines its functions and runs nothing. *Verify:* `scripts/tests/sync-portage.test.sh`. *Tier:* fast.
 - **I02-AC-5** — A build job restores the tree from the digest with network access to `distfiles.gentoo.org` and `rsync.gentoo.org` blocked, and `/var/db/repos/gentoo` equals the archive. *Verify:* the `tree-accept` job (`unshare -n` after pulling, or `--network none` container). *Tier:* slow.
 - **I02-AC-6** — `seed-tree.sh` refuses a commit that is not 40 hex digits and refuses to overwrite an existing `gentoo-tree:<commit40>`. *Verify:* `scripts/tests/sync-portage.test.sh` (stubbed `git`, `oras`). *Tier:* fast.
 

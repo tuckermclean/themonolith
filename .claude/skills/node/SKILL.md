@@ -23,7 +23,7 @@ Write `out/node/<ID>/brief.md`. Until F01 adds `out/` to `.gitignore`, add it to
 - the node id, name, deps and decisions, from the graph;
 - **every acceptance criterion in scope, copied verbatim** from the node spec's Gate, with its *Verify* and *Tier*;
 - for each criterion, the numbered "Changes from the port" item that produces it, as a pointer;
-- the node's rows in `docs/capabilities.md`, and the predecessor files it ports or touches, as `path:line` at `b9f533b` (read them with `git show b9f533b:<path>` after the fetch in `AGENTS.md`), and the `AGENTS.md` traps and doctrines that apply;
+- the node's rows in `docs/capabilities.md`, the predecessor files it ports or touches, and the predecessor tests its criteria come from, as `path:line` at `b9f533b` (read them with `git show b9f533b:<path>` after the fetch in `AGENTS.md`), and the `AGENTS.md` traps and doctrines that apply;
 - the red-target command form: `toolbox/run -- sh scripts/tests/<name>.test.sh`.
 
 Split a large node into **slices** of 3–8 related criteria. Order them so earlier slices build what later tests need.
@@ -33,8 +33,8 @@ Dispatch a **new** `monolith-tester` with the brief path and the slice's criteri
 
 Verify the handoff yourself:
 - `git show --stat <red>` touches only `scripts/tests/**` and fixture paths;
-- the red target at `<red>` exits non-zero, and every failure is a test's own `FAIL` line, not a shell error (127, 126, a syntax error);
-  the one exception is a predecessor test ported verbatim whose subject is not ported yet: its failure names that missing file (`No such file`), and the node ports that file;
+- the red target at `<red>` exits non-zero, and every failure is a test's own `FAIL` line on the behaviour its criterion states. Not valid: a shell error (127, 126, a syntax error), a `No such file` from running a missing subject, or a test that only checks that a file exists;
+- each test runs its subject and checks what the criterion says it does; no test is a predecessor test copied in whole;
 - tests that passed before still pass;
 - the subject is `test(<ID>): …` and the message has one `TDD-Red-Target:` trailer.
 
