@@ -21,9 +21,11 @@ The Gentoo rule itself: a change to what an ebuild installs needs a revision bum
 
 ## Changes from the port
 1. **The check.** `check-revbump.sh <base> <head>` lists the paths changed under `configs/overlay/<cat>/<pn>/`, grouped by package.
-   - A package passes when the change adds at least one `*.ebuild` file that the base lacks: a new `-rN` or a new version.
+   - A package passes when the change adds at least one `*.ebuild` file that the base lacks: a new `-rN` or a new version. A rename within the package directory to an ebuild name the base lacks counts as added; that is how the predecessor revbumped (`git mv foo-1-r1.ebuild foo-1-r2.ebuild`).
+   - A package whose only changes are deletions (an old ebuild with its files, or the whole package) passes: no remaining ebuild installs anything new.
    - It also passes when the only changed files are `metadata.xml`, or are `Manifest` changes made together with a new ebuild.
-   - Anything else fails and names the package. This covers an edited ebuild, a change under `files/`, and a removed patch.
+   - Anything else fails and names the package. This covers an edited ebuild, a change under `files/`, and a removed patch while an ebuild that used it remains.
+   - `configs/overlay/profiles/` and `configs/overlay/metadata/` are not packages and are not checked.
    - Comment-only ebuild edits are not exempt.
 
    *AC-1, AC-2, AC-3.*
@@ -37,5 +39,5 @@ The Gentoo rule itself: a change to what an ebuild installs needs a revision bum
 - **R04-AC-4** — `make test-revbump BASE=<sha>` runs the `BASE` revision's `check-revbump.sh` against `BASE..HEAD`, so a PR that edits only `check-revbump.sh` to always exit 0 is still judged by the old copy; `make test` includes it (`BASE` defaults to the merge base with `main`); and `pr-validate.yml` passes the PR's base commit as `BASE` through `env:`. *Verify:* `scripts/tests/check-revbump.test.sh` (runs the target on fixture commits and greps the workflow); a throwaway PR recorded in this node's PR.
 
 ## Risks
-- Renames and `git mv` of an ebuild without a new revision must be read as "no new ebuild". `--name-status` shows `R` entries, and the test covers one.
+- Renames: `--name-status` shows `R` entries. A rename to a new ebuild name in the same package is a bump; a rename that moves an ebuild to another package is not a bump of either package, and the test covers both.
 - If `pkgcheck --commits` later covers the same case (R02), this script is deleted, not kept beside it.
