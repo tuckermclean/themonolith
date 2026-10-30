@@ -1,8 +1,10 @@
 # The Monolith — Specification
 
-Version 0.4, draft of 2026-10-28. This document is the authority for the repository. Where a node spec (`nodes/<id>.md`) and this
+Version 0.5, draft of 2026-10-29. This document is the authority for the repository. Where a node spec (`nodes/<id>.md`) and this
 document disagree, this document wins and the node spec is a defect. The dependency graph is
-`docs/graph.yaml`, and the plan to the first release is `docs/first-release.md`. The study of the
+`docs/graph.yaml`, the capability ledger (where each capability lives, and whether it is ported or
+built) is `docs/capabilities.md`, the migration ledger (every predecessor file with its blob,
+destination, node and disposition) is `docs/migration.tsv`, and the plan to the first release is `docs/first-release.md`. The study of the
 predecessor in `docs/study/` is evidence, not authority.
 
 ---
@@ -21,10 +23,18 @@ standard mechanism leaves open, and it is the smallest code that closes it.
 This repository continues `tuckermclean/linux-live-iso-factory`, frozen at `b9f533b`, which released
 `v0.1.0-rc1`. The predecessor already built, tested and attested this product. It stopped when its
 storage vendor disabled the account; AWS S3 was hard-wired into five jobs. The rebuild therefore
-**ports** the predecessor:
-- Its recipes, scripts, tests and workflows carry over unchanged.
+**ports** the predecessor, test first:
+- Each node ports the predecessor's tests for its capabilities first, adds tests for what its
+  criteria cover and those tests do not, and then ports the predecessor code that passes them, or
+  writes new code where the predecessor had none. Nothing is imported ahead of a test that needs it.
+- Proven code and its tests are kept, not rewritten. Ported recipes, scripts, tests and workflows
+  carry over unchanged unless a criterion requires a change.
 - S3 is replaced by the GitHub-native storage the predecessor already half used.
 - The bugs the study verified are fixed as named criteria.
+- `docs/capabilities.md` records, for every capability, the node that owns it and whether it is ported,
+  fixed, built, replaced or dropped. `docs/migration.tsv` does the same for every one of the 201
+  predecessor files, and `scripts/check-migration.py` proves it complete: its rows rebuild the
+  predecessor's tree hash at `b9f533b`, and an unchanged port must keep its blob.
 
 These predecessor assets survive and are reused by digest:
 
@@ -90,7 +100,7 @@ facts decide three things:
 
 | Constraint | Meaning | Checked by |
 |---|---|---|
-| i486 | Every target binary runs on an i486. Boot tests run QEMU with `-cpu 486`. | O01 (ported), O02 (`EM_386`, no `EM_X86_64`) |
+| i486 | Every target binary is built for i486 (`-march=i486`, `EM_386`), and the disc boots under QEMU `-cpu 486`. Neither proves that no post-486 instruction ships; that check is future work (§10). | O01 (ported), O02 (`EM_386`, no `EM_X86_64`) |
 | Static musl | Every rootfs binary is statically linked against musl, and no dynamic loader ships on the disc. rc1 violates this (§3, D-all-static). The list of violations may only shrink, and it is empty before the first non-prerelease. | O02, R03 |
 | Modest memory | The BIOS boot reaches a shell at 64 MB of RAM, the predecessor's floor. | O01 (ported `ram_mb: [64, 256]`) |
 | Hardware compatibility | The predecessor's 17 boot modes pass, including the NIC, VGA and legacy fbdev matrices. MS1 iteration ISOs run the other 16; `stele-acid2` needs Stele (R05). All 17 pass before the first release. | O01 |
@@ -99,7 +109,7 @@ facts decide three things:
 | CD-sized budget | The ISO fits on a 74-minute CD-R (681,984,000 bytes) now, and within the share the owner sets later (OD-10). | P01 (report and gate) |
 
 The oracle (§7) defines what the product does. A README promise that no test proves is a gap (G01)
-until it is tested or the promise is removed.
+until it is tested or the promise is removed, and G01 closes the gaps before the first release.
 
 ---
 
@@ -108,9 +118,32 @@ until it is tested or the promise is removed.
 1. **A Gentoo derivative, not a framework.** Use the standard mechanism first. Write custom code only
    for a gap recorded in §5, naming the standard mechanism considered and why it falls short. Where no
    gap is recorded, use the standard approach or drop the feature.
-2. **Port first, fix second.**
-   - Predecessor code, recipes, tests and workflows carry over unchanged unless an acceptance criterion
+2. **Test first, then port; fix second.**
+   - Preserve proven code and its tests; apply test-first development to the port and to every change.
+     Nothing the predecessor built and verified is reinvented. Each node works in six steps:
+     1. **Port the tests.** The predecessor's tests of the node's capabilities come over first, with
+        only the harness and path adjustments the new repository needs, each one listed. Where a
+        criterion changes behaviour a ported case asserts, that case changes to assert the criterion,
+        and is listed too.
+     2. **Fill the gaps.** Compare their coverage with the node's acceptance criteria and add tests for
+        what is missing. Existing coverage stays, also where it is more detailed than the criteria.
+     3. **RED.** The tests run in the new repository and fail. A missing implementation is a valid
+        failure when the harness runs to its end and reports it in its own `FAIL` lines; a crash of
+        the harness itself (a syntax error, an uncaught exception, a missing test tool) is not.
+     4. **Port the code.** The predecessor's implementation comes over, changed only where a criterion
+        requires it.
+     5. **GREEN.** The tests pass, and no test accepted at RED was changed.
+     6. **Review.** Someone independent checks coverage, the changes to ported code and that the RED
+        tests are unchanged.
+   - **Baseline.** Where practical, the RED tests also run against the predecessor's implementation:
+     the RED commit with the node's ported paths checked out from `b9f533b`. Inherited behaviour passes
+     there. The criteria a numbered change produces test known defects, and fail there as expected. Any
+     other failure is investigated before GREEN. Each node's **Tests** section says what to expect, or
+     why a baseline is not practical.
+   - Ported code, recipes, tests and workflows carry over unchanged unless an acceptance criterion
      requires a change.
+   - A node's tests stay in `make test`. A later node that ports a file into their scope passes
+     them, so a rule set by an early node holds for code that arrives after it.
    - A replacement must name its demonstrated benefit.
    - Fixes for the study's verified bugs are separate, named criteria, so every behaviour change is
      visible.
@@ -155,7 +188,7 @@ Hard rules about the product. Ids match `docs/study/doctrine.yaml`, which holds 
 | D-static-musl-cross-all-the-way | i486-linux-musl via crossdev. Host build tools are 32-bit-capable. | I03 |
 | D-supply-chain-honesty | Releases come only through the verifiable pipeline, and the digest chain holds. | P01 |
 | D-tag-builds-from-source | Tag builds compile every package in the rootfs from source in that run (empty `PKGDIR`, the image's preinstalled target packages re-merged, no `quickpkg`). No cached or preinstalled binary enters a release, except declared toolchain files from the pinned builder image. | B01 (source audit), P02 |
-| D-revbump-on-overlay-change | Changing an overlay ebuild or its `files/` requires a `-rN` bump. | R04 (fast lane, before B01); R02 later (pkgcheck) |
+| D-revbump-on-overlay-change | Changing an overlay ebuild or its `files/` requires a `-rN` bump. | R04 (`make test-revbump`, before B01); R02 (`pkgcheck`, before the first release) |
 | D-hand-authored-rootfs-files-owned | Every rootfs file is owned by a package or by a justified allowlist entry. | S01; B01 (provenance mode: owned files unchanged, each entry names its source) |
 | D-state-and-no-hidden-stderr | No `2>/dev/null` on paths that decide success. | review; S01 for the gates |
 | D-two-epoch-pin-model | The builder pin and the runtime tree pin are separate. | I02, I03 |
@@ -199,19 +232,20 @@ The predecessor's layout is kept, so ported scripts keep their paths.
 
 | Path | Contents | Owner node |
 |---|---|---|
-| `configs/overlay/` | The `monolith` Portage repository: ebuilds, their `files/`, `metadata/`, `profiles/` (§4.3) | F01, R02 |
-| `configs/portage/` | Distribution configuration, installed as the target's `/etc/portage`: `make.conf`, `bashrc`, `env/`, `package.*`, `profile/`, `savedconfig/`, `world`, `versions.lock`, `crossdev.lock` | F01, B01, B02 |
+| `configs/overlay/` | The `monolith` Portage repository: ebuilds, their `files/`, `metadata/`, `profiles/` (§4.3) | B01, R01 (`monolith-base`), B02 (kernel), R05 (Rust packages), R02 |
+| `configs/portage/` | Distribution configuration, installed as the target's `/etc/portage`: `make.conf`, `bashrc`, `env/`, `package.*`, `profile/`, `savedconfig/`, `world`, `versions.lock`, `crossdev.lock` | B01, B02, I03, R03 |
 | `configs/attestation/` | Supply-chain policies: licence, CVE, CPE, unowned allowlist, schemas | S01 |
-| `configs/` (other files) | `initrd-modules.txt`, boot art | F01 |
-| `rootfs/` | Hand-authored files not yet owned by a package. It shrinks and is covered by S01's allowlist. | F01 |
+| `configs/` (other files) | `initrd-modules.txt`, boot art | B03 |
+| `rootfs/` | Hand-authored files not yet owned by a package. It shrinks and is covered by S01's allowlist. | B03 |
 | `scripts/`, `scripts/tests/` | Ported build, check and test scripts | every node |
-| `Makefile`, `Dockerfile` | Ported entry points; the builder image definition | F01, I03 |
-| `.github/workflows/` | Ported CI | F01, B03, P02, P01 |
-| `docs/` | Ported predecessor docs (`releasing.md`, `version-pinning.md`, `cve-gate.md`, `kernel-tiers.md`), plus this spec's graph, plan, reviews and study | F01 |
-| `SPEC.md`, `nodes/` | Specification and node specs | owner |
-| `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE` | Ported. `AGENTS.md` opens with this repository's working notes (layout, constraints, spec editing, what not to touch, Git conventions), followed by the predecessor's traps-and-recipes knowledge base. `CLAUDE.md` points agents to it. | F01 |
-| `IMPORT.md` | What was ported from `b9f533b`, with a sha256 per file, and what has changed since | F01 |
-| `toolbox/` | The test toolbox image; `toolbox/run`, which runs any test tier locally; `toolbox/ci`, which runs and lints the workflows | owner |
+| `Makefile` | Ported entry points and `make test`. F01 creates it with `test`, `test-lint` and `test-unit`; each node ports the targets its tests need and adds its tests to a `test-*` target. | every node |
+| `Dockerfile` | The builder image definition | I03, M02 |
+| `.github/workflows/` | Ported CI | F01, O01, S01, B03, P02, P01, M01, M02, P03 |
+| `docs/` | Ported predecessor docs, each with its node (`kernel-tiers.md` B02, `cve-gate.md` S01, `version-pinning.md` M01, `releasing.md` P01), plus this spec's graph, capability ledger, plan, reviews and study | as listed |
+| `SPEC.md`, `nodes/`, `docs/capabilities.md`, `docs/migration.tsv`, `scripts/check-migration.py` | Specification, node specs, the capability and migration ledgers and the ledger check | owner |
+| `AGENTS.md`, `CLAUDE.md` | `AGENTS.md` opens with this repository's working notes (layout, constraints, spec editing, what not to touch, Git conventions), followed by the predecessor's traps-and-recipes knowledge base (F01). `CLAUDE.md` points agents to it. | owner, F01 |
+| `README.md`, `LICENSE` | This repository's README; the predecessor's promises arrive with the tests that prove them (G01). `LICENSE` is the predecessor's, byte for byte. | owner, G01, X01 |
+| `toolbox/` | The test toolbox image; `toolbox/run`, which runs any test locally; `toolbox/ci`, which runs and lints the workflows | owner |
 | `.claude/` | Agent tooling: the `/node` skill, role agents, guard hook, spec checker | owner |
 
 ### 4.3 The overlay is a conventional Portage repository
@@ -256,7 +290,7 @@ custom row must name the gap. Anything with no gap here is not built.
 | Packages | Gentoo ebuilds from the pinned tree; the `monolith` overlay for packages Gentoo lacks or that must be patched | None new. The ported `scripts/build-packages.sh` drives `${CHOST}-emerge`. |
 | Distribution policy | `make.conf`, `package.use`/`.mask`/`.env`/`.accept_keywords`, `env/`, `bashrc`, a profile | None new. The ported `configs/portage/`; rc1's working static-link workarounds live in `bashrc` and `env/`. Policy is not moved into an overlay profile: no demonstrated benefit yet. |
 | Versions | The pinned tree fixes every version; `package.mask` holds back removed packages | `versions.lock` (ported). Gap: the predecessor emerges world as `=cat/pkg-ver` atoms (`build-packages.sh:180-197`), so a tree bump moves no world version unreviewed. The ported `update-versions.sh` regenerates the file, and B01 fixes its 23-atom drift. |
-| Binary cache | Portage `PKGDIR` with gpkg, `--usepkg`, `--binpkg-respect-use=y`, `--binpkg-changed-deps=y`, `--rebuild-if-unbuilt` | Gap: Portage cannot see edits to `make.conf`, `bashrc`, `env/`, `package.env` or the profile, nor to `savedconfig` contents. The smallest solution has three parts: (a) the cache tag includes a hash of those files, so changing one starts a cold cache; (b) the ported `savedconfig-cache.sh` marker handles savedconfig; (c) an overlay edit needs a revbump, the standard Gentoo rule, enforced in the fast lane by R04 before B01 relies on the cache. Transport: the ported `binpkg-store.sh` pushes the whole `PKGDIR` as one OCI artifact. A Portage binhost over HTTP (`binrepos.conf`) was considered. It needs a web host for about 2 GB, and GitHub Pages (P03) is sized for far less, so it waits until a host exists. |
+| Binary cache | Portage `PKGDIR` with gpkg, `--usepkg`, `--binpkg-respect-use=y`, `--binpkg-changed-deps=y`, `--rebuild-if-unbuilt` | Gap: Portage cannot see edits to `make.conf`, `bashrc`, `env/`, `package.env` or the profile, nor to `savedconfig` contents. The smallest solution has three parts: (a) the cache tag includes a hash of those files, so changing one starts a cold cache; (b) the ported `savedconfig-cache.sh` marker handles savedconfig; (c) an overlay edit needs a revbump, the standard Gentoo rule, enforced by `make test-revbump` (R04) before B01 relies on the cache. Transport: the ported `binpkg-store.sh` pushes the whole `PKGDIR` as one OCI artifact. A Portage binhost over HTTP (`binrepos.conf`) was considered. It needs a web host for about 2 GB, and GitHub Pages (P03) is sized for far less, so it waits until a host exists. |
 | Static dependents | `--rebuild-if-unbuilt` rebuilds the build-time reverse dependencies of anything built from source | None in the build; it is one flag. Its behaviour with a cross `ROOT` and a restored cache is unverified, so B01's integration test (`static-rebuild.itest.sh`, a two-package fixture overlay built in the pinned builder) proves a revbump or `package.use` change rebuilds the cached consumer. Releases build from source, so a miss cannot reach a release. |
 | Gentoo tree | A gentoo-mirror git commit (Portage `sync-type = git`); signed daily snapshots for later epochs | Gap: upstream prunes snapshots, and rc1's 20260810/11 snapshots now return 404. I02 archives the pinned tree as one OCI artifact, and the ported `sync-portage.sh` reads it by digest. |
 | Distfiles | `DISTDIR`, Manifest checksums, `emerge --fetchonly`, `FETCHCOMMAND`; `cargo.eclass` `CRATES` for Rust packages | Gap: upstream URLs disappear, so an old release could not be rebuilt. P02 fetches every distfile once per tag into one archive, both release builds use only that archive with the network off, and P01 pushes it as one OCI artifact. There is no mirror service. `rl144` and `stele` fetch crates at build time today (`RESTRICT=network-sandbox`), so MS1 iteration ISOs leave them out (B01). R05 moves them to `CRATES`, including the standard library's crates that `-Z build-std` needs, and brings them back before the first release. |
@@ -332,24 +366,42 @@ retention job is added only if storage starts to cost money.
 
 ---
 
-## 7. Oracle and test tiers
+## 7. Oracle and tests
 
 The release oracle is the predecessor's, ported, plus the checks the study showed were missing.
 
-- **Fast tier** (`make test`: seconds, no build, no network):
-  - the ported `scripts/tests/` (23 files);
-  - `bash -n`, shellcheck, `py_compile`, YAML well-formedness and actionlint from `pr-validate.yml`;
-  - each node's new fast tests.
-- **Slow tier** (locally, and in CI):
-  - the build, in the builder image;
-  - the 17 boot modes inherited from the predecessor (`stele-acid2` from R05 on): bios (at 64 and
-    256 MB), uefi, toram, ahci, nvme, usb, virtio, nicless, nic, vga, fbdev-modprobe, nat, gui,
-    stele-acid2, clock-epoch, clock-1996 and persist;
-  - the artifact doctrine checks (O02);
-  - the SBOM and the licence, CVE and unowned gates (S01).
+- **`make test` runs every test.** It is the one testing interface: it runs the whole suite and fails
+  if any test fails. Tests differ in runtime and prerequisites, not in kind. A test's prerequisites
+  (an ISO, the builder image, the pinned tree, the network) are Make dependencies, so `make test` on a
+  clean checkout builds or fetches what it needs; no test is skipped because a prerequisite is
+  missing. Make runs on the host; each target runs its commands in the toolbox (`toolbox/run`) or the
+  builder image itself. `make test` is the union of these targets, each also runnable alone, for
+  debugging or as one CI job. A target arrives with the node that adds its first test.
+  - `test-lint` (F01): `bash -n`, shellcheck, `py_compile`, YAML well-formedness and actionlint, as the
+    predecessor's `pr-validate.yml` ran them; `toolbox/ci lint`; `scripts/check-migration.py`.
+  - `test-unit` (F01): every `scripts/tests/*.sh`. These are the predecessor's tests (21 files once
+    ported; its two storage-retention tests are dropped), each ported first by the node that ports the
+    code it tests, and each node's new tests. No build and no network.
+  - `test-revbump` (R04): the overlay revision rule over the commits since `BASE`.
+  - `test-overlay` (R02): `pkgcheck` over the overlay against the pinned tree.
+  - `test-boot` (O01): the 17 boot modes inherited from the predecessor (`stele-acid2` from R05 on):
+    bios (at 64 and 256 MB), uefi, toram, ahci, nvme, usb, virtio, nicless, nic, vga, fbdev-modprobe,
+    nat, gui, stele-acid2, clock-epoch, clock-1996 and persist; and G01's `persist-init`, an `entry`
+    leg per ISOLINUX label and GRUB entry, and `smoke`. It boots `ISO`; `MODE=` runs one mode. The
+    default `ISO` of `test-boot`, `test-artifact` and `test-gates` is rc1's, fetched and checked
+    against its sha256, until B03 makes it the one `make iso` builds.
+  - `test-artifact` (O02): the doctrine checks on that ISO's rootfs.
+  - `test-gates` (S01): the SBOM and the licence, CVE and unowned gates, in the builder image.
+  - `test-repro` (P02): two clean offline builds from the same inputs, and the digest comparison.
+- **CI calls Make.** No workflow holds test logic. CI splits `make test` across jobs and runners
+  where it must (the boot modes in parallel, P02's two builds on separate runners), and every job
+  calls a target that `make test` reaches. `pr-validate.yml` runs the targets that need no ISO
+  (`test-lint`, `test-unit`, `test-revbump`, `test-overlay`); `build.yml` runs the build and then
+  `test-boot`, `test-artifact` and `test-gates` on its ISO; the tag pipeline adds `test-repro`.
 - **rc1 lane.**
   - The boot tests, artifact checks and gates first run against the v0.1.0-rc1 ISO and SBOM, fetched by
-    sha256, before this repository builds anything.
+    sha256, before this repository builds anything: the same targets with the rc1 inputs
+    (`make test-boot test-artifact test-gates ISO=<rc1 ISO>`).
   - rc1 may fail a check because of a verified predecessor bug, for example the shipped musl loader. The
     check then records that as an expected rc1 failure with its study id.
   - That way the same check passes on rc1 and is strict on our builds.
@@ -363,31 +415,38 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
   - Their ISO SHA-256 digests must be equal, or the tag fails.
   - diffoscope runs only after a mismatch, to show where the bytes differ.
   - The same pipeline can be dispatched on any commit without publishing, so nondeterminism is found
-    and fixed before a tag.
-- **Where tests run.** Every tier runs locally. `toolbox/run` runs a command in the test toolbox
+    and fixed before a tag. `make test-repro` runs the same steps on one machine.
+- **Where tests run.** Every target runs locally. `toolbox/run` runs a command in the test toolbox
   (`toolbox/Containerfile`: Debian by digest and snapshot date, QEMU, OVMF, pexpect, PyYAML,
   shellcheck, actionlint, oras, squashfs-tools, xorriso, scanelf), with the checkout mounted. Package
   builds and the SBOM gates run in the builder image, pulled by digest. CI runs the same commands, and
   only what needs GitHub itself (registry pushes, attestation, tag pipelines) is CI-only.
-- **CI parity.** A workflow file is the one definition of its jobs, and `toolbox/ci run <workflow> [<job>]`
-  runs it locally with the same shells, `env:`, step outputs, `if:` conditions, `needs` order, matrix
-  and timeouts. To make that hold, every workflow that can trigger (any trigger but `workflow_dispatch`,
-  and what those call) passes `toolbox/ci lint`, which `pr-validate.yml` runs:
-  - each command in a `run:` step is `toolbox/run -- <cmd>`, or `make <target>` for a target that runs
-    the builder image; logic lives in `scripts/`, not in YAML;
+- **Make is the build interface.** Every operation is a Make target, backed by a script in `scripts/`
+  where it needs logic. A workflow is thin: triggers, the job layout, moving files between jobs, and
+  steps that call Make targets. CI parity means a developer runs the same Make targets in the same
+  toolbox or builder image. Every workflow that can trigger (any trigger but `workflow_dispatch`, and what those call) passes
+  `toolbox/ci lint`, which `make test-lint` runs:
+  - each command in a `run:` step is `make <target>`, or `toolbox/run -- <cmd>` for a step that is
+    not a test (a fetch, a report); a test is always a Make target. Logic lives in `scripts/`, not in
+    YAML;
   - no `${{ }}` inside `run:` (values come through `env:`), and expressions elsewhere are plain context
     paths; `if:` uses status functions and `==`/`!=` comparisons;
   - GitHub-hosted ubuntu runners, no job containers or services, no `apt-get`, `pip` or `setup-*`
     actions: the toolbox carries every tool;
-  - `uses:` only from the short list `toolbox/ci` knows. Checkout and artifact or cache transfer are
-    local no-ops, since jobs share the checkout; attestation, registry logins and anything reading a
-    secret are reported as CI-only and skipped.
-  - QEMU runs under TCG in both places. `-cpu 486` is enforced only by emulation, so `toolbox/run` passes
-    no `/dev/kvm`.
+  - `uses:` only from the short list `toolbox/ci` knows.
+- **What local runs do not show.** `toolbox/ci run <workflow> [<job>]` runs a workflow's `run:` steps
+  in one local checkout, as a convenience; it is not an Actions emulator and does not grow into one.
+  Locally every job shares that checkout, so a file an earlier job wrote is present even where CI would
+  never transfer it, and checkout, artifact and cache steps do nothing. Separate runners, artifact and
+  cache transfer, and the CI-only steps (attestation, registry logins, anything reading a secret) are
+  shown only by a CI run. A criterion that depends on files moving between jobs is verified in CI.
+  The host around the container also differs (runner kernel, CPU speed, docker or podman for the
+  builder image); a test that depends on speed carries a timeout with margin for the slower of the two.
+- **QEMU runs under TCG in both places,** so `toolbox/run` passes no `/dev/kvm`. `-cpu 486` limits the
+  guest to what QEMU models for a 486; it is not a complete check that no post-486 instruction ships
+  (§10).
 
-  A node that re-enables or changes a workflow brings it into this form. What still differs is the host
-  around the container (runner kernel, CPU speed, docker or podman for the builder image) and the
-  CI-only steps; a test that depends on speed carries a timeout with margin for the slower of the two.
+  A node that re-enables or changes a workflow brings it into this form.
 - **Harness interfaces.** Serial milestones, the ISOLINUX `serial` label and the GRUB entry `(serial)`
   are interfaces between the harness and the disc. Changing one means changing both.
 
@@ -397,8 +456,8 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
 
 - **Owner review.**
   - CODEOWNERS routes these paths to the owner: `.github/**`, `SPEC.md`, `docs/graph.yaml`,
-    `configs/attestation/`, `Dockerfile` and the release scripts.
-  - Branch protection requires the fast tier and owner review.
+    `docs/migration.tsv`, `configs/attestation/`, `Dockerfile` and the release scripts.
+  - Branch protection requires `pr-validate.yml` and owner review.
 - **Merging.** Humans merge. Bots open PRs; they never merge, approve or use `--admin`. The
   predecessor's `pin-bump.yml` used `--admin`, and M01 removes it.
 - **Release.**
@@ -434,7 +493,7 @@ Every `nodes/<ID>-<name>.md` follows this template.
 | critical / later | <deps or none> | <nodes that depend on this> | <MSn or —> | S / M / L |
 
 **Owns:** <paths this node creates or changes>
-**Ports from linux-live-iso-factory@b9f533b:** <paths, carried unchanged unless a criterion says otherwise>
+**Ports from linux-live-iso-factory@b9f533b:** <the predecessor tests this node ports first, then the paths it brings in to pass them; carried unchanged unless a criterion says otherwise. Each matches a `docs/capabilities.md` row.>
 **Study refs:** <trap ids T-*, doctrine ids D-*, verified bugs>
 
 ## Purpose
@@ -444,11 +503,18 @@ Every `nodes/<ID>-<name>.md` follows this template.
 What Gentoo or the ecosystem already provides here, and what this node uses. For any custom code:
 the gap, and why the standard mechanism is not enough. "None" is the expected answer.
 
+## Tests
+- **Ported first:** the predecessor tests this node ports, with each harness or path adjustment and
+  each case a criterion changes; or none, and why.
+- **Added:** the new tests for criteria the ported tests do not cover.
+- **Baseline:** what the RED tests show against `b9f533b`'s implementation, or why that is not
+  practical.
+
 ## Changes from the port
 Each change to ported code, with the criterion that requires it. Everything else is carried unchanged.
 
 ## Gate
-- **<ID>-AC-1** — <one testable statement>. *Verify:* <command or test>. *Tier:* fast | slow.
+- **<ID>-AC-1** — <one testable statement>. *Verify:* <the test, reached by `make test` through its target, or the recorded run>.
 
 ## Risks
 Bullets: unverified third-party behaviour, open decisions (§10).
@@ -476,14 +542,14 @@ These are owner decisions. A node that names one does not start until it is sett
 | OD-8 | Keep the undocumented Tier-0 `NET_9P`, `NET_9P_FD` and `NETFS_SUPPORT` symbols? | Keep them, documented |
 | OD-9 | If the CVE gate blocks the first release on rc1's 2026-08 tree: waive with an expiry, or bump the tree first? | Waive with a 30-day expiry; M01 follows |
 | OD-10 | The distribution's share of the CD, once content projects claim space. | The whole 74-minute CD-R (681,984,000 bytes) until set |
-| OD-11 | Predecessor history: bring `b9f533b`'s 230 commits into this repository behind one migration-boundary merge commit, or keep them only in the archived predecessor and start from a one-commit import with `IMPORT.md`? Either way no historical commit is rewritten, and the predecessor stays unchanged. | Bring the history in behind the boundary commit (F01) |
 
 **Tracked, outside MS1.** These stay open on purpose. None is a gate for MS1, and none adds a node.
+The two hardware rows are future work after the first release, not part of this migration.
 
 | Concern | Checked today | Where it is tracked |
 |---|---|---|
-| i486 instruction set | `-march=i486` (§1), QEMU `-cpu 486` boots (O01), `EM_386` (O02), I03's in-image link check. `EM_386` does not tell i486 code from i686 code, and a boot runs only the code it reaches. | G01 (the README's 486 claim); a scan for post-486 instructions is the candidate test. |
-| 8 MB of RAM | The aim (MYTH.md). The tested floor is 64 MB (§1). | After MS2. Making it a constraint is a §1 change plus an O01 `ram_mb` mode. |
+| i486 instruction set | `-march=i486` (§1), QEMU `-cpu 486` boots (O01), `EM_386` (O02), I03's in-image link check. `EM_386` does not tell i486 code from i686 code, and a boot runs only the code it reaches. | Future work: a scan of the rootfs for post-486 instructions is the candidate test. No node owns it yet. |
+| 8 MB of RAM | The aim (MYTH.md). The tested floor is 64 MB (§1). | Future work, after MS2. Making it a constraint is a §1 change plus an O01 `ram_mb` mode. |
 | Behavioural parity with rc1 | O01 runs the 17 modes on rc1 first; S01 reproduces rc1's SBOM; P01's `rc1-diff.md`. | G01 for README promises no mode tests. |
 | Toolchain reproducibility | The builder is trusted by digest (I03); both P02 builds use the same digest. | M02 rebuilds the image from pinned inputs. |
 
@@ -492,9 +558,17 @@ These are owner decisions. A node that names one does not start until it is sett
 ## 11. Conventions
 
 - **Branches and PRs.** Use `node/<ID>-<name>` branches, one node per PR, squash-merged. The PR body has
-  an AC → evidence table with CI run links. The one exception is F01's migration-boundary commit
-  (OD-11), which lands as a merge commit so the predecessor stays its parent.
-- **Tests first.** Write the fast test first where one is possible. CI does not police commit order.
+  an AC → evidence table with CI run links.
+- **Porting.** The predecessor's history stays in the predecessor; nothing here has a predecessor
+  commit as a parent. Provenance lives in `docs/migration.tsv` and in Git history, never in comments
+  in source files. A commit that ports predecessor code names the predecessor paths it lands in its
+  message, and the PR body lists them. A ported file is copied from
+  `git show b9f533b:<path>`, then changed only by the node's numbered changes, so `git diff` against
+  that blob shows exactly the changes. A ported test differs from its blob only by the harness and
+  path adjustments its RED commit lists. When a node lands, `scripts/check-migration.py --node <ID>`
+  passes; changing a ledger row is a spec change.
+- **Tests first.** The RED commit (ported tests plus new tests) comes before the code, following the
+  six steps of §2.2. Write the test before the code wherever one is possible. CI does not police commit order.
 - **Git.** Existing history and attribution are preserved; historical commits are not rewritten for
   cosmetic reasons. New commits use the configured Git identity. AI assistance may be noted in commit
   messages or PR descriptions.

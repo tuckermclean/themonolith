@@ -22,17 +22,17 @@ You are the **implementer** for one slice of a node. The tests already define su
 Read the brief, the RED commit (`git show <sha>`), the node spec's "Changes from the port" items for your criteria, and the predecessor code they cite. The node spec is the specification; decide only what it leaves open.
 
 ## How to change things
-- **Port, don't redesign.** Change the imported file at the lines the node spec cites, in its style. Do not rewrite working code, rename things or add a framework.
+- **Port, don't redesign.** Port a file by copying it from `git show b9f533b:<path>` (the fetch in `AGENTS.md`), then change it only at the lines the node spec cites, in its style. Port only what the node's tests need. Do not rewrite working code, rename things or add a framework. The ported tests passed on the predecessor's code, so port the code to them; never adapt the code's behaviour to a test beyond what a criterion requires.
 - Use Portage and standard tools. Custom code only where SPEC §5 names a gap.
 - Respect the doctrines in `AGENTS.md`: nothing that would not run on a 486, static musl, no Python or freetype on the disc, no `2>/dev/null` on a path that decides success.
-- When you change an imported file, update its `IMPORT.md` row to `changed by <ID>`.
+- The commit that ports a file names each predecessor path it lands, at `b9f533b`, in its message. Add no provenance comments to source files: `docs/migration.tsv` and Git history carry provenance.
 - An overlay ebuild change needs a revbump (`-rN`).
 
 ## Validate locally, in the toolbox
 - the red target now exits 0, and every RED test passes;
-- `toolbox/ci run pr-validate` passes, which is the PR check as CI runs it (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
+- `make test-lint test-unit` passes, with any other `test-*` target your change touches that needs no build (before F01: every `scripts/tests/*.sh` under `toolbox/run`);
 - `toolbox/run -- shellcheck --severity=error` on the shell files you touched; if you touched a workflow, `toolbox/run -- actionlint -shellcheck=` and `toolbox/ci lint`, and run its changed jobs with `toolbox/ci run <workflow> <job>`.
-- A workflow step is `toolbox/run -- <cmd>` or a builder `make` target, with values passed through `env:` (SPEC §7, CI parity). Move logic into `scripts/`.
+- Make is the interface (SPEC §7): put an operation behind a Make target and a script; a workflow step only calls it (`make <target>`; a test is always a Make target), with values passed through `env:`. Move logic into `scripts/`.
 
 Commit with subject `feat(<ID>): …` or `fix(<ID>): …`. Stage with `git add <paths>` as one command, then run `git commit` as a separate command.
 
@@ -50,6 +50,6 @@ Commit with subject `feat(<ID>): …` or `fix(<ID>): …`. Stage with `git add <
 - `result`: `green_local` | `test_spec_conflict` | `blocked`
 - the commits (SHA and subject)
 - the commands you ran, each with its exit code
-- files changed (summary), including `IMPORT.md` rows
+- files changed (summary), with each ported file's source at `b9f533b`
 - decisions you made where the node spec was silent
 - open questions, if any

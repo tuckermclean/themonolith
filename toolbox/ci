@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Run GitHub Actions workflows locally, and lint them for local/CI parity.
+"""Lint GitHub Actions workflows to the thin form SPEC §7 requires, and run their steps locally.
 
     toolbox/ci lint [<workflow>...]
     toolbox/ci run <workflow> [<job>...] [--event E] [--input k=v]... [--matrix k=v]...
     toolbox/ci jobs <workflow>
 
-A workflow is the one definition of what CI runs. `run` executes its jobs here, in `needs` order,
-with the same shells, env, step outputs, `if:` conditions and timeouts. Every check step is
-`toolbox/run -- ...`, so it runs in the same pinned image in both places. Steps that need GitHub
-itself (a secret, attestation, a registry login) are skipped and listed as CI-only.
+Make is the build interface; a workflow only calls Make targets and scripts. `run` is a convenience:
+it executes a workflow's `run:` steps here, in `needs` order, with the same shells, env, step outputs,
+`if:` conditions and timeouts. It is not an Actions emulator. Every job shares this one checkout, so
+checkout, artifact and cache steps do nothing and a file an earlier job wrote is present even where
+CI would never transfer it; separate runners and file transfers are shown only by a CI run. Steps
+that need GitHub itself (a secret, attestation, a registry login) are skipped and listed as CI-only.
 
-`lint` holds a workflow to the subset `run` implements (SPEC §7, CI parity). With no names, it lints
+`lint` holds a workflow to the subset `run` implements (SPEC §7). With no names, it lints
 every workflow that can trigger: any trigger other than `workflow_dispatch`, and anything those call.
 
 Standard library only; YAML is parsed with PyYAML when importable, else inside the toolbox.

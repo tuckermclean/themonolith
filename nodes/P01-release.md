@@ -2,20 +2,25 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | P02, R05 | M01, P03, X01 | MS2 | L |
+| critical | P02, R05, G01, R02 | M01, P03, X01 | MS2 | L |
 
 **Owns:** `.github/workflows/release.yml`, the `attestation` job of `build.yml`'s tag path (after P02's gate), `scripts/rc1-diff.sh`, `scripts/size-report.sh`, `docs/rc1-diff-reasons.tsv`, `docs/releasing.md`, `scripts/tests/release-*.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/release.yml` (278 lines), `docs/releasing.md`. Removed: `scripts/generate-provenance.py` and its call in `scripts/attestation.sh`.
 **Study refs:** `configs/portage/world` at b9f533b (99 atoms); T-attest-entry-workflow, T-prerelease-never-latest, D-supply-chain-honesty, D-tag-builds-from-source; Principle 7; OD-4, OD-10.
 
 ## Purpose
-This node makes the first official release; nothing before it is called a release. After it, a tag whose ISO has passed P02's reproducibility gate, all 17 boot modes, the artifact checks and the gates, and that ships all 99 of the predecessor's world packages (`rl144` and `stele` included, R05), is attested by the platform, has its inputs archived and becomes a GitHub prerelease with reports attached. Nothing runs here for a tag that failed any of those. This completes MS2.
+This node makes the first official release; nothing before it is called a release. After it, a tag whose ISO has passed P02's reproducibility gate, all 17 boot modes and G01's persistence, boot-entry and smoke modes, the overlay QA scan (R02), the artifact checks and the gates, and that ships all 99 of the predecessor's world packages (`rl144` and `stele` included, R05), is attested by the platform, has its inputs archived and becomes a GitHub prerelease with reports attached. Nothing runs here for a tag that failed any of those. This completes MS2.
 
 ## Standard mechanism
 - Provenance: `actions/attest-build-provenance` with the ISO as subject, and `actions/attest-sbom` for the CycloneDX SBOM. `gh attestation verify` checks them. Benefit over the ported `generate-provenance.py` plus `actions/attest@v2` (`build.yml:768-778`): the platform writes the predicate, not our 291-line script.
 - Release: `gh release create`. Archive: `oras push` of P02's distfiles artifact to `${REGISTRY}/distfiles:<version>`.
 - SBOM comparison was considered with `cyclonedx diff`. It lists differences but cannot require a reason per package. A 30-line shell script over `jq` and `comm` plus a reasons file does, so that stays custom.
 - Size gate: `stat`. No standard tool needed.
+
+## Tests
+- **Ported first:** none; the predecessor had no test of its release workflow.
+- **Added:** the `scripts/tests/release-*.test.sh`, `rc1-diff.test.sh` and `size-report.test.sh` the Gate names.
+- **Baseline:** `b9f533b`'s `release.yml` fails the criteria of the numbered changes (S3, `generate-provenance.py`), as expected.
 
 ## Changes from the port
 Carried unchanged: `build.yml` as the entry workflow of a tag run (the signing certificate binds to it, `build.yml:1-17`), the `workflow_run` trigger of `release.yml` on `Build`, the tag-to-commit check (`release.yml:77-114`), the previous-tag changelog, the prerelease rule (`release.yml:242-271`: `--prerelease --latest=false` for any hyphenated tag).
@@ -35,17 +40,18 @@ Carried unchanged: `build.yml` as the entry workflow of a tag run (the signing c
 10. **Permissions.** `release.yml`: `contents: write`, `actions: read`. `build.yml` attestation job: `id-token: write`, `attestations: write`, `contents: read`, and `packages: write` for the distfiles push, which runs only on tags. *AC-9.*
 
 ## Gate
-- **P01-AC-1** — `release.yml` has no `aws`, `s3` or `S3_BUCKET` text and gets its files from the Build run's artifacts. *Verify:* `scripts/tests/release-workflow.test.sh`. *Tier:* fast.
-- **P01-AC-2** — `build.yml` uses `actions/attest-build-provenance` and `actions/attest-sbom` (SHA-pinned) and neither `actions/attest@` nor `generate-provenance.py`. Verification names the repository that signed the artifact: (a) the `v0.2.0-rc1` ISO from this repository passes `gh attestation verify <iso> --repo tuckermclean/themonolith --signer-workflow tuckermclean/themonolith/.github/workflows/build.yml`; (b) the predecessor's `v0.1.0-rc1` ISO (sha256 `a9600659…eb27a`), signed by the predecessor's workflow, still passes `gh attestation verify <iso> --repo tuckermclean/linux-live-iso-factory --signer-workflow tuckermclean/linux-live-iso-factory/.github/workflows/build.yml`, and fails with `--repo tuckermclean/themonolith`. No release note or test verifies either ISO against the other repository or with `--owner` alone. *Verify:* `scripts/tests/release-workflow.test.sh` (grep of the workflow and the release-notes template); the `v0.2.0-rc1` tag run for (a); a recorded run of both commands for (b). *Tier:* fast + slow.
-- **P01-AC-3** — The publish job exits 1, without creating a release, when any of ISO hash, `SHA256SUMS` entry, SBOM component hash or attestation subject digest differs. *Verify:* `scripts/tests/release-digest-chain.test.sh` with a stubbed `gh` and four mutated fixtures. *Tier:* fast.
-- **P01-AC-4** — In a tag run, the attestation, release and `oras push` steps all run after P02's `compare`, the boot-test, artifact-check and gate steps succeed; a red boot mode, or a `compare` mismatch, on a test tag publishes nothing. *Verify:* `scripts/tests/release-workflow.test.sh` (`needs:`); a throwaway `-test` tag with one failing mode, recorded in the PR. *Tier:* fast + slow.
-- **P01-AC-5** — After the `v0.2.0-rc1` run, `oras manifest fetch ${REGISTRY}/distfiles:0.2.0-rc1` succeeds and its layer digest equals the distfiles digest in `release-inputs.json`. *Verify:* the release job, `oras manifest fetch --descriptor`. *Tier:* slow.
-- **P01-AC-6** — The published ISO's SHA-256 equals both digests in P02's `compare` log and the attestation subject. *Verify:* `scripts/tests/release-digest-chain.test.sh` (fixture with a third, differing digest fails); the `v0.2.0-rc1` run. *Tier:* fast + slow.
-- **P01-AC-7** — `rc1-diff.sh` fails on a package that is added or removed without a reason line and passes with one. *Verify:* `scripts/tests/rc1-diff.test.sh` with two small fixture SBOMs. *Tier:* fast.
-- **P01-AC-8** — `size-report.sh` exits 1 for an ISO of 681,984,001 bytes and 0 for 681,984,000 with the default budget. *Verify:* `scripts/tests/size-report.test.sh`. *Tier:* fast.
-- **P01-AC-9** — A `-rcN` tag creates a prerelease that is not Latest. The workflow `permissions:` match change 10. *Verify:* `gh release view v0.2.0-rc1 --json isPrerelease`; `scripts/tests/release-workflow.test.sh`. *Tier:* fast + slow.
-- **P01-AC-10** — The release assets carry the SBOM, ISO, `SHA256SUMS`, `release-inputs.json`, `source-audit.tsv`, `rootfs-provenance.tsv` and three reports. *Verify:* the `v0.2.0-rc1` run log and `gh release view --json assets`. *Tier:* slow.
-- **P01-AC-11** — The package-set step fails when one of the 99 b9f533b world atoms is missing from `world`, from the rootfs VDB or from the `built-this-run` rows of `source-audit.tsv`, and passes on `v0.2.0-rc1` with all 99, `games-roguelike/rl144` and `www-client/stele` among them. *Verify:* `scripts/tests/release-package-set.test.sh` (fixture world and audit with one atom removed); the `v0.2.0-rc1` run log. *Tier:* fast + slow.
+- **P01-AC-1** — `release.yml` has no `aws`, `s3` or `S3_BUCKET` text and gets its files from the Build run's artifacts. *Verify:* `scripts/tests/release-workflow.test.sh`.
+- **P01-AC-2** — `build.yml` uses `actions/attest-build-provenance` and `actions/attest-sbom` (SHA-pinned) and neither `actions/attest@` nor `generate-provenance.py`. Verification names the repository that signed the artifact: (a) the `v0.2.0-rc1` ISO from this repository passes `gh attestation verify <iso> --repo tuckermclean/themonolith --signer-workflow tuckermclean/themonolith/.github/workflows/build.yml`; (b) the predecessor's `v0.1.0-rc1` ISO (sha256 `a9600659…eb27a`), signed by the predecessor's workflow, still passes `gh attestation verify <iso> --repo tuckermclean/linux-live-iso-factory --signer-workflow tuckermclean/linux-live-iso-factory/.github/workflows/build.yml`, and fails with `--repo tuckermclean/themonolith`. No release note or test verifies either ISO against the other repository or with `--owner` alone. *Verify:* `scripts/tests/release-workflow.test.sh` (grep of the workflow and the release-notes template); the `v0.2.0-rc1` tag run for (a); a recorded run of both commands for (b).
+- **P01-AC-3** — The publish job exits 1, without creating a release, when any of ISO hash, `SHA256SUMS` entry, SBOM component hash or attestation subject digest differs. *Verify:* `scripts/tests/release-digest-chain.test.sh` with a stubbed `gh` and four mutated fixtures.
+- **P01-AC-4** — In a tag run, the attestation, release and `oras push` steps all run after P02's `compare`, the boot-test, artifact-check and gate steps succeed; a red boot mode, or a `compare` mismatch, on a test tag publishes nothing. *Verify:* `scripts/tests/release-workflow.test.sh` (`needs:`); a throwaway `-test` tag with one failing mode, recorded in the PR.
+- **P01-AC-5** — After the `v0.2.0-rc1` run, `oras manifest fetch ${REGISTRY}/distfiles:0.2.0-rc1` succeeds and its layer digest equals the distfiles digest in `release-inputs.json`. *Verify:* the release job, `oras manifest fetch --descriptor`.
+- **P01-AC-6** — The published ISO's SHA-256 equals both digests in P02's `compare` log and the attestation subject. *Verify:* `scripts/tests/release-digest-chain.test.sh` (fixture with a third, differing digest fails); the `v0.2.0-rc1` run.
+- **P01-AC-7** — `rc1-diff.sh` fails on a package that is added or removed without a reason line and passes with one. *Verify:* `scripts/tests/rc1-diff.test.sh` with two small fixture SBOMs.
+- **P01-AC-8** — `size-report.sh` exits 1 for an ISO of 681,984,001 bytes and 0 for 681,984,000 with the default budget. *Verify:* `scripts/tests/size-report.test.sh`.
+- **P01-AC-9** — A `-rcN` tag creates a prerelease that is not Latest. The workflow `permissions:` match change 10. *Verify:* `gh release view v0.2.0-rc1 --json isPrerelease`; `scripts/tests/release-workflow.test.sh`.
+- **P01-AC-10** — The release assets carry the SBOM, ISO, `SHA256SUMS`, `release-inputs.json`, `source-audit.tsv`, `rootfs-provenance.tsv` and three reports. *Verify:* the `v0.2.0-rc1` run log and `gh release view --json assets`.
+- **P01-AC-11** — The package-set step fails when one of the 99 b9f533b world atoms is missing from `world`, from the rootfs VDB or from the `built-this-run` rows of `source-audit.tsv`, and passes on `v0.2.0-rc1` with all 99, `games-roguelike/rl144` and `www-client/stele` among them. *Verify:* `scripts/tests/release-package-set.test.sh` (fixture world and audit with one atom removed); the `v0.2.0-rc1` run log.
+- **P01-AC-12** — The tag run's boot tests include G01's `persist-init`, every `entry` leg and `smoke`, and the attestation, release and `oras push` steps `need` them; `make test-overlay` (R02) passes on the tagged commit before any of those steps. A red `smoke` row on a test tag publishes nothing. *Verify:* `scripts/tests/release-workflow.test.sh` (`needs:`); the `v0.2.0-rc1` tag run.
 
 Measured on the predecessor: attestation job about 4.7 minutes. The from-source builds are P02's.
 
