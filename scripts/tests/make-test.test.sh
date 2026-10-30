@@ -50,8 +50,8 @@ fi
 (cd "$pristine" && make -n test-lint test-unit 2>/dev/null) | grep -q -e '--network none' \
 	&& pass "F01-AC-1 test-lint and test-unit run with --network none" \
 	|| fail "F01-AC-1 test-lint and test-unit run with --network none"
-runmake "$pristine" "$tmp/ac1.log" test
-if [ "$rc" -eq 0 ]; then pass "F01-AC-1 make test exits 0"; else fail "F01-AC-1 make test exits 0 (rc=$rc)"; fi
+runmake "$pristine" "$tmp/ac1.log" test-lint test-unit
+if [ "$rc" -eq 0 ]; then pass "F01-AC-1 make test-lint test-unit exits 0"; else fail "F01-AC-1 make test-lint test-unit exits 0 (rc=$rc)"; fi
 for n in 'Shell script syntax (bash -n)' 'Python syntax (py_compile)' 'YAML well-formedness' \
 	'Workflow lint (actionlint)' 'Shell lint (shellcheck, errors only)' \
 	'Migration ledger (check-migration.py)' 'Workflow rules (toolbox/ci lint)' \
@@ -61,8 +61,8 @@ done
 
 # ---- F01-AC-2: one defect per fixture, make test exits non-zero ----
 defect() { # defect <name> <marker> ; the fixture dir is $fx, the defect already applied by caller
-	if [ -n "${3:-}" ]; then runmake "$fx" "$tmp/$1.log" test "$3"; else runmake "$fx" "$tmp/$1.log" test; fi
-	if [ "$rc" -ne 0 ]; then pass "F01-AC-2 $1: make test exits non-zero"; else fail "F01-AC-2 $1: make test exits non-zero"; fi
+	if [ -n "${3:-}" ]; then runmake "$fx" "$tmp/$1.log" test-lint test-unit "$3"; else runmake "$fx" "$tmp/$1.log" test-lint test-unit; fi
+	if [ "$rc" -ne 0 ]; then pass "F01-AC-2 $1: make test-lint test-unit exits non-zero"; else fail "F01-AC-2 $1: make test-lint test-unit exits non-zero"; fi
 	if grep -qF -- "$2" "$tmp/$1.log"; then pass "F01-AC-2 $1: output shows '$2'"; else fail "F01-AC-2 $1: output shows '$2'"; fi
 }
 
