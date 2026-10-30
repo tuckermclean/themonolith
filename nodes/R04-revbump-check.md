@@ -22,7 +22,7 @@ The Gentoo rule itself: a change to what an ebuild installs needs a revision bum
 ## Changes from the port
 1. **The check.** `check-revbump.sh <base> <head>` lists the paths changed under `configs/overlay/<cat>/<pn>/`, grouped by package.
    - A package passes when the change adds at least one `*.ebuild` file that the base lacks: a new `-rN` or a new version. A rename within the package directory to an ebuild name the base lacks counts as added; that is how the predecessor revbumped (`git mv foo-1-r1.ebuild foo-1-r2.ebuild`).
-   - A package whose only changes are deletions (an old ebuild with its files, or the whole package) passes: no remaining ebuild installs anything new.
+   - Dropping a version passes: at least one `*.ebuild` is deleted and every other change in the package is a deletion or a `Manifest`/`metadata.xml` edit (an old version with its files, or the whole package). No remaining ebuild installs anything new.
    - It also passes when the only changed files are `metadata.xml`, or are `Manifest` changes made together with a new ebuild.
    - Anything else fails and names the package. This covers an edited ebuild, a change under `files/`, and a removed patch while an ebuild that used it remains.
    - `configs/overlay/profiles/` and `configs/overlay/metadata/` are not packages and are not checked.
