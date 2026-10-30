@@ -101,6 +101,10 @@ if [ "$USE_ALLOWLIST" -eq 1 ] && [ ! -f "$ALLOWLIST" ]; then
     echo "ERROR: allowlist not found: $ALLOWLIST" >&2
     exit 1
 fi
+if [ "$USE_ALLOWLIST" -eq 1 ] && [ ! -r "$ALLOWLIST" ]; then
+    echo "ERROR: allowlist not readable: $ALLOWLIST" >&2
+    exit 1
+fi
 
 mkdir -p "$REPORT_DIR" || exit 1
 WORK=$(mktemp -d) || exit 1
@@ -109,6 +113,8 @@ trap 'rm -rf "$WORK"' EXIT INT TERM
 SCAN="$WORK/scan"
 ENTRIES="$WORK/entries"     # allowlisted paths
 DYNAMIC="$WORK/dynamic"     # every PT_INTERP path found
+LIBS="$WORK/libs"           # allowlisted *.so files
+: > "$LIBS"
 : > "$ENTRIES"
 : > "$DYNAMIC"
 
@@ -189,7 +195,7 @@ while IFS='|' read -r mach interp textrel file; do
         lib/modules/*|"$LOADER") : ;;
         *.so|*.so.*)
             [ "$allowed" -eq 0 ] && finding plugin "$rel"
-            [ "$allowed" -eq 1 ] && printf '%s\n' "$rel" >> "$DYNAMIC"
+            [ "$allowed" -eq 1 ] && printf '%s\n' "$rel" >> "$LIBS"
             ;;
     esac
 done < "$SCAN"
@@ -200,7 +206,8 @@ fi
 
 # stale allowlist entries: must name a dynamic ELF file
 while IFS= read -r entry; do
-    grep -Fxq -- "$entry" "$DYNAMIC" || problem "stale allowlist entry (not a dynamic file): ${entry}"
+    grep -Fxq -- "$entry" "$DYNAMIC" || grep -Fxq -- "$entry" "$LIBS" ||
+        problem "stale allowlist entry (not a dynamic binary or allowlistable library): ${entry}"
 done < "$ENTRIES"
 
 # musl loader: present iff the allowlist has an entry
@@ -239,6 +246,12 @@ run_find "$WORK/font.txt" \( -name '*libfreetype*' -o -name '*libfontconfig*' -o
 while IFS= read -r p; do
     [ -n "$p" ] && finding font "$p"
 done < "$WORK/font.txt"
+
+# regular files the auditing user cannot read: scanelf skips them silently
+run_find "$WORK/unreadable.txt" -type f ! -readable
+while IFS= read -r p; do
+    [ -n "$p" ] && problem "unreadable file, not scanned: $p"
+done < "$WORK/unreadable.txt"
 
 # --- report ------------------------------------------------------------------
 {

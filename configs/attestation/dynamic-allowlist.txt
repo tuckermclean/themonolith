@@ -1,5 +1,5 @@
 # Dynamic ELF files the static audit tolerates (SPEC section 8: CODEOWNERS-protected).
 # Format: <rootfs-relative path> # <issue> <reason>
 # Shrink-only (OD-2): entries are removed as their issues close; one is added only with an issue.
-# An entry that matches no dynamic ELF file is stale and fails the audit.
+# An entry is stale and fails the audit unless it names an ELF file with PT_INTERP, or an ELF *.so or *.so.* file outside lib/modules/
 # rc1 starts empty: its userland is all static.
