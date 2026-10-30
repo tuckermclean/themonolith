@@ -4,34 +4,46 @@
 #
 # Runs after network is up (called from /etc/init.d/S50advisory).
 # Fetches the advisory status for this build from ADVISORY_BASE_URL.
-# If the build has been revoked due to new CVEs, writes a warning file
-# to /run/monolith-advisory so the login banner can display it.
+# Writes exactly one word to the state file: "revoked", "clean" or "unknown"
+# ("unknown" is anything else: fetch failure, 404, empty or HTML body, no
+# release tag). If the build has been revoked due to new CVEs, also writes
+# the status file to /run/monolith-advisory so the login banner can display it.
 #
 # Designed for i486 with 16 MB RAM: POSIX sh only, no Python, no jq.
-# All failures are silent — the ISO works fine without network access.
+# It prints nothing and always exits 0 — the ISO works fine without network
+# access. A failure is recorded as "unknown", never as "clean".
 #
 # Configuration:
 #   /etc/monolith-release     — contains the BUILD_TAG (baked in at ISO build time)
 #   ADVISORY_BASE_URL         — base URL for status files (default below)
+# Test seam (each defaults to the installed path):
+#   MONOLITH_RELEASE_FILE     — default /etc/monolith-release
+#   MONOLITH_ADVISORY_STATE   — default /run/monolith-advisory-state
+#   MONOLITH_ADVISORY_FILE    — default /run/monolith-advisory (revoked only)
 
-ADVISORY_BASE_URL="${ADVISORY_BASE_URL:-https://themonolith.s3.amazonaws.com}"
+ADVISORY_BASE_URL="${ADVISORY_BASE_URL:-https://monolith.technomantics.com}"
+RELEASE_FILE="${MONOLITH_RELEASE_FILE:-/etc/monolith-release}"
+STATE_FILE="${MONOLITH_ADVISORY_STATE:-/run/monolith-advisory-state}"
+ADVISORY_FILE="${MONOLITH_ADVISORY_FILE:-/run/monolith-advisory}"
 
-# Read build tag from /etc/monolith-release
-if [ ! -f /etc/monolith-release ]; then
-    exit 0
+# Record the one-word state, then leave
+finish() { echo "$1" > "$STATE_FILE" 2>/dev/null; exit 0; }
+
+# Read build tag from the release file
+if [ ! -f "$RELEASE_FILE" ]; then
+    finish unknown
 fi
 
-BUILD_TAG="$(cat /etc/monolith-release 2>/dev/null)"
+BUILD_TAG="$(cat "$RELEASE_FILE" 2>/dev/null)"
 if [ -z "$BUILD_TAG" ]; then
-    exit 0
+    finish unknown
 fi
 
 STATUS_URL="${ADVISORY_BASE_URL}/status/${BUILD_TAG}.json"
 
 # Fetch the status JSON into a temp file
 # Try curl first (preferred), fall back to wget
-TMPFILE=""
-TMPFILE="$(mktemp /tmp/advisory.XXXXXX 2>/dev/null)" || exit 0
+TMPFILE="$(mktemp /tmp/advisory.XXXXXX 2>/dev/null)" || finish unknown
 
 # Ensure cleanup on exit
 cleanup() { rm -f "$TMPFILE"; }
@@ -45,13 +57,16 @@ elif command -v wget >/dev/null 2>&1; then
 fi
 
 if [ "$FETCH_OK" != "1" ]; then
-    exit 0
+    finish unknown
 fi
 
-# Check if status is "revoked" — simple grep, no jq, no extended regex
+# Check the status — simple grep, no jq, no extended regex
 if grep -q '"status"[^"]*"revoked"' "$TMPFILE" 2>/dev/null; then
-    # Copy the full JSON to /run/monolith-advisory for the login banner to display
-    cp "$TMPFILE" /run/monolith-advisory 2>/dev/null || true
+    # Copy the full JSON for the login banner to display
+    cp "$TMPFILE" "$ADVISORY_FILE" 2>/dev/null || true
+    finish revoked
 fi
-
-exit 0
+if grep -q '"status"[^"]*"clean"' "$TMPFILE" 2>/dev/null; then
+    finish clean
+fi
+finish unknown
