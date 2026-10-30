@@ -31,7 +31,8 @@ credential handling.
   or tag; never merge it.
 - `toolbox/run -- toolbox-selfcheck` checks that every tool is present at its pinned version.
 - Make is the build and test interface, run on the host; each target uses the toolbox or the builder
-  image itself. `make test` runs every test (SPEC §7), building what it needs. `make test-lint test-unit` is the PR check without a build; run it before pushing.
+  image itself. `make test` runs every test (SPEC §7), building what it needs. `make test-lint
+  test-unit` is the PR check without a build; run it before pushing.
   `toolbox/run -- sh scripts/tests/<name>.test.sh` runs one test file.
 - `toolbox/ci lint` checks the workflow rules (SPEC §7). `toolbox/ci run <workflow> [<job>...]` runs a
   workflow's `run:` steps in this checkout as a convenience (`--event`, `--input k=v`, `--matrix k=v`).
@@ -66,6 +67,10 @@ credential handling.
   under emulation (and even then is not a full post-486 instruction check), so `toolbox/run` passes no
   `/dev/kvm`. Boots take about a minute and the first in-guest check
   can hit its 30 s timeout. Re-run before suspecting the disc.
+- **Unit tests run in commit-less copies too.** `scripts/tests/make-test.test.sh` runs `make test-lint
+  test-unit` in fixture trees that are `git init` + `git add -A` copies of the checkout with no commits
+  and no `out/` or `.claude/`, so every other `scripts/tests/*.sh` runs there as well. A unit test that
+  needs Git history (a `BASE..` range) or untracked state belongs in its own target, not `test-unit`.
 - **A step timeout must stop the container.** `toolbox/run` starts containers with `--init`, so SIGTERM
   reaches the command; without it a timed-out step leaves its container running.
 - **Workflow files need the `workflow` scope to push.** The default `gh` token lacks it, so a branch that
