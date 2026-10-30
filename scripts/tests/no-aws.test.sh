@@ -19,63 +19,81 @@ want_registry=ghcr.io/tuckermclean/themonolith
 # ---- checks: each prints one line per violation and returns non-zero if any ----
 check_ac1() { # check_ac1 <root>
 	(
-		cd "$1" || exit 1
-		git ls-files | while IFS= read -r f; do
+		cd "$1" || { echo "check_ac1: cannot cd to $1"; exit 1; }
+		git -c core.quotePath=false ls-files >"$tmp/files.$$" || { echo "check_ac1: git ls-files failed"; exit 1; }
+		[ -s "$tmp/files.$$" ] || { echo "check_ac1: empty file list"; exit 1; }
+		while IFS= read -r f; do
 			case $f in
+			'"'*) echo "$f: quoted path in git ls-files output"; continue ;;
 			SPEC.md | nodes/* | docs/study/* | docs/reviews/* | docs/graph.yaml | docs/capabilities.md | \
 				docs/first-release.md | docs/migration.tsv | scripts/tests/make-test.test.sh | "$self") continue ;;
 			esac
 			[ -f "$f" ] || continue
 			grep -InE -e "$pattern" -- "$f" | sed "s|^|$f:|"
-		done
+		done <"$tmp/files.$$"
 	) >"$tmp/out.$$"
 	cat "$tmp/out.$$"
 	[ ! -s "$tmp/out.$$" ]
 }
 
+reg_assign='^((override|export)[[:space:]]+)*REGISTRY[[:space:]]*(:::=|::=|:=|\?=|\+=|!=|=)'
 check_ac2() { # check_ac2 <root>
 	bad=0
 	n=0
 	if [ -f "$1/Makefile" ]; then
-		n=$(grep -cE '^[[:space:]]*REGISTRY[[:space:]]*(:=|\?=|=)' "$1/Makefile")
+		n=$(grep -cE "$reg_assign" "$1/Makefile")
 	fi
 	if [ "$n" -ne 1 ]; then echo "Makefile: $n assignments of REGISTRY, want 1"; bad=1
 	else
-		v=$(grep -E '^[[:space:]]*REGISTRY[[:space:]]*(:=|\?=|=)' "$1/Makefile" |
-			sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]+$//')
+		v=$(grep -E "$reg_assign" "$1/Makefile" |
+			sed -E 's/^((override|export)[[:space:]]+)*REGISTRY[[:space:]]*(:::=|::=|:=|\?=|\+=|!=|=)[[:space:]]*//; s/[[:space:]]+$//')
 		[ "$v" = "$want_registry" ] || { echo "Makefile: REGISTRY is '$v', want $want_registry"; bad=1; }
 	fi
-	for w in "$1"/.github/workflows/*.yml; do
+	for w in "$1"/.github/workflows/*.yml "$1"/.github/workflows/*.yaml; do
 		[ -f "$w" ] || continue
 		grep -qE 'REGISTRY|ghcr\.io' "$w" || continue
 		c=$(awk '
 			/^[[:space:]]*REGISTRY:/ {
+				v = $0; sub(/^[[:space:]]*REGISTRY:[[:space:]]*/, "", v)
+				if (v ~ /^\$\{\{/) { line[NR] = $0; next }
+				sub(/[[:space:]]+#.*$/, "", v); sub(/[[:space:]]+$/, "", v)
+				if (v ~ /^".*"$/ || v ~ /^'"'"'.*'"'"'$/) v = substr(v, 2, length(v) - 2)
+				val = v
 				match($0, /^[[:space:]]*/); ind = RLENGTH; cnt++
 				ok = 0
 				for (i = NR - 1; i >= 1; i--) {
 					l = line[i]
 					if (l ~ /^[[:space:]]*(#|$)/) continue
 					match(l, /^[[:space:]]*/)
-					if (RLENGTH < ind) { if (l ~ /^[[:space:]]*env:[[:space:]]*$/) ok = 1; break }
+					if (RLENGTH < ind) { if (l ~ /^[[:space:]]*env:[[:space:]]*(#.*)?$/) ok = 1; break }
 				}
 				good += ok
 			}
 			{ line[NR] = $0 }
-			END { print cnt + 0, good + 0 }' "$w")
-		if [ "$c" != "1 1" ]; then echo "${w#"$1"/}: want exactly one REGISTRY: key in an env: map (cnt good: $c)"; bad=1; fi
+			END { print cnt + 0, good + 0, val }' "$w")
+		if [ "$c" != "1 1 $want_registry" ]; then echo "${w#"$1"/}: want exactly one literal REGISTRY: $want_registry in an env: map (cnt good value: $c)"; bad=1; fi
 	done
-	(cd "$1" && git ls-files scripts 2>/dev/null) | while IFS= read -r f; do
-		[ "$f" = "$self" ] && continue
-		[ -f "$1/$f" ] || continue
-		grep -In 'ghcr\.io/' "$1/$f" | sed "s|^|$f:|"
-	done >"$tmp/ghcr.$$"
+	(
+		cd "$1" || { echo "check_ac2: cannot cd to $1"; exit 1; }
+		git -c core.quotePath=false ls-files scripts >"$tmp/sfiles.$$" || { echo "check_ac2: git ls-files failed"; exit 1; }
+		[ -s "$tmp/sfiles.$$" ] || { echo "check_ac2: empty scripts file list"; exit 1; }
+		while IFS= read -r f; do
+			case $f in
+			'"'*) echo "$f: quoted path in git ls-files output"; continue ;;
+			scripts/tests/*) continue ;;
+			esac
+			[ -f "$f" ] || continue
+			grep -In 'ghcr\.io/' -- "$f" | sed "s|^|$f:|"
+		done <"$tmp/sfiles.$$"
+	) >"$tmp/ghcr.$$"
 	if [ -s "$tmp/ghcr.$$" ]; then cat "$tmp/ghcr.$$"; bad=1; fi
 	return $bad
 }
 
 check_ac3() { # check_ac3 <root>
 	[ -d "$1/.github/workflows" ] || return 0
-	(cd "$1" && grep -rnoE 'secrets\.[A-Za-z_0-9]*' .github/workflows) | grep -v 'secrets\.GITHUB_TOKEN$' >"$tmp/sec.$$"
+	cd "$1" || { echo "check_ac3: cannot cd to $1"; return 1; }
+	grep -rnoE 'secrets\.[A-Za-z_0-9]*|secrets[[:space:]]*\[|toJSON\([[:space:]]*secrets' .github/workflows | grep -v 'secrets\.GITHUB_TOKEN$' >"$tmp/sec.$$"
 	cat "$tmp/sec.$$"
 	[ ! -s "$tmp/sec.$$" ]
 }
@@ -120,6 +138,15 @@ echo "s3-gc" >"$r/docs/migration.tsv"; echo "S3_BUCKET" >"$r/docs/study/a.md"; c
 expect "I01-AC-1 excluded spec paths are not reported" pass check_ac1 "$r"
 echo "aws " >"$r/untracked-ok.txt"
 expect "I01-AC-1 untracked files are not checked" pass check_ac1 "$r"
+r=$(mkrepo ac1-utf8); printf 'AWS_X\n' >"$r/scripts/caf$(printf '\303\251').sh"; printf 'AWS_X\n' >"$r/scripts/a b.sh"; commit_all "$r"
+expect "I01-AC-1 non-ASCII and spaced file names are still checked (fail)" fail check_ac1 "$r"
+r=$(mkrepo ac1-utf8ok); echo ok >"$r/scripts/caf$(printf '\303\251').sh"; echo ok >"$r/scripts/a b.sh"; commit_all "$r"
+expect "I01-AC-1 non-ASCII and spaced clean file names pass" pass check_ac1 "$r"
+r=$(mkrepo ac1-nogit); echo 'AWS_X' >"$r/x.sh"; commit_all "$r"; mv "$r/.git" "$r/.gitx"
+expect "I01-AC-1 failing git ls-files fails the check" fail check_ac1 "$r"
+r=$(mkrepo ac1-empty)
+expect "I01-AC-1 empty file list fails the check" fail check_ac1 "$r"
+expect "I01-AC-1 failing cd fails the check" fail check_ac1 "$tmp/no-such-dir"
 if out=$(check_ac1 "$root" 2>&1); then pass "I01-AC-1 no tracked file outside the spec paths matches"
 else fail "I01-AC-1 tracked files match the AWS/S3 pattern:"; printf '%s\n' "$out" | sed 's/^/  /'; fi
 
@@ -140,6 +167,28 @@ expect "I01-AC-2 workflow naming the registry without REGISTRY env fails" fail c
 r=$(mkrepo ac2-wf2); good_makefile "$r"; good_workflow "$r"
 printf '  other:\n    runs-on: u\n    env:\n      REGISTRY: %s\n' "$want_registry" >>"$r/.github/workflows/a.yml"; commit_all "$r"
 expect "I01-AC-2 workflow with two REGISTRY keys fails" fail check_ac2 "$r"
+r=$(mkrepo ac2-recipe); printf 'REGISTRY ?= %s\npush:\n\tREGISTRY=$(REGISTRY) sh scripts/x.sh\n' "$want_registry" >"$r/Makefile"; echo hi >"$r/scripts/a.sh"; commit_all "$r"
+expect "I01-AC-2 tab-led recipe 'REGISTRY=...' is not an assignment (pass)" pass check_ac2 "$r"
+for op in 'override REGISTRY = ghcr.io/evil' 'export REGISTRY := ghcr.io/evil' 'override export REGISTRY ::= x' 'REGISTRY :::= x' 'REGISTRY += x' 'REGISTRY != echo x'; do
+	r=$(mkrepo ac2-op); good_makefile "$r"; printf '%s\n' "$op" >>"$r/Makefile"; commit_all "$r"
+	expect "I01-AC-2 second assignment '$op' fails" fail check_ac2 "$r"
+	rm -rf "$r"
+done
+r=$(mkrepo ac2-wfval); good_makefile "$r"; printf 'env:\n  REGISTRY: ghcr.io/somewhere/else\n' >"$r/.github/workflows/a.yml"; echo hi >"$r/scripts/a.sh"; commit_all "$r"
+expect "I01-AC-2 workflow REGISTRY with wrong value fails" fail check_ac2 "$r"
+r=$(mkrepo ac2-yaml); good_makefile "$r"; printf 'env:\n  REGISTRY: x\n' >"$r/.github/workflows/b.yaml"; echo hi >"$r/scripts/a.sh"; commit_all "$r"
+expect "I01-AC-2 .yaml workflow with wrong REGISTRY fails" fail check_ac2 "$r"
+r=$(mkrepo ac2-yamlok); good_makefile "$r"; printf 'env:\n  REGISTRY: %s\n' "$want_registry" >"$r/.github/workflows/b.yaml"; echo hi >"$r/scripts/a.sh"; commit_all "$r"
+expect "I01-AC-2 .yaml workflow with the right REGISTRY passes" pass check_ac2 "$r"
+r=$(mkrepo ac2-cmt); good_makefile "$r"; printf 'env: # registry\n  REGISTRY: %s\n' "$want_registry" >"$r/.github/workflows/c.yml"; echo hi >"$r/scripts/a.sh"; commit_all "$r"
+expect "I01-AC-2 'env:' with trailing comment is an env map (pass)" pass check_ac2 "$r"
+r=$(mkrepo ac2-fwd); good_makefile "$r"; good_workflow "$r"
+printf '  other:\n    runs-on: u\n    steps:\n      - uses: ./x\n        with:\n          REGISTRY: ${{ env.REGISTRY }}\n' >>"$r/.github/workflows/a.yml"; echo hi >"$r/scripts/a.sh"; commit_all "$r"
+expect "I01-AC-2 forward 'REGISTRY: \${{ env.REGISTRY }}' is allowed and not counted" pass check_ac2 "$r"
+r=$(mkrepo ac2-tests); good_makefile "$r"; mkdir -p "$r/scripts/tests"; echo 'stub ghcr.io/x/y' >"$r/scripts/tests/s.test.sh"; echo hi >"$r/scripts/a.sh"; commit_all "$r"
+expect "I01-AC-2 ghcr.io/ under scripts/tests/ is allowed" pass check_ac2 "$r"
+r=$(mkrepo ac2-nogit); good_makefile "$r"; echo hi >"$r/scripts/a.sh"; commit_all "$r"; mv "$r/.git" "$r/.gitx"
+expect "I01-AC-2 failing git ls-files fails the check" fail check_ac2 "$r"
 if out=$(check_ac2 "$root" 2>&1); then pass "I01-AC-2 REGISTRY assigned once in Makefile and workflow env, no ghcr.io/ in scripts"
 else fail "I01-AC-2 registry location rules broken:"; printf '%s\n' "$out" | sed 's/^/  /'; fi
 
@@ -148,6 +197,12 @@ r=$(mkrepo ac3-ok); good_workflow "$r"; commit_all "$r"
 expect "I01-AC-3 fixture using only secrets.GITHUB_TOKEN passes" pass check_ac3 "$r"
 r=$(mkrepo ac3-bad); good_workflow "$r"; echo '      - run: echo ${{ secrets.AWS_ACCESS_KEY_ID }}' >>"$r/.github/workflows/a.yml"; commit_all "$r"
 expect "I01-AC-3 fixture workflow using another secret fails" fail check_ac3 "$r"
+r=$(mkrepo ac3-br); printf 'jobs:\n  a:\n    steps:\n      - run: echo ${{ secrets["AWS_KEY"] }}\n' >"$r/.github/workflows/a.yml"; commit_all "$r"
+expect "I01-AC-3 secrets[...] fails" fail check_ac3 "$r"
+r=$(mkrepo ac3-json); printf 'jobs:\n  a:\n    steps:\n      - run: echo ${{ toJSON(secrets) }}\n' >"$r/.github/workflows/a.yml"; commit_all "$r"
+expect "I01-AC-3 toJSON(secrets) fails" fail check_ac3 "$r"
+r=$(mkrepo ac3-yaml); good_workflow "$r"; echo '      - run: echo ${{ secrets.OTHER }}' >>"$r/.github/workflows/a.yml"; mv "$r/.github/workflows/a.yml" "$r/.github/workflows/a.yaml"; commit_all "$r"
+expect "I01-AC-3 .yaml workflow using another secret fails" fail check_ac3 "$r"
 if out=$(check_ac3 "$root" 2>&1); then pass "I01-AC-3 no workflow requires a secret other than GITHUB_TOKEN"
 else fail "I01-AC-3 workflows use other secrets:"; printf '%s\n' "$out" | sed 's/^/  /'; fi
 
