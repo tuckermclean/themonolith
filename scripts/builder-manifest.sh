@@ -2,9 +2,10 @@
 # Prints what is in the builder image: its packages, compilers, scanners and Rust toolchain.
 # Usage: builder-manifest.sh [IMAGE_REF]   (the engine is $DOCKER, default docker)
 set -eu
-REGISTRY=${REGISTRY:-ghcr.io/tuckermclean/themonolith}
-digest=$(sed -n 's/^BUILDER_DIGEST[ ]*:=[ ]*//p' "$(dirname "$0")/../Makefile")
-ref=${1:-$REGISTRY/builder@$digest}
+mk=$(dirname "$0")/../Makefile
+mkvar() { sed -n "s/^$1[ ]*[?:]*=[ ]*//p" "$mk"; }
+REGISTRY=${REGISTRY:-$(mkvar REGISTRY)}
+ref=${1:-$REGISTRY/builder@$(mkvar BUILDER_DIGEST)}
 engine=${DOCKER:-docker}
 echo "image: $ref"
 $engine image inspect "$ref"
