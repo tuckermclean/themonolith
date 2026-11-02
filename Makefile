@@ -1,5 +1,7 @@
 # SPEC section 7: CI calls these targets; a test is always a Make target.
 SHELL_EXTRA ?=
+# SPEC principle 3: the one place the image registry is named.
+REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .PHONY: test test-lint test-unit
 
