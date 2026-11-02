@@ -146,7 +146,7 @@ for bad in empty garbage notar; do
     teardown
 done
 
-# 4. (was: no S3_BUCKET) Sourced with --source-only: defines restore_tree, runs nothing, creates
+# 4. (was: no bucket set) Sourced with --source-only: defines restore_tree, runs nothing, creates
 #    nothing, even with the pins unset.  I02-AC-4
 setup
 unset REGISTRY TREE_COMMIT TREE_DIGEST
