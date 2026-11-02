@@ -172,6 +172,8 @@ builder-manifest:
 	mkdir -p output
 	DOCKER='$(DOCKER)' sh scripts/builder-manifest.sh '$(BUILDER_REF)' > output/builder-manifest.txt
 
+# B01 adds configs/portage/versions.lock; M02's build-image consumes these pins.
+ifneq ($(wildcard configs/portage/versions.lock),)
 # Cross-toolchain version pins, ported unchanged from b9f533b; unused until M02's build-image.
 # Cross-toolchain version pins — all passed to crossdev to prevent live-ebuild (9999) selection
 # musl and gcc come from crossdev.lock (managed by update-build-pins, not update-versions)
@@ -181,6 +183,7 @@ CROSS_MUSL_VER     := $(shell grep '^sys-libs/musl:' configs/portage/crossdev.lo
 CROSS_GCC_VER      := $(shell grep '^sys-devel/gcc:' configs/portage/crossdev.lock | cut -d: -f2)
 CROSS_BINUTILS_VER := $(shell grep '^sys-devel/binutils:' configs/portage/versions.lock | cut -d: -f2)
 CROSS_HEADERS_VER  := $(shell echo $(KERNEL_VERSION) | cut -d. -f1-2)
+endif
 
 # Intermediate image name for the pre-crossdev stage
 BASE_TOOLS_IMAGE := $(IMAGE_NAME)-base-tools
