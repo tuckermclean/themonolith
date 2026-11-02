@@ -35,7 +35,7 @@ rc1's Gentoo tree becomes a pin we can restore: a gentoo-mirror commit, archived
 
 ## Gate
 - **I02-AC-1** — `docs/tree-pin.md` names one commit, the `REPO_REVISIONS` value it maps from, the list of gentoo VDB entries compared, the count that matched, and any unmatched package with the reason. *Verify:* review of the PR; `grep -E '^[0-9a-f]{40}$'` in the doc by `scripts/tests/tree-pin.test.sh`.
-- **I02-AC-2** — With the restored tree in the rc1 builder, `emerge -pv --usepkgonly` of `configs/portage/world` against rc1's binpkgs shows no package to be built from source (overlay packages excepted and listed). *Verify:* a `workflow_dispatch` job `tree-accept`.
+- **I02-AC-2** — With the restored tree in the rc1 builder, `emerge -pv --usepkgonly` of `configs/portage/world` against rc1's binpkgs shows no package to be built from source (overlay packages excepted and listed). *Verify:* locally in the rc1 builder pulled by digest, with `b9f533b`'s `configs/portage/` (B01 ports it; until then it is not in this repository, so no job here can read it), log under `out/node/I02/`. B03's build reruns the same check on every build once B01 has landed.
 - **I02-AC-3** — `gentoo-tree:<commit40>` exists on GHCR, `TREE_DIGEST` equals its manifest digest, and `git archive` of the commit listed by `git ls-tree -r` has the same file count as the extracted tarball. *Verify:* `seed-tree.sh` output in the `tree-accept` job; `oras manifest fetch`.
 - **I02-AC-4** — `sync-portage.sh` with a stub `oras` restores the fixture tree; it exits non-zero for a missing artifact, a digest mismatch or an empty archive, and never calls `wget`, `curl` or `aws`. Sourced with `--source-only`, it defines its functions and runs nothing. *Verify:* `scripts/tests/sync-portage.test.sh`.
 - **I02-AC-5** — A build job restores the tree from the digest with network access to `distfiles.gentoo.org` and `rsync.gentoo.org` blocked, and `/var/db/repos/gentoo` equals the archive. *Verify:* the `tree-accept` job (`unshare -n` after pulling, or `--network none` container).
@@ -43,7 +43,7 @@ rc1's Gentoo tree becomes a pin we can restore: a gentoo-mirror commit, archived
 
 ## Risks
 - Several commits match all ebuilds (61 do); `REPO_REVISIONS` names the one rc1 used, and AC-2 tests the effect. The archive of a mirror commit has no `metadata/timestamp.commit` (the snapshot tarball had one), so a build from it records a different `REPO_REVISIONS`; nothing reads it.
-- Gentoo may not sign mirror commits, or the key may not be where expected (unverified). If unsigned, the pin rests on the commit hash, the ebuild match and AC-2; the owner accepts that in the PR. No new open decision id is raised.
+- Checked: the pin carries a `gpgsig`, and `git verify-commit` against `/usr/share/openpgp-keys/gentoo-release.asc` in the rc1 builder reports a good signature from "Gentoo repository mirrors (automated git signing key)", key `F748E9B3C47E393CC24C8FAF7C2AC09CD98F2EDF`. The toolbox has no `gpg`, so `seed-tree.sh` verifies where `gpg` and that key exist and records `key-missing` otherwise.
 - Unverified: GitHub serves a fetch of one commit by SHA (`git fetch --depth 1 origin <sha>`) for this repository. Checked: `metadata/md5-cache` is present at the pin.
 - OD-3: if the owner answers "current tree", step 1 shrinks to choosing a commit and AC-2 is not run.
 - A tree archive is tens of MB (estimate). GHCR keeps it; nothing deletes it.
