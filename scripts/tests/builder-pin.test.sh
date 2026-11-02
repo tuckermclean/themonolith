@@ -130,6 +130,20 @@ targets=$(grep -hE '^[[:space:]]*(- )?run:[[:space:]]*make ' $WF 2>/dev/null \
     | sed -e 's/^[^:]*run:[[:space:]]*make //' | tr ' ' '\n' \
     | grep -E '^[a-z][a-z0-9_-]*$' | sort -u)
 targets="$targets pull-image builder-manifest"
+# also collect "make <t>" lines inside run: | and run: > block scalars (toolbox/ci lint allows them)
+block_targets() {
+    awk '
+        inb { match($0, /^[ \t]*/); if ($0 ~ /^[ \t]*$/) next
+              if (RLENGTH <= ind) inb = 0
+              else if ($0 ~ /^[ \t]*make[ \t]/) { sub(/^[ \t]*make[ \t]+/, ""); print; next } }
+        /run:[ \t]*[|>][-+]?[ \t]*$/ { match($0, /^[ \t-]*/); ind = RLENGTH; inb = 1 }
+    ' "$@" 2>/dev/null | tr ' ' '\n' | grep -E '^[a-z][a-z0-9_-]*$' | sort -u
+}
+printf 'jobs:\n  a:\n    steps:\n      - name: x\n        run: |\n          echo hi\n          make x-latest\n      - run: make y\n' > "$TMP/wf-block.yml"
+[ "$(block_targets "$TMP/wf-block.yml")" = x-latest ] \
+    && ok "I03-AC-3 self-check: a make line inside a run: | block yields its target" \
+    || fail "I03-AC-3 self-check: a make line inside a run: | block yields its target"
+targets="$targets $(block_targets $WF)"
 bad=0
 for t in $(printf '%s\n' $targets | sort -u); do
     exp=$(cd "$ROOT" && make -n "$t" 2>&1); rc=$?
@@ -199,6 +213,22 @@ if [ -f "$MAN" ]; then
 else rc=127; fi
 [ "$rc" -ne 0 ] && [ "$rc" -ne 127 ] && ok "I03-AC-5 builder-manifest.sh exits non-zero when the engine fails" \
                  || fail "I03-AC-5 builder-manifest.sh exits non-zero when the engine fails (rc=$rc)"
+# a failure of only the qlist call must also fail the script (needs set -e, not just a dead engine)
+mkdir -p "$TMP/bin2"
+cat > "$TMP/bin2/docker" <<STUB
+#!/bin/sh
+case "\$1" in
+    image) echo '[{"RepoDigests":["$REF"]}]' ;;
+    run) case "\$*" in *qlist*) echo "stub: qlist failed" >&2; exit 1 ;; esac; echo ok ;;
+esac
+exit 0
+STUB
+chmod +x "$TMP/bin2/docker"
+if [ -f "$MAN" ]; then
+    (cd "$ROOT" && PATH="$TMP/bin2:$PATH" sh "$MAN" >/dev/null 2>&1); rc=$?
+else rc=127; fi
+[ "$rc" -ne 0 ] && [ "$rc" -ne 127 ] && ok "I03-AC-5 builder-manifest.sh exits non-zero when only the qlist call fails" \
+                 || fail "I03-AC-5 builder-manifest.sh exits non-zero when only the qlist call fails (rc=$rc)"
 exp=$(cd "$ROOT" && make -n builder-manifest 2>&1)
 printf '%s\n' "$exp" | grep -q 'builder-manifest\.sh' && printf '%s\n' "$exp" | grep -q 'output/builder-manifest\.txt' \
     && ok "I03-AC-5 make builder-manifest writes output/builder-manifest.txt from the script" \
