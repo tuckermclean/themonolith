@@ -415,4 +415,14 @@ grep -qx "files: $(git -C "$FIXREPO" ls-tree -r "$COMMIT" | wc -l | tr -d ' ')" 
     && pass "ruling 13 prints 'files: <git ls-tree -r | wc -l>' (real git)" || { fail "ruling 13 no matching 'files:' line (real git)"; sed 's/^/      | /' "$TMP/out13"; }
 teardown
 
+# 17. No oras on PATH is not "absent": seed-tree.sh exits non-zero before any git fetch.  ruling 17
+setup
+NB="$TMP/nooras"; mkdir -p "$NB"
+for t in mktemp rm mkdir; do ln -s "$(command -v $t)" "$NB/$t"; done
+printf '#!/bin/sh\necho "git $*" >> "$CALLLOG"\n[ "$1" = init ] && mkdir -p "$3"\nexit 0\n' > "$NB/git"; chmod +x "$NB/git"
+PATH="$NB" "$(command -v sh)" "$SEED" "$COMMIT" >"$TMP/out17" 2>&1; r=$?
+if [ "$r" -ne 0 ] && ! grep -q '^git fetch' "$CALLLOG"; then pass "ruling 17 seed-tree with no oras on PATH -> non-zero, no git fetch"
+else fail "ruling 17 seed-tree with no oras on PATH (rc=$r; want non-zero and no git fetch)"; sed 's/^/      | /' "$TMP/out17" "$CALLLOG"; fi
+teardown
+
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

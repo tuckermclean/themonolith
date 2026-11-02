@@ -151,5 +151,62 @@ for mode in denied dial; do
 	fi
 done
 
+# ---- review 2 rulings 15, 16, 17 (added; the checks above are unchanged) ----
+# ruling 15: the offline extraction keeps archived modes (-p), and only Uid/Gid differences are filtered
+ck "ruling 15 tree-restore-offline extracts with tar -xp... / --preserve-permissions" \
+	sh -c 'grep -E "tar +([^|;]* )?(-[a-zA-Z]*x[a-zA-Z]*p[a-zA-Z]*|-[a-zA-Z]*p[a-zA-Z]*x[a-zA-Z]*|--preserve-permissions|-p)( |\$)" "$1" | grep -q "tar.*-C"' _ "$tmp/off.out"
+ck "ruling 15 tree-restore-offline filter does not drop Mode lines" \
+	sh -c 'grep -q "Uid" "$1" && ! grep -E "grep +-v" "$1" | grep -q "Mode"' _ "$tmp/off.out"
+# behaviour: run the real recipe in a copy with toolbox/run replaced by a pass-through; a tar wrapper clears the
+# exec bit of a 0755 file right after the extraction. The compare must then fail.
+OFW="$tmp/offw"; mkdir -p "$OFW/toolbox" "$OFW/bin" "$OFW/src" "$OFW/output/tree-archive"
+cp "$MK" "$OFW/Makefile"
+printf '#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n' > "$OFW/toolbox/run"
+chmod +x "$OFW/toolbox/run"
+REALTAR=$(command -v tar)
+cat > "$OFW/bin/tar" <<STUB
+#!/bin/sh
+$REALTAR "\$@" || exit \$?
+case "\$1" in -x*|--extract*) chmod a-x "$OFW/output/repos/gentoo/run.sh";; esac
+STUB
+chmod +x "$OFW/bin/tar"
+printf '#!/bin/sh\necho hi\n' > "$OFW/src/run.sh"; chmod 755 "$OFW/src/run.sh"; echo data > "$OFW/src/data.txt"
+(cd "$OFW/src" && $REALTAR -cf - run.sh data.txt) | zstd -q > "$OFW/output/tree-archive/gentoo-tree-$COMMIT.tar.zst"
+( cd "$OFW" && PATH="$OFW/bin:$PATH" make tree-restore-offline ) >"$tmp/offw.out" 2>&1
+offrc=$?
+if [ "$offrc" -ne 0 ] && grep -q 'differs' "$tmp/offw.out"; then pass "ruling 15 tree-restore-offline: a lost exec bit fails the compare"
+else fail "ruling 15 tree-restore-offline accepted a file whose exec bit was cleared (rc=$offrc)"; sed 's/^/      | /' "$tmp/offw.out"; fi
+
+# ruling 16: tree-check by behaviour. A registry digest other than TREE_DIGEST -> non-zero, both digests
+# (or TREE_DIGEST) in the message, and no oras pull.
+TCB="$tmp/tcbin"; mkdir -p "$TCB"
+cat > "$TCB/oras" <<'STUB'
+#!/bin/sh
+echo "oras $*" >> "$TC_CALLS"
+case "$1 $2" in
+"manifest fetch") echo '{"mediaType": "x", "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "size": 1}'; exit 0;;
+esac
+exit 0
+STUB
+chmod +x "$TCB/oras"
+: > "$tmp/tc.calls"
+( cd "$ROOT" && unset GITHUB_TOKEN && TC_CALLS="$tmp/tc.calls" PATH="$TCB:$PATH" \
+	make tree-check TREE_RUN='env --' TREE_PULL="$tmp/tc.pull" TREE_DIR="$tmp/tc.tree" ) >"$tmp/tc.out" 2>&1
+tcrc=$?
+if [ "$tcrc" -ne 0 ] && grep -q 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' "$tmp/tc.out" \
+	&& grep -q "$DIGEST" "$tmp/tc.out" && ! grep -q 'oras pull' "$tmp/tc.calls"; then
+	pass "ruling 16 tree-check: another registry digest -> non-zero, both digests named, no pull"
+else
+	fail "ruling 16 tree-check with another registry digest (rc=$tcrc; want non-zero, both digests named, no oras pull)"; sed 's/^/      | /' "$tmp/tc.out" "$tmp/tc.calls"
+fi
+
+# ruling 17: tree-exists with no oras on PATH fails and writes no exists=
+NOB="$tmp/nobin"; mkdir -p "$NOB"; for t in env sh; do ln -s "$(command -v $t)" "$NOB/$t"; done
+: > "$tmp/ne.gho"
+( cd "$ROOT" && unset GITHUB_TOKEN && GITHUB_OUTPUT="$tmp/ne.gho" PATH="$NOB" "$(command -v make)" tree-exists TREE_RUN='env --' ) >"$tmp/ne.out" 2>&1
+nerc=$?
+if [ "$nerc" -ne 0 ] && ! grep -q '^exists=' "$tmp/ne.gho"; then pass "ruling 17 tree-exists: no oras on PATH -> non-zero, no exists= written"
+else fail "ruling 17 tree-exists with no oras on PATH (rc=$nerc; want non-zero and no exists= line)"; sed 's/^/      | /' "$tmp/ne.out" "$tmp/ne.gho"; fi
+
 echo "failures: $FAILS"
 [ "$FAILS" -eq 0 ]
