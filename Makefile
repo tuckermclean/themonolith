@@ -174,7 +174,6 @@ builder-manifest:
 
 # B01 adds configs/portage/versions.lock; M02's build-image consumes these pins.
 ifneq ($(wildcard configs/portage/versions.lock),)
-# Cross-toolchain version pins, ported unchanged from b9f533b; unused until M02's build-image.
 # Cross-toolchain version pins — all passed to crossdev to prevent live-ebuild (9999) selection
 # musl and gcc come from crossdev.lock (managed by update-build-pins, not update-versions)
 # binutils comes from versions.lock (it is a world package)
