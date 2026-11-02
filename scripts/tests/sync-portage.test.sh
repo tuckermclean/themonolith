@@ -280,4 +280,139 @@ else
 fi
 teardown
 
+# ---- review 1, rulings 9, 11, 12, 13 (added; the cases above are unchanged) ----
+echo "== restore replaces the tree (ruling 9, I02-AC-4) =="
+REALTAR=$(command -v tar); REALRM=$(command -v rm)
+
+# 9a. A pre-seeded TREE_DIR holding a stale file and a stale subdirectory: after an rc 0 restore the stale
+#     entries are gone and the tree equals the fixture.  ruling 9
+setup
+mkdir -p "$TREE_DIR/stale-dir/deeper" "$TREE_DIR/app-misc/foo"
+echo old > "$TREE_DIR/removed.ebuild"; echo old > "$TREE_DIR/stale-dir/deeper/x"; echo old > "$TREE_DIR/app-misc/foo/stale-1.ebuild"
+run_sync
+[ "$r" -eq 0 ] && pass "ruling 9 restore over a populated TREE_DIR returns 0" || { fail "ruling 9 restore over a populated TREE_DIR rc=$r"; sed 's/^/      | /' "$TMP/out"; }
+{ [ ! -e "$TREE_DIR/removed.ebuild" ] && [ ! -e "$TREE_DIR/stale-dir" ] && [ ! -e "$TREE_DIR/app-misc/foo/stale-1.ebuild" ]; } \
+    && pass "ruling 9 stale file and stale subdirectory are gone after the restore" || fail "ruling 9 stale entries survived the restore"
+tree_matches && pass "ruling 9 the tree equals the fixture after the restore" || fail "ruling 9 tree differs from the fixture after the restore"
+teardown
+
+# 9b. An empty or `/` TREE_DIR is refused without touching anything.  Never real: mutating tools are
+#     stubbed to log MUTATE and do nothing, so a missing refusal shows up in the log, not on the disk.
+for badtarget in "" "/"; do
+    setup
+    for t in rm mv cp ln rmdir install; do
+        mk_stub "$t" "echo \"MUTATE $t \$*\" >> \"\$CALLLOG\"; exit 0"
+    done
+    mk_stub tar "x=0; for a in \"\$@\"; do case \$a in --extract|--get) x=1;; --*) ;; -*x*) x=1;; esac; done
+[ \$x = 1 ] && { echo \"MUTATE tar \$*\" >> \"\$CALLLOG\"; cat >/dev/null; exit 0; }
+exec $REALTAR \"\$@\""
+    export TREE_DIR="$badtarget"
+    run_sync
+    if [ "$r" -ne 0 ] && ! grep -q '^MUTATE ' "$CALLLOG"; then
+        pass "ruling 9 TREE_DIR='$badtarget' refused, nothing touched"
+    else
+        fail "ruling 9 TREE_DIR='$badtarget' (rc=$r; want non-zero and no rm/mv/cp/extract)"; sed 's/^/      | /' "$CALLLOG"
+    fi
+    grep -qF TREE_DIR "$TMP/out" && pass "ruling 9 TREE_DIR='$badtarget' refusal names TREE_DIR" || fail "ruling 9 TREE_DIR='$badtarget' refusal does not name TREE_DIR"
+    "$REALRM" -rf "$BIN"/rm "$BIN"/mv "$BIN"/cp "$BIN"/ln "$BIN"/rmdir "$BIN"/install "$BIN"/tar
+    teardown
+done
+
+echo "== seed-tree.sh: existence check, no silent seed, file count (rulings 11, 12, 13, I02-AC-6) =="
+git -C "$FIXREPO" archive --format=tar "$COMMIT" > "$FIX/fix.tar"
+git -C "$FIXREPO" ls-tree -r "$COMMIT" > "$FIX/lstree"
+NFILES=$(wc -l < "$FIX/lstree" | tr -d ' ')
+SHA64=$(printf 'a%.0s' $(seq 64))
+seed2_setup() {  # full stubs: git (init/fetch/archive/ls-tree) and oras (fetch answer, push digest)
+    setup
+    export FIXTAR="$FIX/fix.tar" FIXLS="$FIX/lstree" REGISTRY="$REG" SHA64
+    unset ORAS_FETCH GIT_ARCHIVE_FAIL ORAS_PUSH_NODIGEST
+    mk_stub git 'echo "git $*" >> "$CALLLOG"
+case "$1" in
+init) for a in "$@"; do d=$a; done; mkdir -p "$d";;
+archive) [ "${GIT_ARCHIVE_FAIL:-0}" = 1 ] && { echo "fatal: git archive failed" >&2; exit 128; }; cat "$FIXTAR";;
+ls-tree) cat "$FIXLS";;
+esac
+exit 0'
+    mk_stub oras 'echo "oras $*" >> "$CALLLOG"
+case "$1 $2" in
+"manifest fetch")
+    case "${ORAS_FETCH:-notfound}" in
+    notfound) echo "Error: $REGISTRY/gentoo-tree:x: not found" >&2;;
+    denied) echo "Error response from registry: denied: requested access to the resource is denied" >&2;;
+    dial) echo "Error: Head \"https://registry.test/v2/\": dial tcp: lookup registry.test: no such host" >&2;;
+    esac
+    exit 1;;
+esac
+[ "$1" = push ] && [ "${ORAS_PUSH_NODIGEST:-0}" != 1 ] && echo "Digest: sha256:$SHA64"
+exit 0'
+}
+
+# 11a. An oras error saying `not found` means absent: the seed proceeds to fetch, archive and push.  ruling 11
+seed2_setup
+run_seed "$COMMIT"
+if [ "$r" -eq 0 ] && grep -q '^oras push' "$CALLLOG" && grep -q '^git fetch' "$CALLLOG"; then
+    pass "ruling 11 'not found' means absent: seed fetched and pushed"
+else
+    fail "ruling 11 'not found' did not proceed (rc=$r)"; sed 's/^/      | /' "$TMP/out" "$CALLLOG"
+fi
+teardown
+
+# 11b. Any other manifest-fetch error (denied, dial) is an error: non-zero, oras's message printed, no fetch, no push.
+for mode in denied dial; do
+    seed2_setup
+    export ORAS_FETCH=$mode
+    run_seed "$COMMIT"
+    case $mode in denied) needle='denied: requested access to the resource is denied';; dial) needle='dial tcp: lookup registry.test: no such host';; esac
+    if [ "$r" -ne 0 ] && grep -qF -- "$needle" "$TMP/out"; then
+        pass "ruling 11 $mode -> non-zero and the oras message is printed"
+    else
+        fail "ruling 11 $mode (rc=$r; want non-zero printing '$needle')"; sed 's/^/      | /' "$TMP/out"
+    fi
+    no_side_effects "ruling 11 $mode"
+    teardown
+done
+
+# 12a. git archive fails: non-zero, nothing pushed (no empty zstd stream).  ruling 12
+seed2_setup
+export GIT_ARCHIVE_FAIL=1
+run_seed "$COMMIT"
+if [ "$r" -ne 0 ] && ! grep -q '^oras push' "$CALLLOG" && ! grep -q '^digest: ' "$TMP/out"; then
+    pass "ruling 12 failing git archive -> non-zero, nothing pushed, no digest line"
+else
+    fail "ruling 12 failing git archive (rc=$r; want non-zero, no oras push, no digest line)"; sed 's/^/      | /' "$TMP/out" "$CALLLOG"
+fi
+teardown
+
+# 12b. oras push prints no digest: non-zero, no `digest: ` line.  ruling 12
+seed2_setup
+export ORAS_PUSH_NODIGEST=1
+run_seed "$COMMIT"
+if [ "$r" -ne 0 ] && ! grep -q '^digest: ' "$TMP/out"; then
+    pass "ruling 12 push without a digest -> non-zero, no digest line"
+else
+    fail "ruling 12 push without a digest (rc=$r; want non-zero and no 'digest: ' line)"; sed 's/^/      | /' "$TMP/out"
+fi
+teardown
+
+# 12c. With a digest printed, the success path prints `digest: sha256:<it>` and returns 0.  ruling 12
+seed2_setup
+run_seed "$COMMIT"
+if [ "$r" -eq 0 ] && grep -qx "digest: sha256:$SHA64" "$TMP/out"; then pass "ruling 12 push with a digest -> digest line, rc 0"; else fail "ruling 12 success path (rc=$r)"; sed 's/^/      | /' "$TMP/out"; fi
+teardown
+
+# 13. seed-tree.sh prints `files: <n>`, n = `git ls-tree -r <commit> | wc -l` (stubbed git, then real git).  ruling 13, I02-AC-3
+seed2_setup
+run_seed "$COMMIT"
+grep -qx "files: $NFILES" "$TMP/out" && pass "ruling 13 prints 'files: $NFILES' (git ls-tree -r | wc -l, stub git)" || { fail "ruling 13 no 'files: $NFILES' line (stub git)"; sed 's/^/      | /' "$TMP/out"; }
+teardown
+setup
+rm -f "$BIN/oras" "$BIN/git"
+unset REGISTRY
+export TREE_SOURCE="file://$FIXREPO"
+sh "$SEED" --oci-layout "$TMP/layout13" "$COMMIT" >"$TMP/out13" 2>&1
+grep -qx "files: $(git -C "$FIXREPO" ls-tree -r "$COMMIT" | wc -l | tr -d ' ')" "$TMP/out13" \
+    && pass "ruling 13 prints 'files: <git ls-tree -r | wc -l>' (real git)" || { fail "ruling 13 no matching 'files:' line (real git)"; sed 's/^/      | /' "$TMP/out13"; }
+teardown
+
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

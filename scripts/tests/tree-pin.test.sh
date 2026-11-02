@@ -110,5 +110,46 @@ PY
 	ck "I02-AC-5 tree-accept.yml toolbox/ci lint passes" sh -c 'cd "$1" && python3 toolbox/ci lint tree-accept.yml' _ "$ROOT"
 fi
 
+# ---- review 1 rulings 10, 11, 13 (added; the checks above are unchanged) ----
+# ruling 10: the offline comparison compares contents with GNU tar's compare, against TREE_DIR
+ck "ruling 10 tree-restore-offline compares contents against TREE_DIR with tar -d / --diff / --compare" \
+	sh -c 'grep -E "(^|[ ;|(])tar +([^|;]* )?(-[a-zA-Z]*d[a-zA-Z]*|--diff|--compare)( |\$)" "$1" | grep -q output/repos/gentoo' _ "$tmp/off.out"
+# ruling 13: the pinned file count is a Make variable and tree-check compares the restored tree with it
+ck "ruling 13 Makefile: TREE_FILES := 130089" grep -Eq '^TREE_FILES[[:space:]]*:=[[:space:]]*130089[[:space:]]*$' "$MK"
+ck "ruling 13 tree-check compares the restored count with TREE_FILES (130089)" \
+	sh -c 'grep -E "130089" "$1" | grep -Eq -- "-eq|=="' _ "$tmp/check.out"
+
+# ruling 11: make tree-exists. Only "not found" means absent; any other oras error fails and writes no exists=false.
+# The recipe runs on the host with TREE_RUN overridden and a stub oras on PATH.
+EXB="$tmp/exbin"; mkdir -p "$EXB"
+cat > "$EXB/oras" <<'STUB'
+#!/bin/sh
+echo "oras $*" >> "$EX_CALLS"
+case "$EX_MODE" in
+notfound) echo "Error: ghcr.io/tuckermclean/themonolith/gentoo-tree:x: not found" >&2; exit 1;;
+denied) echo "Error response from registry: denied: requested access to the resource is denied" >&2; exit 1;;
+dial) echo 'Error: Head "https://ghcr.io/v2/": dial tcp: lookup ghcr.io: no such host' >&2; exit 1;;
+*) echo '{"digest": "sha256:00"}'; exit 0;;
+esac
+STUB
+chmod +x "$EXB/oras"
+run_exists() {  # $1=mode
+	: > "$tmp/ex.calls"; : > "$tmp/ex.gho"
+	( cd "$ROOT" && unset GITHUB_TOKEN && EX_MODE=$1 EX_CALLS="$tmp/ex.calls" GITHUB_OUTPUT="$tmp/ex.gho" PATH="$EXB:$PATH" \
+		make tree-exists TREE_RUN='env --' ) >"$tmp/ex.out" 2>&1
+	exrc=$?
+}
+run_exists notfound
+if [ "$exrc" -eq 0 ] && grep -qx 'exists=false' "$tmp/ex.gho"; then pass "ruling 11 tree-exists: 'not found' -> exists=false, rc 0"; else fail "ruling 11 tree-exists 'not found' (rc=$exrc)"; fi
+for mode in denied dial; do
+	run_exists $mode
+	case $mode in denied) needle='denied: requested access to the resource is denied';; dial) needle='dial tcp: lookup ghcr.io: no such host';; esac
+	if [ "$exrc" -ne 0 ] && grep -qF -- "$needle" "$tmp/ex.out" && ! grep -q '^exists=' "$tmp/ex.gho"; then
+		pass "ruling 11 tree-exists: $mode -> non-zero, oras message printed, no exists= written"
+	else
+		fail "ruling 11 tree-exists: $mode (rc=$exrc; want non-zero, '$needle' printed, no exists= line)"; sed 's/^/      | /' "$tmp/ex.out" "$tmp/ex.gho"
+	fi
+done
+
 echo "failures: $FAILS"
 [ "$FAILS" -eq 0 ]
