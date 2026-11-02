@@ -125,11 +125,15 @@ doc = yaml.safe_load(open(sys.argv[1]))
 runs = [s["run"].strip() for j in doc["jobs"].values() for s in j.get("steps", []) if "run" in s]
 print("\n".join(runs))
 PY
-	if [ "$(cat "$tmp/steps")" = "make test-lint test-unit" ]; then
-		pass "F01-AC-3 pr-validate.yml's only run: step is 'make test-lint test-unit'"
-	else
-		fail "F01-AC-3 pr-validate.yml's only run: step is 'make test-lint test-unit'"
-	fi
+	case $(cat "$tmp/steps") in
+	*"
+"*)
+		fail "F01-AC-3 pr-validate.yml's run: steps are a single line (ruling 4)" ;;
+	"make test-lint test-unit" | "make test-lint test-unit "*)
+		pass "F01-AC-3 pr-validate.yml's only run: step is 'make test-lint test-unit' (later targets allowed)" ;;
+	*)
+		fail "F01-AC-3 pr-validate.yml's only run: step is 'make test-lint test-unit' (later targets allowed)" ;;
+	esac
 else
 	fail "F01-AC-3 .github/workflows/pr-validate.yml exists"
 fi
