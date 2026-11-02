@@ -103,13 +103,22 @@ grep -qE "^BUILDER_DIGEST[ ]*:?=[ ]*${DIGEST}[ ]*\$" "$ROOT/Makefile" \
     && ok "I03-AC-3 Makefile defines BUILDER_DIGEST as rc1's digest" \
     || fail "I03-AC-3 Makefile defines BUILDER_DIGEST := $DIGEST"
 
+# builder reference: /builder ending a path component, or monolith-builder with : or @
+# (not file paths such as scripts/builder-manifest.sh, output/builder-manifest.txt)
+BREF='/builder([:@"'"'"'[:space:]]|$)|monolith-builder[:@]'
+bn=$(printf '%s\n' 'sh scripts/builder-manifest.sh > output/builder-manifest.txt' | grep -cE "$BREF")
+bt=$(printf '%s\n' 'docker pull ghcr.io/x/builder:latest' 'docker pull ghcr.io/x/builder' | grep -cE "$BREF")
+[ "$bn" -eq 0 ] && [ "$bt" -eq 2 ] \
+    && ok "I03-AC-3 builder-reference pattern skips manifest paths, matches builder:tag and bare builder" \
+    || fail "I03-AC-3 builder-reference pattern (paths matched=$bn, refs matched=$bt of 2)"
+
 WF=$(ls "$ROOT"/.github/workflows/* 2>/dev/null)
 bad=0
 for f in $WF; do
     if grep -nE ':latest|REGISTRY_TAG|buildx build|STAGE3_DIGEST' "$f" >/dev/null; then
         fail "I03-AC-3 $(basename "$f") names a builder tag, buildx build or STAGE3_DIGEST"; bad=1
     fi
-    if grep -E '/builder|monolith-builder:' "$f" | grep -vq 'BUILDER_DIGEST'; then
+    if grep -E "$BREF" "$f" | grep -vq 'BUILDER_DIGEST'; then
         fail "I03-AC-3 $(basename "$f") names a builder other than by BUILDER_DIGEST"; bad=1
     fi
 done
@@ -130,7 +139,7 @@ for t in $(printf '%s\n' $targets | sort -u); do
     if printf '%s\n' "$exp" | grep -qE ':latest|REGISTRY_TAG|buildx build|STAGE3_DIGEST|docker build'; then
         fail "I03-AC-3 target $t references a builder tag or builds an image"; bad=1
     fi
-    if printf '%s\n' "$exp" | grep -E '/builder|monolith-builder:' | grep -vq "@$DIGEST"; then
+    if printf '%s\n' "$exp" | grep -E "$BREF" | grep -vq "@$DIGEST"; then
         fail "I03-AC-3 target $t names a builder not by BUILDER_DIGEST"; bad=1
     fi
 done
