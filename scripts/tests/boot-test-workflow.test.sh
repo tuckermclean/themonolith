@@ -50,7 +50,7 @@ chk("O01-AC-2 no build-version input (cache-era interface gone)", "build-version
 
 low = text.lower()
 chk("O01-AC-2 no actions/cache text", "actions/cache" not in low)
-chk("O01-AC-2 no aws text", not re.search(r"\baws", low))
+chk("O01-AC-2 no AWS text", not re.search(r"\baws", low))
 # word match: the legacy s3fb framebuffer module name is not S3 storage
 chk("O01-AC-2 no s3 text", not re.search(r"\bs3\b", low))
 
