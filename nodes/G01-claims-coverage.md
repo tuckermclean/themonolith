@@ -51,7 +51,7 @@ Other changes:
 ## Risks
 - Whether a pty pair carries SLIP (line discipline on a pty) is unverified; the two-guest fallback costs a second QEMU and a harness rule on serial starvation (T-nat-router-serial-starvation).
 - GRUB entries other than `(serial)` have no serial console. Reaching a shell needs `console=ttyS0` added through the GRUB editor (`e`); whether the harness can drive that reliably is unverified. The `inittab` ttyS0 getty (`build-rootfs.sh:359-360`) is relied on.
-- `sfdisk`, `mkfs.ext4`, `mkswap` and `swapon` must exist on the disc and run; D-all-static is untrue in rc1, so a dynamic binary may matter (O02, R03).
+- `sfdisk`, `mkfs.ext4`, `mkswap` and `swapon` must exist on the disc and run; rc1 is all static (O02's scan), and O02 keeps it so.
 - OD-7: real Hyper-V evidence is a human task outside CI. If the owner has no host, the claim is dropped.
 - About 99 smoke rows is the largest piece; rows are one line each. A GUI-only or interactive package is `covered` by `mode:gui` only where that mode actually runs it; otherwise it needs a `run` row or an `untestable` reason the owner accepts in review.
 - New modes add CI minutes; they run in parallel with the existing 17.
