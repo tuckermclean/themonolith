@@ -180,7 +180,7 @@ seed-tree:
 
 # Writes exists=true|false to $GITHUB_OUTPUT: whether TREE_REF:TREE_COMMIT is in the registry.
 tree-exists:
-	$(TREE_RUN) sh -c 'set -eu; $(tree_login); if o=$$(oras manifest fetch --descriptor $(TREE_REF):$(TREE_COMMIT) 2>&1); then r=true; else case "$$o" in *"not found"*) r=false;; *) echo "tree-exists: cannot tell whether $(TREE_REF):$(TREE_COMMIT) exists:"; echo "$$o"; exit 1;; esac; fi; echo "exists=$$r" >> "$${GITHUB_OUTPUT:-/dev/stdout}"'
+	$(TREE_RUN) sh -c 'set -eu; $(tree_login); command -v oras >/dev/null || { echo "tree-exists: oras is not installed"; exit 1; }; if o=$$(oras manifest fetch --descriptor $(TREE_REF):$(TREE_COMMIT) 2>&1); then r=true; else case "$$o" in *"not found"*) r=false;; *) echo "tree-exists: cannot tell whether $(TREE_REF):$(TREE_COMMIT) exists:"; echo "$$o"; exit 1;; esac; fi; echo "exists=$$r" >> "$${GITHUB_OUTPUT:-/dev/stdout}"'
 
 # The registry's manifest digest for TREE_REF:TREE_COMMIT equals TREE_DIGEST, and the tree restored from it has
 # as many files as the archive lists. Leaves the archive in TREE_PULL and the tree in TREE_DIR.
@@ -201,10 +201,10 @@ tree-check:
 tree-restore-offline:
 	test -f '$(TREE_PULL)/$(TREE_FILE)' || { echo "tree-restore-offline: no $(TREE_PULL)/$(TREE_FILE); run make tree-check first"; exit 1; }
 	toolbox/run --network none -- sh -c 'set -eu; rm -rf "$(TREE_DIR)"; mkdir -p "$(TREE_DIR)"; \
-		zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -xf - -C "$(TREE_DIR)"; \
+		zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -xpf - -C "$(TREE_DIR)"; \
 		zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -tf - | grep -v "/$$" | LC_ALL=C sort > "$(TREE_PULL)/listed"; \
 		(cd "$(TREE_DIR)" && find . ! -type d | sed "s,^\./,," | LC_ALL=C sort) > "$(TREE_PULL)/found"; \
-		d=$$(zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -df - -C "$(TREE_DIR)" 2>&1 | grep -v ": \(Mode\|Uid\|Gid\) differs$$" || true); \
+		d=$$(zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -df - -C "$(TREE_DIR)" 2>&1 | grep -v ": \(Uid\|Gid\) differs$$" || true); \
 		[ -z "$$d" ] || { echo "$$d" | head -n 20; echo "tree-restore-offline: $(TREE_DIR) differs in content from the archive"; exit 1; }; \
 		diff "$(TREE_PULL)/listed" "$(TREE_PULL)/found" || { echo "tree-restore-offline: $(TREE_DIR) differs from the archive"; exit 1; }; \
 		echo "tree-restore-offline: $$(wc -l < "$(TREE_PULL)/found") files extracted offline, as in the archive"'

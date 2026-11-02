@@ -22,6 +22,8 @@ else
     ref="$REGISTRY/gentoo-tree:$commit"; set --
 fi
 
+command -v oras >/dev/null 2>&1 || { echo "seed-tree: oras is not installed" >&2; exit 1; }
+
 # a layout directory that does not hold an oci-layout file yet has no tags
 if [ -n "$layout" ] && [ ! -f "$layout/oci-layout" ]; then probe="not found"
 elif probe=$(oras manifest fetch "$@" "$ref" 2>&1); then
