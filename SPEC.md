@@ -42,7 +42,7 @@ These predecessor assets survive and are reused by digest:
 |---|---|---|
 | rc1 builder image (crossdev i486-musl toolchain) | `ghcr.io/tuckermclean/monolith-builder:20260810-d9d08d1c7422` | `sha256:ab04002a13794c2ad90d821b5de535a4e4df2945346bb04d8073883ea8aab3fa` |
 | rc1 binary packages (one PKGDIR archive, BUILD_EPOCH 20260811) | `ghcr.io/tuckermclean/monolith-binpkgs:20260811` | `sha256:d0a1838d7504d41c95c050e70d0d5399dbf546dd2e21fdd5f793df2ad700b92d` |
-| rc1's Gentoo tree | `github.com/gentoo-mirror/gentoo` history (the snapshot tarball is gone) | A commit near 2026-08-11. All 25 sampled `versions.lock` entries exist at `d4d0b0c7`. |
+| rc1's Gentoo tree | `github.com/gentoo-mirror/gentoo` history (the snapshot tarball is gone) | gentoo-mirror `6e88ed01f3e97de8710efe1c333808dfbd05bf32` (2026-08-11T23:00:56Z): rc1's VDB records gentoo.git `6622796b` in every `REPO_REVISIONS`, and this is the mirror's cache commit for it (I02). |
 | v0.1.0-rc1 release | GitHub release on the predecessor | ISO `a9600659…eb27a` (202 MiB), SBOM `3cfc322a…75887` |
 
 **Out of scope.** The knowledge-content projects that may one day ship on the disc are separate
