@@ -158,6 +158,7 @@ test-artifact: rootfs
 # rc1's tree: gentoo-mirror commit TREE_COMMIT, archived once as an OCI artifact (scripts/seed-tree.sh) and
 # restored by digest (scripts/sync-portage.sh). docs/tree-pin.md has the evidence.
 TREE_COMMIT := 6e88ed01f3e97de8710efe1c333808dfbd05bf32
+TREE_FILES := 130089
 TREE_DIGEST := sha256:b01bbe7a886fa869a4018a5f711e11fae8fb783b30878216b0f8f408ad2a70bd
 TREE_REF := $(REGISTRY)/gentoo-tree
 TREE_DIR ?= output/repos/gentoo
@@ -179,7 +180,7 @@ seed-tree:
 
 # Writes exists=true|false to $GITHUB_OUTPUT: whether TREE_REF:TREE_COMMIT is in the registry.
 tree-exists:
-	$(TREE_RUN) sh -c 'set -eu; $(tree_login); if oras manifest fetch --descriptor $(TREE_REF):$(TREE_COMMIT) >/dev/null 2>&1; then r=true; else r=false; fi; echo "exists=$$r" >> "$${GITHUB_OUTPUT:-/dev/stdout}"'
+	$(TREE_RUN) sh -c 'set -eu; $(tree_login); if o=$$(oras manifest fetch --descriptor $(TREE_REF):$(TREE_COMMIT) 2>&1); then r=true; else case "$$o" in *"not found"*) r=false;; *) echo "tree-exists: cannot tell whether $(TREE_REF):$(TREE_COMMIT) exists:"; echo "$$o"; exit 1;; esac; fi; echo "exists=$$r" >> "$${GITHUB_OUTPUT:-/dev/stdout}"'
 
 # The registry's manifest digest for TREE_REF:TREE_COMMIT equals TREE_DIGEST, and the tree restored from it has
 # as many files as the archive lists. Leaves the archive in TREE_PULL and the tree in TREE_DIR.
@@ -193,6 +194,7 @@ tree-check:
 		a=$$(zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -tf - | grep -v "/$$" | wc -l); \
 		t=$$(find "$(TREE_DIR)" ! -type d | wc -l); \
 		[ "$$a" -gt 0 ] && [ "$$a" -eq "$$t" ] || { echo "tree-check: archive lists $$a files, $(TREE_DIR) has $$t"; exit 1; }; \
+		[ "$$t" -eq $(TREE_FILES) ] || { echo "tree-check: $(TREE_DIR) has $$t files, pinned $(TREE_FILES)"; exit 1; }; \
 		echo "tree-check: $(TREE_REF):$(TREE_COMMIT) is $(TREE_DIGEST); $$t files restored, as in the archive"'
 
 # AC-5: with no network, extracts the archive tree-check pulled and compares the tree with its listing.
@@ -202,5 +204,7 @@ tree-restore-offline:
 		zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -xf - -C "$(TREE_DIR)"; \
 		zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -tf - | grep -v "/$$" | LC_ALL=C sort > "$(TREE_PULL)/listed"; \
 		(cd "$(TREE_DIR)" && find . ! -type d | sed "s,^\./,," | LC_ALL=C sort) > "$(TREE_PULL)/found"; \
+		d=$$(zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -df - -C "$(TREE_DIR)" 2>&1 | grep -v ": \(Mode\|Uid\|Gid\) differs$$" || true); \
+		[ -z "$$d" ] || { echo "$$d" | head -n 20; echo "tree-restore-offline: $(TREE_DIR) differs in content from the archive"; exit 1; }; \
 		diff "$(TREE_PULL)/listed" "$(TREE_PULL)/found" || { echo "tree-restore-offline: $(TREE_DIR) differs from the archive"; exit 1; }; \
 		echo "tree-restore-offline: $$(wc -l < "$(TREE_PULL)/found") files extracted offline, as in the archive"'

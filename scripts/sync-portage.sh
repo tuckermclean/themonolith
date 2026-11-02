@@ -4,7 +4,8 @@
 # gentoo-tree-$TREE_COMMIT.tar.zst. A missing artifact, a digest that is not the pin, or an
 # unreadable archive fails LOUD, so every build sees exactly the same tree.
 #   env: REGISTRY, TREE_COMMIT, TREE_DIGEST (required); TREE_REF (default $REGISTRY/gentoo-tree);
-#        TREE_DIR (target, default /var/db/repos/gentoo)
+#        TREE_DIR (target, default /var/db/repos/gentoo; replaced, not merged;
+#        empty or / is refused)
 set -u
 
 restore_tree() {
@@ -17,7 +18,12 @@ restore_tree() {
     done
     _ref="${TREE_REF:-$REGISTRY/gentoo-tree}@$TREE_DIGEST"
     _file="gentoo-tree-$TREE_COMMIT.tar.zst"
-    _dir="${TREE_DIR:-/var/db/repos/gentoo}"
+    _dir="${TREE_DIR-/var/db/repos/gentoo}"
+    while [ "${_dir%/}" != "$_dir" ]; do _dir="${_dir%/}"; done
+    if [ -z "$_dir" ]; then
+        echo "sync-portage: FATAL - TREE_DIR is empty or /; refusing to replace it" >&2
+        return 1
+    fi
     _tmp=$(mktemp -d) || return 1
     if ! oras pull -o "$_tmp" "$_ref" >"$_tmp.log" 2>&1; then
         echo "sync-portage: FATAL - cannot pull $_ref" >&2
@@ -36,10 +42,17 @@ restore_tree() {
         rm -rf "$_tmp"
         return 1
     fi
-    mkdir -p "$_dir" || { rm -rf "$_tmp"; return 1; }
-    if ! zstd -dc "$_tmp/$_file" | tar -xf - -C "$_dir"; then
-        echo "sync-portage: FATAL - extracting $_file from $_ref into $_dir failed" >&2
-        rm -rf "$_tmp"
+    _new="$_dir.new.$$"
+    rm -rf "$_new"
+    mkdir -p "$_new" || { rm -rf "$_tmp"; return 1; }
+    if ! zstd -dc "$_tmp/$_file" | tar -xf - -C "$_new"; then
+        echo "sync-portage: FATAL - extracting $_file from $_ref into $_new failed" >&2
+        rm -rf "$_tmp" "$_new"
+        return 1
+    fi
+    if ! rm -rf "$_dir" || ! mv "$_new" "$_dir"; then
+        echo "sync-portage: FATAL - replacing TREE_DIR $_dir failed" >&2
+        rm -rf "$_tmp" "$_new"
         return 1
     fi
     rm -rf "$_tmp"

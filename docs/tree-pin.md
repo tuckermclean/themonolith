@@ -17,8 +17,8 @@ rc1's Portage VDB (`var/db/pkg`, 163 entries) has 152 entries with `repository =
 
 That is gentoo.git commit `6622796b` (2026-08-11T22:55:37Z, "dev-util/cargo-tarpaulin: add 0.37.0"). The
 mirror merges it at `ebecde92eb07df95e8385a7d33c1a68ba8da8ea9` (23:00:48Z, second parent `6622796b`). The next
-commit, `6e88ed01` (23:00:56Z, "2026-08-11 23:00:56 UTC"), regenerates `metadata/md5-cache` and
-`timestamp.chk`; it is the pin. The following merge, `c4b67600` (01:15Z), brings later gentoo.git commits.
+commit, `6e88ed01` (23:00:56Z, "2026-08-11 23:00:56 UTC"), regenerates `metadata/md5-cache`,
+`metadata/pkg_desc_index` and `timestamp.chk`; it is the pin. The following merge, `c4b67600` (01:15Z), brings later gentoo.git commits.
 
 ## Cross-check of the ebuilds
 
@@ -217,8 +217,13 @@ A change to the file name, media types, annotation or compression level changes 
 
 In the rc1 builder, with the pinned tree, rc1's binary packages and `b9f533b`'s `configs/portage` and overlay,
 `emerge -pv --usepkgonly` of the 99 world atoms lists 151 `[binary` and 0 `[ebuild`, exit 0. The 142 gentoo
-packages it chose equal rc1's VDB versions exactly. Overlay packages resolve from rc1's binary packages
-(`::monolith`). rc1's other 10 gentoo entries are build-time or overlay-pulled dependencies: acct-group/mail,
+packages it chose equal rc1's VDB versions exactly: step 1d's `portageq best_visible` sample became a full
+comparison of those 142 chosen versions with rc1's VDB. Overlay packages resolve from rc1's binary packages
+(`::monolith`); the 9 AC-2 picked are app-misc/monolith-base-0.1.0-r6, dev-db/monolith-sqlite-3.53.4,
+dev-lang/monolith-perl-5.42.0-r5, games-roguelike/rl144-0.1.0_p20260805, sys-kernel/monolith-kernel-6.12.80-r8,
+www-client/stele-0.1.0_p20260821, x11-base/monolith-xserver-1.3_p20241113-r1, x11-terms/monolith-st-0.9.2-r2 and
+x11-wm/monolith-dwm-6.5-r2. `monolith-kernel` resolves as -r8 where rc1's VDB has -r6, because `b9f533b`'s overlay
+is newer. rc1's other 10 gentoo entries are build-time or overlay-pulled dependencies: acct-group/mail,
 acct-user/mail, acct-user/postmaster, dev-util/pkgconf, net-mail/mailbase, sys-kernel/linux-headers,
 virtual/os-headers, virtual/pkgconfig, x11-libs/libfontenc, x11-libs/xtrans.
 
