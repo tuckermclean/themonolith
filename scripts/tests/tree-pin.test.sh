@@ -39,8 +39,8 @@ else
 fi
 
 # ---- ruling 1: the pins in the Makefile ----
-ck "I02 Makefile: TREE_COMMIT := $COMMIT" grep -Eq "^TREE_COMMIT[[:space:]]*:=[[:space:]]*$COMMIT[[:space:]]*\$" "$MK"
-ck "I02 Makefile: TREE_DIGEST := $DIGEST" grep -Eq "^TREE_DIGEST[[:space:]]*:=[[:space:]]*$DIGEST[[:space:]]*\$" "$MK"
+ck "I02 Makefile: TREE_COMMIT := $COMMIT" grep -Eq "^TREE_COMMIT[[:space:]]*:=[[:space:]]*${COMMIT}[[:space:]]*\$" "$MK"
+ck "I02 Makefile: TREE_DIGEST := $DIGEST" grep -Eq "^TREE_DIGEST[[:space:]]*:=[[:space:]]*${DIGEST}[[:space:]]*\$" "$MK"
 ck "I02 Makefile: TREE_REF built from \$(REGISTRY)" grep -Eq '^TREE_REF[[:space:]]*:=[[:space:]]*\$\(REGISTRY\)/gentoo-tree[[:space:]]*$' "$MK"
 
 # ---- ruling 5: Make targets (make -n) ----
