@@ -1,0 +1,79 @@
+name: Artifact Checks rc1
+
+# The rc1 lane: the static audit of the v0.1.0-rc1 release ISO, fetched by URL and checked by sha256, before
+# this repository builds anything. workflow_dispatch runs only for a workflow on the default branch, so a
+# pull_request trigger on the oracle's own files runs it on the PR that changes them. A dispatch with a
+# wrong iso-sha256 must fail the fetch before the audit runs.
+on:
+  workflow_dispatch:
+    inputs:
+      iso-sha256:
+        description: "sha256 the ISO must match"
+        required: true
+        type: string
+        default: a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
+  pull_request:
+    paths:
+      - scripts/static-audit.sh
+      - configs/attestation/dynamic-allowlist.txt
+      - configs/attestation/rc1-static-audit.expected
+      - Makefile
+      - toolbox/**
+      - .github/workflows/artifact-checks.yml
+      - .github/workflows/artifact-checks-rc1.yml
+
+permissions:
+  contents: read
+
+jobs:
+  # The right digest, on the pull request.
+  test-artifact:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Fetch the rc1 ISO and check its sha256
+        env:
+          ISO_URL: https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
+          ISO_SHA256: a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
+        run: make fetch-iso
+
+      - name: Audit the rootfs of the rc1 ISO
+        run: make test-artifact
+
+      - name: Upload the static-audit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: static-audit-rc1-${{ github.run_id }}
+          path: output/reports/static-audit.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # The digest of the dispatch, right or wrong: a wrong one fails the fetch before the audit.
+  test-artifact-dispatch:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Fetch the rc1 ISO and check its sha256
+        env:
+          ISO_URL: https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
+          ISO_SHA256: ${{ inputs.iso-sha256 }}
+        run: make fetch-iso
+
+      - name: Audit the rootfs of the rc1 ISO
+        run: make test-artifact
+
+      - name: Upload the static-audit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: static-audit-rc1-${{ github.run_id }}
+          path: output/reports/static-audit.txt
+          retention-days: 14
+          if-no-files-found: warn

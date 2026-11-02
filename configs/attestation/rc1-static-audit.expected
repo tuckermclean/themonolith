@@ -1,0 +1,17 @@
+# rc1's expected static-audit findings (O02-AC-7): what `static-audit.sh --no-allowlist` reports on the rootfs of
+# the v0.1.0-rc1 ISO (sha256 a96006596b13...). `make test-artifact` compares the sorted findings with this file
+# when the ISO is rc1's. Comments and blank lines are stripped before the comparison. Protected by CODEOWNERS.
+FINDING python usr/bin/event_rpcgen.py  # D-no-python-on-target
+FINDING python usr/lib/xcb-proto/xcbgen/__init__.py  # D-no-python-on-target
+FINDING python usr/lib/xcb-proto/xcbgen/align.py  # D-no-python-on-target
+FINDING python usr/lib/xcb-proto/xcbgen/error.py  # D-no-python-on-target
+FINDING python usr/lib/xcb-proto/xcbgen/expr.py  # D-no-python-on-target
+FINDING python usr/lib/xcb-proto/xcbgen/matcher.py  # D-no-python-on-target
+FINDING python usr/lib/xcb-proto/xcbgen/state.py  # D-no-python-on-target
+FINDING python usr/lib/xcb-proto/xcbgen/xtypes.py  # D-no-python-on-target
+FINDING python usr/share/gdb/auto-load/usr/lib/libglib-2.0.so.0.8800.3-gdb.py  # D-no-python-on-target
+FINDING python usr/share/gdb/auto-load/usr/lib/libgobject-2.0.so.0.8800.3-gdb.py  # D-no-python-on-target
+FINDING python usr/share/gdb/system-gdbinit/elinos.py  # D-no-python-on-target
+FINDING python usr/share/gdb/system-gdbinit/wrs-linux.py  # D-no-python-on-target
+FINDING python usr/share/glib-2.0/gdb/glib_gdb.py  # D-no-python-on-target
+FINDING python usr/share/glib-2.0/gdb/gobject_gdb.py  # D-no-python-on-target
