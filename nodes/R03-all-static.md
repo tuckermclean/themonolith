@@ -6,7 +6,7 @@
 
 **Owns:** `configs/portage/env/`, `configs/portage/package.env/`, `configs/portage/package.use/static`, `configs/portage/bashrc` (static-link hooks), O02's allowlist file (shrinking only), edits to `extract-packages.sh:147-157` and `build-packages.sh:384-385`.
 **Ports from linux-live-iso-factory@b9f533b:** nothing new. It changes the static mechanism B01 ported in `configs/portage/{make.conf,bashrc,env/static.conf,env/no-static-ldflags.conf,package.env/cross-compile,package.use/static}`.
-**Study refs:** D-all-static (contradicted_by: README.md:127, RELEASE-READINESS.md:108-118, `extract-packages.sh:147-157`, `build-packages.sh:384-385`); D-no-dynamic-loading-no-dlopen; OD-2.
+**Study refs:** D-all-static (the predecessor's comments expecting dynamic binaries: README.md:127, RELEASE-READINESS.md:108-118, `extract-packages.sh:137-151`; the loader copy: `extract-packages.sh:147-157`, `build-packages.sh:384-385`; rc1 itself is all static, per O02's scan); D-no-dynamic-loading-no-dlopen; OD-2.
 
 ## Purpose
 The dynamic-binary allowlist is empty and no musl loader ships. This is required before the first non-prerelease (OD-2 default).
@@ -17,10 +17,10 @@ Gentoo gives, in order: a `static` or `static-libs` USE flag if the ebuild has o
 ## Tests
 - **Ported first:** none. B01's ported tests and O02's checks stay in the lane and must keep passing.
 - **Added:** the tests the Gate names.
-- **Baseline:** O02's checks on the rc1 rootfs give the starting allowlist this node shrinks.
+- **Baseline:** O02's checks on the rc1 rootfs give an empty starting allowlist and no loader.
 
 ## Changes from the port
-1. **Per-binary fixes.** rc1 lists these as dynamic PIE: util-linux (`mount`, `agetty`, `mountpoint`; no `static` USE flag, per `RELEASE-READINESS.md:108-118`), iproute2, dhcpcd, procps, tar, gawk, "and a few others" (`README.md:127`). The exact set is unknown until O02 scans rc1; use that list. `static.conf` already sets `-static` globally, so for each binary the first step is to find why it did not reach the link line (libtool, a plain Makefile that overrides `LDFLAGS`, or `--enable-pie`) from the package build log. Then, in order of preference:
+1. **Per-binary fixes.** The predecessor's comments name util-linux (`mount`, `agetty`, `mountpoint`; no `static` USE flag, per `RELEASE-READINESS.md:108-118`), iproute2, dhcpcd, procps, tar, gawk "and a few others" (`README.md:127`) as dynamic, but O02's scan of rc1 found no dynamic binary, so O02's allowlist starts empty. This change applies only to a binary that a build from this repository makes dynamic; use O02's findings for it. `static.conf` already sets `-static` globally, so for each binary the first step is to find why it did not reach the link line (libtool, a plain Makefile that overrides `LDFLAGS`, or `--enable-pie`) from the package build log. Then, in order of preference:
    - a `package.env` entry for a plain-Makefile package that passes `LDFLAGS=-static` through `emake` (as `bashrc` does for gpm; candidates: iproute2, procps, tar, gawk; unverified);
    - an ebuild configure option or USE flag, found with `equery uses` (candidates: dhcpcd, util-linux; unverified);
    - for `agetty`, a static replacement: busybox `getty` has `CONFIG_GETTY` unset in its savedconfig (`savedconfig/sys-apps/busybox:539`), and `/etc/inittab` spawns `agetty` (`build-rootfs.sh:356-360`); enabling it would need an initrd-vs-rootfs decision, because README says busybox is initrd-only;
@@ -36,6 +36,6 @@ Gentoo gives, in order: a `static` or `static-libs` USE flag if the ebuild has o
 - **R03-AC-4** — The allowlist file only shrinks across the node's PRs. *Verify:* O02's shrink check.
 
 ## Risks
-- The dynamic set is unknown until O02 scans rc1 (OD-2). The candidate fixes above are unverified guesses from rc1's comments, not tested.
+- rc1's dynamic set is empty (O02's scan); a build from this repository may still differ. The candidate fixes above are unverified guesses from the predecessor's comments, not tested.
 - util-linux `mount` and `agetty` are boot-critical (`inittab`); a failure shows only in the boot tests.
 - Static dhcpcd and iproute2 may need patches that outweigh keeping them (D-486-minimalism review).

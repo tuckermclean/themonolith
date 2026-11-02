@@ -101,7 +101,7 @@ facts decide three things:
 | Constraint | Meaning | Checked by |
 |---|---|---|
 | i486 | Every target binary is built for i486 (`-march=i486`, `EM_386`), and the disc boots under QEMU `-cpu 486`. Neither proves that no post-486 instruction ships; that check is future work (§10). | O01 (ported), O02 (`EM_386`, no `EM_X86_64`) |
-| Static musl | Every rootfs binary is statically linked against musl, and no dynamic loader ships on the disc. rc1 violates this (§3, D-all-static). The list of violations may only shrink, and it is empty before the first non-prerelease. | O02, R03 |
+| Static musl | Every rootfs binary is statically linked against musl, and no dynamic loader ships on the disc. rc1 meets this (§3, D-all-static). The list of violations starts empty, may only shrink, and is empty before the first non-prerelease. | O02, R03 |
 | Modest memory | The BIOS boot reaches a shell at 64 MB of RAM, the predecessor's floor. | O01 (ported `ram_mb: [64, 256]`) |
 | Hardware compatibility | The predecessor's 17 boot modes pass, including the NIC, VGA and legacy fbdev matrices. MS1 iteration ISOs run the other 16; `stele-acid2` needs Stele (R05). All 17 pass before the first release. | O01 |
 | Reproducibility | Bit for bit, without exceptions, for every release. Two clean, separate builds from the same pinned and archived inputs produce ISOs with the same SHA-256. This covers the whole ISO: kernel, initramfs, squashfs, bootloaders, ESP and filesystem metadata. A mismatch fails the tag, and nothing is published first. Attestations may differ between runs; the ISO bytes may not. MS1 iteration ISOs need only be built from pinned inputs. | P02 (gate), B01 |
@@ -178,7 +178,7 @@ Hard rules about the product. Ids match `docs/study/doctrine.yaml`, which holds 
 | Id | Rule | Enforced by |
 |---|---|---|
 | D-486-minimalism | Everything runs on an i486 with a few MB of RAM. Additions must justify themselves against that. | review; O01 RAM floor |
-| D-all-static | The rootfs is statically linked. **Untrue in rc1**: util-linux, iproute2, dhcpcd, procps, tar, gawk and others are dynamic, and the musl loader ships. O02 enforces a shrinking allowlist, and R03 empties it. | O02, R03 |
+| D-all-static | The rootfs is statically linked. **True in rc1**, against the predecessor's own comments (`extract-packages.sh:137-151`, README.md:127), which expected util-linux, iproute2, dhcpcd, procps, tar and gawk to stay dynamic and kept a loader copy for them: O02's scan of rc1's squashfs (2026-10-30): 543 ELF files, all `EM_386`, 456 static `ET_EXEC` and 87 kernel modules; no `PT_INTERP`, no `ET_DYN`, no `ld-musl-i386.so.1`. O02 enforces it with a shrink-only allowlist that starts empty; R03 removes the loader copy. | O02, R03 |
 | D-no-dynamic-loading-no-dlopen | No loadable plugins, no perl XS `.so`, no sqlite load-extension, no X modules. | O02 |
 | D-no-python-on-target | No Python in the rootfs. Python is a host and builder tool only. | O02 |
 | D-bitmap-fonts-no-freetype | No freetype, fontconfig or Xft on the disc. | O02 |
@@ -402,7 +402,7 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
   - The boot tests, artifact checks and gates first run against the v0.1.0-rc1 ISO and SBOM, fetched by
     sha256, before this repository builds anything: the same targets with the rc1 inputs
     (`make test-boot test-artifact test-gates ISO=<rc1 ISO>`).
-  - rc1 may fail a check because of a verified predecessor bug, for example the shipped musl loader. The
+  - rc1 may fail a check because of a verified predecessor bug, for example the Python files it ships. The
     check then records that as an expected rc1 failure with its study id.
   - That way the same check passes on rc1 and is strict on our builds.
 - **Release reports** (assets of every release, P01):
@@ -533,7 +533,7 @@ These are owner decisions. A node that names one does not start until it is sett
 | Id | Question | Default if unanswered |
 |---|---|---|
 | OD-1 | The advisory URL is baked into every disc from the first release on. It must be a dedicated name that can be repointed for decades. The service behind it (P03) can come later. `themonolith.org` belongs to a third party, so it is out. Where is the name hosted? | `https://monolith.technomantics.com/`, served by GitHub Pages (a custom domain needs no stored cloud key, SPEC §8) |
-| OD-2 | May a prerelease ship with a non-empty dynamic-binary allowlist? | Yes for prereleases, each entry with an issue. The list is empty before the first non-prerelease (R03). |
+| OD-2 | May a prerelease ship with a non-empty dynamic-binary allowlist? (rc1 needs no entry: the list starts empty.) | Yes for prereleases, each entry with an issue. The list is empty before the first non-prerelease (R03). |
 | OD-3 | First tree pin: rc1's tree, recovered from gentoo-mirror git, or a current tree? | rc1's tree; M01 bumps it after MS2 |
 | OD-4 | First release version from this repository. | `v0.2.0-rc1` |
 | OD-5 | Does a CVE in the builder image block a release? | Report-only; the owner reviews it at release |

@@ -4,19 +4,19 @@
 |---|---|---|---|---|
 | critical | F01 | B03, G01 | — | M |
 
-**Owns:** `.github/workflows/boot-test.yml` (reusable), `.github/workflows/boot-test-rc1.yml` (caller for the rc1 lane), `scripts/tests/boot-test-workflow.test.sh`, the ported `scripts/tests/boot-test-retry.test.sh`, the `Makefile` targets `test-boot` (part of `make test`), `run-bios` and `run-uefi`.
+**Owns:** `.github/workflows/boot-test.yml` (reusable), `.github/workflows/boot-test-rc1.yml` (caller for the rc1 lane), `scripts/tests/boot-test-workflow.test.sh`, `scripts/tests/boot-test-shell.test.sh`, the ported `scripts/tests/boot-test-retry.test.sh`, the `Makefile` targets `test-boot` (part of `make test`), `run-bios` and `run-uefi`.
 **Ports from linux-live-iso-factory@b9f533b:** first the test `scripts/tests/boot-test-retry.test.sh`; then `scripts/boot-test.py` (2528 lines, 17 modes, `-cpu 486`, `MODE_DEFAULT_RAM`), `.github/workflows/boot-test.yml` (916 lines), the manual boot targets `test` (`Makefile:500`) and `test-uefi`. Carried unchanged except as listed below.
 **Study refs:** oracle.yaml `bootmode.*`, `ci.boot-test.expected-kernel`, contradictions on clock-epoch (`boot-test.py:36-42`, `boot-test.yml:796-805`); T-run-rerun-reuses-cache; D-clock-origin-1970; D-486-minimalism; SPEC §1 constraints i486 and modest memory.
 
 ## Purpose
-After this node the predecessor's 17 boot modes run in CI against any ISO, whether it came from this repository's build or from a URL. The rc1 lane runs them on `v0.1.0-rc1` before this repository builds anything. Every mode passes on the rc1 ISO.
+After this node the predecessor's 17 boot modes run in CI against any ISO, whether it came from this repository's build or from a URL. The rc1 lane runs them on `v0.1.0-rc1` before this repository builds anything. Every mode passes on the rc1 ISO except `vga`, an expected rc1 failure (change 12).
 
 ## Standard mechanism
 QEMU, OVMF and `pexpect` on a GitHub-hosted runner, as the predecessor. openQA was considered (SPEC §5): it is a service to run for 17 serial-console modes. No gap is recorded and no custom code is added. The harness is carried as it is: the milestone strings, the ISOLINUX `serial` label, the GRUB `(serial)` entry (SPEC §7), the sentinel protocol and the launch-retry rule.
 
 ## Tests
 - **Ported first:** `boot-test-retry.test.sh`, with one harness adjustment: a missing `boot-test.py` is reported as `FAIL` instead of an uncaught traceback. `boot-test.py` is itself the predecessor's oracle; its 17 modes are ported unchanged and run in AC-4.
-- **Added:** `scripts/tests/boot-test-workflow.test.sh` (AC-2, AC-3, AC-6, AC-7).
+- **Added:** `scripts/tests/boot-test-workflow.test.sh` (AC-2, AC-3, AC-6, AC-7) and `scripts/tests/boot-test-shell.test.sh` (AC-8).
 - **Baseline:** the ported test passes on `b9f533b`'s `boot-test.py`; `b9f533b`'s `boot-test.yml` fails AC-2 (`actions/cache`, S3), as expected. The rc1 ISO passing the 17 modes (AC-4) is the baseline of the oracle itself.
 
 ## Changes from the port
@@ -30,6 +30,8 @@ QEMU, OVMF and `pexpect` on a GitHub-hosted runner, as the predecessor. openQA w
 8. **S3/AWS:** `boot-test.yml` and `boot-test.py` contain no S3 or AWS reference (checked by grep), so nothing is removed here. I01 owns the repository-wide removal; AC-2 keeps it true for this file.
 9. **Manual boots.** The predecessor's `make test` (`Makefile:500`, an interactive BIOS boot in QEMU with `-cpu 486 -m 64M`) and `make test-uefi` come in as `run-bios` and `run-uefi`: they are not tests, and `make test` and the `test-*` targets run tests (F01, SPEC §7). *AC-6.*
 10. **`make test-boot`.** Part of `make test`. It boots `ISO` in every mode, or in `MODE=` alone, through `boot-test.py` in the toolbox. Until B03 builds an ISO, the default `ISO` is rc1's, fetched and checked against its sha256 as a Make prerequisite (SPEC §7, rc1 lane); B03 makes the built ISO the default. *AC-7.*
+11. **The shell-ready probe waits for the shell, not the tty's echo.** `wait_for_shell` (`boot-test.py:810-841`) sends `echo MONOLITH_SHELL_READY_<id>` and matches the marker, but the serial tty echoes the typed line at once, before any shell reads it. The probe then passes while the console stub is still at its "press Enter" prompt, and the first check is swallowed or reads the banner: `uname -r` timed out in `uefi` three times locally, and `cirrus coldplug` read the motd in `vga` twice in CI (run 41026572862). This is the "serial warmup" race the Risks list. The probe's output now differs from its typed text (an arithmetic expansion, for example `echo MONOLITH_SHELL_READY_<id>_$((6*7))` matched as `…_42`), so only an executed echo matches. Nothing else in the harness changes. *AC-8.*
+12. **rc1's expected failure: `vga`.** rc1 (published 2026-08-21) predates the legacy fbdev Tier-2 drivers the `vga` mode checks (design doc of 2026-09-17): its `/lib/modules/6.12.80-i486-monolith/kernel/drivers/video/fbdev/` holds only `hyperv_fb.ko`, and `modprobe cirrusfb` reports the module missing (checked in a guest, 2026-10-30). As SPEC §7 provides, the rc1 lane records it as an expected rc1 failure: when the ISO's sha256 is rc1's, `make test-boot` reports a `vga` failure as `XFAIL` with that reason, and a `vga` pass as a failure (the expectation is stale). For any other ISO it is strict. All 17 modes still run, so AC-4's every-job-green holds and B03's ISO is held to all of them. *AC-9.*
 
 ## Gate
 - **O01-AC-1** — `boot-test.py`'s `should_retry_launch` relaunches a guest that never reached `/init` while attempts remain, stops on the last attempt and reports the failure, and never relaunches after a success or after a failure that came once `/init` was reached. The module imports with `pexpect` stubbed, without running a boot. *Verify:* `scripts/tests/boot-test-retry.test.sh`.
@@ -39,11 +41,12 @@ QEMU, OVMF and `pexpect` on a GitHub-hosted runner, as the predecessor. openQA w
 - **O01-AC-5** — Each mode job's uploaded artifact contains `tool-versions.txt` with the QEMU version lines and the `ovmf` package version. *Verify:* download an artifact from the AC-4 run and `grep -c 'QEMU emulator version'`.
 - **O01-AC-6** — `make -n run-bios` runs `qemu-system-i386` with `-cpu 486` and `-m 64M` on the ISO, and `make -n run-uefi` runs `qemu-system-x86_64` with OVMF. *Verify:* `scripts/tests/boot-test-workflow.test.sh`.
 - **O01-AC-7** — `make test` depends on `test-boot`. `make -n test-boot` runs `boot-test.py` through `toolbox/run` once per mode on the default `ISO`, which until B03 is rc1's ISO behind a sha256 check; `MODE=bios` runs only that mode, and a wrong sha256 fails before any boot. *Verify:* `scripts/tests/boot-test-workflow.test.sh`; `make test-boot ISO=<rc1 ISO>` locally, log under `out/node/O01/`.
+- **O01-AC-8** — `wait_for_shell` returns only once the guest shell has executed its probe: against a fake console that echoes typed input at once but runs it only after a delay, it does not return on the echo, and the next command's own output is the last line of its capture (what the validators read; leftover probe output before it is allowed). *Verify:* `scripts/tests/boot-test-shell.test.sh` (pexpect-free fake child).
+- **O01-AC-9** — With the ISO's sha256 equal to rc1's (the digest is a Make variable), `make test-boot` reports a failing `vga` boot as `XFAIL` with its reason and exits 0 when nothing else failed, and fails if `vga` passes; with any other digest a failing `vga` boot fails the target. No other mode has an expected failure. *Verify:* `scripts/tests/boot-test-workflow.test.sh` (stub `toolbox/run`, fixture ISO, the rc1 digest variable set to the fixture's).
 
 ## Risks
 - Measured in the predecessor: modes take about 1–2 minutes each, `nic-models` 9.1 minutes, about 10 minutes wall in parallel. Not re-measured here.
 - Artifact mode (`iso-artifact`) has no caller until B03; its first proof is B03's build. The URL path is proved here.
 - The ISO's kernel version string for the rc1 caller is derived from predecessor files, not from the ISO. A mismatch would fail `uname -r` in every mode at the first run.
 - The toolbox pins QEMU and OVMF by Debian snapshot date; a runner image update no longer changes them. Whether TCG on the runner boots each mode within the predecessor's timeouts is unverified until the first CI run.
-- The "serial warmup" race in `_boot_isolinux_to_shell` (oracle.yaml, open question) is not investigated. Modes that flake get the existing retry rule only.
 - Not done here: golden screendumps, second-child retry attribution, and modes beyond the predecessor's. They would change behaviour without a demonstrated failure.
