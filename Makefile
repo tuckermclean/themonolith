@@ -3,7 +3,7 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: test test-lint test-unit test-revbump test-boot test-artifact rootfs fetch-iso run-bios run-uefi iso-artifact-name
+.PHONY: test test-lint test-unit test-revbump test-boot test-artifact rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline
 
 test: test-lint test-unit test-revbump test-boot test-artifact
 
@@ -152,3 +152,55 @@ test-artifact: rootfs
 	else \
 		toolbox/run --network none -- env OUTPUT_DIR=$(ARTIFACT_OUT) bash scripts/static-audit.sh --strict --allowlist '$(ARTIFACT_ALLOWLIST)' '$(ARTIFACT_ROOTFS)'; \
 	fi
+
+# ---- I02: the pinned Gentoo tree ----
+
+# rc1's tree: gentoo-mirror commit TREE_COMMIT, archived once as an OCI artifact (scripts/seed-tree.sh) and
+# restored by digest (scripts/sync-portage.sh). docs/tree-pin.md has the evidence.
+TREE_COMMIT := 6e88ed01f3e97de8710efe1c333808dfbd05bf32
+TREE_DIGEST := sha256:b01bbe7a886fa869a4018a5f711e11fae8fb783b30878216b0f8f408ad2a70bd
+TREE_REF := $(REGISTRY)/gentoo-tree
+TREE_DIR ?= output/repos/gentoo
+# Where tree-check leaves the pulled archive for tree-restore-offline.
+TREE_PULL ?= output/tree-archive
+TREE_FILE = gentoo-tree-$(TREE_COMMIT).tar.zst
+TREE_ENV = REGISTRY=$(REGISTRY) TREE_REF=$(TREE_REF) TREE_COMMIT=$(TREE_COMMIT) TREE_DIGEST=$(TREE_DIGEST)
+# With GITHUB_TOKEN set (CI), log in to the registry inside the same toolbox run; the login ends with the container.
+TREE_RUN = toolbox/run -e GITHUB_TOKEN -e GITHUB_ACTOR --
+tree_login = if [ -n "$${GITHUB_TOKEN:-}" ]; then echo "$$GITHUB_TOKEN" | oras login $(firstword $(subst /, ,$(REGISTRY))) -u "$${GITHUB_ACTOR:-token}" --password-stdin; fi
+
+# Restores the pinned tree into TREE_DIR.
+sync-portage:
+	$(TREE_RUN) sh -c 'set -eu; $(tree_login); $(TREE_ENV) TREE_DIR=$(TREE_DIR) sh scripts/sync-portage.sh'
+
+# One-time: archives TREE_COMMIT from gentoo-mirror into the registry. Refuses an existing tag.
+seed-tree:
+	$(TREE_RUN) sh -c 'set -eu; $(tree_login); $(TREE_ENV) sh scripts/seed-tree.sh $(TREE_COMMIT)'
+
+# Writes exists=true|false to $GITHUB_OUTPUT: whether TREE_REF:TREE_COMMIT is in the registry.
+tree-exists:
+	$(TREE_RUN) sh -c 'set -eu; $(tree_login); if oras manifest fetch --descriptor $(TREE_REF):$(TREE_COMMIT) >/dev/null 2>&1; then r=true; else r=false; fi; echo "exists=$$r" >> "$${GITHUB_OUTPUT:-/dev/stdout}"'
+
+# The registry's manifest digest for TREE_REF:TREE_COMMIT equals TREE_DIGEST, and the tree restored from it has
+# as many files as the archive lists. Leaves the archive in TREE_PULL and the tree in TREE_DIR.
+tree-check:
+	$(TREE_RUN) sh -c 'set -eu; $(tree_login); \
+		d=$$(oras manifest fetch --descriptor $(TREE_REF):$(TREE_COMMIT) | sed -n "s/.*\"digest\": *\"\([^\"]*\)\".*/\1/p"); \
+		[ "$$d" = "$(TREE_DIGEST)" ] || { echo "tree-check: $(TREE_REF):$(TREE_COMMIT) is $$d, want $(TREE_DIGEST)"; exit 1; }; \
+		rm -rf "$(TREE_PULL)" "$(TREE_DIR)"; \
+		oras pull -o "$(TREE_PULL)" $(TREE_REF)@$(TREE_DIGEST); \
+		$(TREE_ENV) TREE_DIR=$(TREE_DIR) sh scripts/sync-portage.sh; \
+		a=$$(zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -tf - | grep -v "/$$" | wc -l); \
+		t=$$(find "$(TREE_DIR)" ! -type d | wc -l); \
+		[ "$$a" -gt 0 ] && [ "$$a" -eq "$$t" ] || { echo "tree-check: archive lists $$a files, $(TREE_DIR) has $$t"; exit 1; }; \
+		echo "tree-check: $(TREE_REF):$(TREE_COMMIT) is $(TREE_DIGEST); $$t files restored, as in the archive"'
+
+# AC-5: with no network, extracts the archive tree-check pulled and compares the tree with its listing.
+tree-restore-offline:
+	test -f '$(TREE_PULL)/$(TREE_FILE)' || { echo "tree-restore-offline: no $(TREE_PULL)/$(TREE_FILE); run make tree-check first"; exit 1; }
+	toolbox/run --network none -- sh -c 'set -eu; rm -rf "$(TREE_DIR)"; mkdir -p "$(TREE_DIR)"; \
+		zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -xf - -C "$(TREE_DIR)"; \
+		zstd -dc "$(TREE_PULL)/$(TREE_FILE)" | tar -tf - | grep -v "/$$" | LC_ALL=C sort > "$(TREE_PULL)/listed"; \
+		(cd "$(TREE_DIR)" && find . ! -type d | sed "s,^\./,," | LC_ALL=C sort) > "$(TREE_PULL)/found"; \
+		diff "$(TREE_PULL)/listed" "$(TREE_PULL)/found" || { echo "tree-restore-offline: $(TREE_DIR) differs from the archive"; exit 1; }; \
+		echo "tree-restore-offline: $$(wc -l < "$(TREE_PULL)/found") files extracted offline, as in the archive"'
