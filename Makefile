@@ -3,9 +3,9 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-boot test-artifact rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline
+.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-boot test-artifact test-gates test-cve-canary attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline
 
-test: test-lint test-unit test-revbump test-boot test-artifact
+test: test-lint test-unit test-revbump test-boot test-artifact test-gates test-cve-canary
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -249,3 +249,91 @@ tree-restore-offline:
 		[ -z "$$d" ] || { echo "$$d" | head -n 20; echo "tree-restore-offline: $(TREE_DIR) differs in content from the archive"; exit 1; }; \
 		diff "$(TREE_PULL)/listed" "$(TREE_PULL)/found" || { echo "tree-restore-offline: $(TREE_DIR) differs from the archive"; exit 1; }; \
 		echo "tree-restore-offline: $$(wc -l < "$(TREE_PULL)/found") files extracted offline, as in the archive"'
+
+# ---- S01: the SBOM and the three gates ----
+
+# rc1's bom.cdx.json, the oracle that test-gates' SBOM is compared with on rc1's ISO.
+RC1_SBOM_URL ?= https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/bom.cdx.json
+RC1_SBOM_SHA256 ?= 3cfc322a0e105638452baa6900552769a6ad5bfbf3be190a9808ac98ca575887
+RC1_SBOM := output/rc1-bom.cdx.json
+SBOM_DIFF_LIST := configs/attestation/rc1-sbom-diff.txt
+GRYPE_CACHE := output/grype-cache
+ATTEST_OUT := output/attestation
+# The tag the SBOM records: ISO's file name without themonolith- and .iso.
+BUILD_TAG ?= $(patsubst themonolith-%.iso,%,$(notdir $(ISO)))
+
+# The gates run in the builder image (I03), which has syft, grype, python3 and PyYAML. configs and scripts are read-only;
+# output holds the rootfs, the ISO and the reports; the Grype DB lives in GRYPE_CACHE so it survives between runs.
+ATTEST_RUN = $(DOCKER) run --rm \
+	-v $(CURDIR)/configs:/configs:ro -v $(CURDIR)/scripts:/scripts:ro \
+	-v $(CURDIR)/output:/output -v $(CURDIR)/$(GRYPE_CACHE):/root/.cache/grype \
+	-e GITHUB_SERVER_URL -e GITHUB_REPOSITORY -e GITHUB_REF -e GITHUB_SHA -e GITHUB_RUN_ID -e BUILD_EPOCH \
+	$(IMAGE_NAME)
+ATTEST_ARGS = --sysroot /output/rootfs --iso /output/$(notdir $(ISO)) --build-tag $(BUILD_TAG) \
+	--builder-digest $(BUILDER_DIGEST) \
+	--overrides /configs/attestation/cpe-overrides.yaml \
+	--policy /configs/attestation/license-policy.yaml \
+	--cve-policy /configs/attestation/cve-policy.yaml \
+	--unowned-allowlist /configs/attestation/unowned-allowlist.yaml \
+	--output-dir /output/attestation
+
+# Downloads RC1_SBOM_URL to $(RC1_SBOM) and checks its sha256; a mismatch deletes it and fails.
+fetch_rc1_sbom = toolbox/run -- sh -c 'set -eu; f="$(RC1_SBOM)"; mkdir -p "$$(dirname "$$f")"; if [ -f "$$f" ] && echo "$(RC1_SBOM_SHA256)  $$f" | sha256sum -c --quiet -; then echo "==> $$f matches sha256 $(RC1_SBOM_SHA256)"; exit 0; fi; curl -fsSL --retry 3 -o "$$f.part" "$(RC1_SBOM_URL)"; echo "$(RC1_SBOM_SHA256)  $$f.part" | sha256sum -c - || { rm -f "$$f.part" "$$f"; echo "sha256 mismatch for $(RC1_SBOM_URL)"; exit 1; }; mv "$$f.part" "$$f"'
+# jq -S of both SBOMs without the paths of SBOM_DIFF_LIST, then diff; a difference fails and is printed.
+sbom_diff = toolbox/run --network none -- sh scripts/sbom-diff.sh $(SBOM_DIFF_LIST) $(ATTEST_OUT)/bom.cdx.json $(RC1_SBOM)
+
+fetch-rc1-sbom:
+	$(fetch_rc1_sbom)
+
+# Compares the SBOM test-gates regenerated with rc1's.
+sbom-diff-rc1: fetch-rc1-sbom
+	$(sbom_diff)
+
+# Updates the Grype vulnerability database in GRYPE_CACHE.
+grype-db-update: pull-image
+	mkdir -p $(GRYPE_CACHE)
+	@echo "==> Updating the Grype vulnerability database"
+	$(ATTEST_RUN) grype db update
+
+# SBOM, licence, CVE and unowned gates on ARTIFACT_ROOTFS (run make rootfs first). Reports in ATTEST_OUT.
+attestation: rootfs pull-image grype-db-update
+	@echo "==> Running the attestation pipeline (build: $(BUILD_TAG))"
+	rm -rf $(ATTEST_OUT)
+	mkdir -p $(ATTEST_OUT)
+	$(ATTEST_RUN) /scripts/attestation.sh $(ATTEST_ARGS)
+
+# The same, with the builder environment (Pillar 5) attested too.
+attest-builder: rootfs pull-image grype-db-update
+	@echo "==> Running the attestation pipeline including the builder (build: $(BUILD_TAG))"
+	rm -rf $(ATTEST_OUT)
+	mkdir -p $(ATTEST_OUT)
+	$(ATTEST_RUN) /scripts/attestation.sh $(ATTEST_ARGS) --include-builder
+
+# The gates on the rootfs of ISO. Any ISO: attestation.sh must exit 0. rc1's ISO (its sha256 is RC1_SHA256): the licence and
+# unowned gates must pass and the CVE coverage report must record db.built; the CVE gating findings are printed (and added to
+# $GITHUB_STEP_SUMMARY), not gating; then the SBOM must equal rc1's outside SBOM_DIFF_LIST.
+test-gates: rootfs pull-image grype-db-update $(if $(filter $(ISO),$(DEFAULT_ISO)),fetch-rc1-sbom)
+	rm -rf $(ATTEST_OUT)
+	mkdir -p $(ATTEST_OUT)
+	@sha256sum '$(ISO)' | cut -d' ' -f1 > output/gates-iso.sha256
+	@rc1=0; [ "$$(cat output/gates-iso.sha256)" = '$(RC1_SHA256)' ] && rc1=1; \
+	$(ATTEST_RUN) /scripts/attestation.sh $(ATTEST_ARGS); arc=$$?; \
+	echo "==> attestation.sh exited $$arc"; \
+	flag=; [ $$rc1 = 1 ] && flag=--rc1; \
+	toolbox/run --network none -e GITHUB_STEP_SUMMARY -- sh scripts/gates-verdict.sh $$flag $(ATTEST_OUT) || exit 1; \
+	[ -f $(ATTEST_OUT)/bom.cdx.json ] || { echo "test-gates: attestation.sh wrote no $(ATTEST_OUT)/bom.cdx.json"; exit 1; }; \
+	if [ $$rc1 = 1 ]; then [ -f '$(RC1_SBOM)' ] || { echo "test-gates: no $(RC1_SBOM); run make fetch-rc1-sbom"; exit 1; }; $(sbom_diff) || exit 1; \
+	else [ $$arc -eq 0 ] || exit 1; fi; \
+	echo "test-gates: PASS"
+
+# The scanner is alive: check-cves.sh on the canary SBOM (Heartbleed) must find something.
+test-cve-canary: pull-image grype-db-update
+	$(ATTEST_RUN) grype db status
+	@$(ATTEST_RUN) bash /scripts/run-cve-canary.sh || { \
+		echo "::error::The CVE gate canary failed. See the output above."; \
+		echo "::error::This means Grype produced zero findings against a fixture SBOM pinned to"; \
+		echo "::error::CVE-2014-0160 (Heartbleed), a permanent, fully-analyzed CVE. That is not"; \
+		echo "::error::possible for a working scanner. Every real build's CVE PASS is suspect"; \
+		echo "::error::until this is fixed; do not merge or release until it is green again."; \
+		echo "::error::See docs/cve-gate.md for background and scripts/run-cve-canary.sh for the check."; \
+		exit 1; }

@@ -35,7 +35,7 @@ awk -v paths="$tmp/paths" '
         gsub(/[[:space:]]/, "", reason)
         if (sect == "") { printf "sbom-diff: path outside a section: %s\n", $0 > "/dev/stderr"; bad = 1; next }
         if (sect == "d" && reason == "") { printf "sbom-diff: deliberate path without a reason: %s\n", line > "/dev/stderr"; bad = 1; next }
-        print line > paths
+        print "(" line ")" > paths
     }
     END { if (!seen) { print "sbom-diff: " FILENAME " has no volatile: section" > "/dev/stderr"; bad = 1 }; exit bad }
 ' "$list" || exit 2
