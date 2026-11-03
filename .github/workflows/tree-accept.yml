@@ -1,0 +1,37 @@
+name: Tree Accept
+
+# Records I02-AC-3 and I02-AC-5 on the registry: archives the pinned Gentoo tree as gentoo-tree:<commit>
+# when that tag is absent, checks that its manifest digest is TREE_DIGEST and that the restored tree has
+# the archive's file count, then extracts the archive in a container with no network and compares.
+# Run by hand after a merge; the pins are in the Makefile and docs/tree-pin.md has the evidence.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  tree-accept:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Is the tree already in the registry
+        id: probe
+        run: make tree-exists
+
+      - name: Archive the tree
+        if: steps.probe.outputs.exists == 'false'
+        run: make seed-tree
+
+      - name: Check the digest and the restored file count
+        run: make tree-check
+
+      - name: Extract with no network and compare with the archive
+        run: make tree-restore-offline
