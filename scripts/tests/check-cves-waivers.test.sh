@@ -153,16 +153,19 @@ v=$(jget garbage "$FIND")
     && ok "S01-AC-3 a waiver with an unparseable expires does not waive" \
     || fail "S01-AC-3 a waiver with an unparseable expires does not waive (rc=$RC findings=$v)"
 
-# ---- S01-AC-4 --------------------------------------------------------------------
-run built "allowlist: []"
+# ---- S01-AC-4 ----
+PFUT="allowlist:
+  - {cve: CVE-2099-0001, component: pkga, justification: t, approved_by: 'T <t@x>', expires: '$FUTURE'}
+  - {cve: CVE-2099-0002, component: pkgb, justification: t, approved_by: 'T <t@x>', expires: '$FUTURE'}"
+run built "$PFUT"
 b=$(jget built 'r["db"]["built"]')
 [ "$b" = "$BUILT" ] && ok "S01-AC-4 db.built equals the Built: line of grype db status" \
     || fail "S01-AC-4 db.built equals the Built: line of grype db status (got '$b')"
 
 # No Built: line: non-zero, paired with the control above (exit of the same inputs with a Built: line).
-run nobuilt "allowlist: []" ""
+run nobuilt "$PFUT" ""
 rc_nobuilt=$RC
-run builtctl "allowlist: []"
+run builtctl "$PFUT"
 if [ -f "$SUBJ" ] && [ "$RC" -eq 0 ] && grep -q '^db status' "$CALLS" && [ "$rc_nobuilt" -ne 0 ]; then
     ok "S01-AC-4 with no Built: line the script exits non-zero (and exits 0 with one)"
 else fail "S01-AC-4 with no Built: line the script exits non-zero (no-Built rc=$rc_nobuilt, control rc=$RC)"; fi

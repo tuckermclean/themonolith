@@ -18,7 +18,8 @@ trap 'rm -rf "$TMP"' EXIT
 # mk NAME [flags]: builds $TMP/NAME/{sysroot,syft.json,allowlist.yaml}
 #   nofiles   files[] empty          nopkgdb   no sysroot/var/db/pkg
 #   stray     one extra unowned file on disk
-#   noowners  no portage artifacts and no CONTENTS (every file allowlisted)
+#   noowners  no portage artifacts and no CONTENTS; the only file on disk is allowlisted
+#   noallowed the allowlisted file is not on disk (all files owned, so no allowlist is needed)
 mk() {
     n=$1; shift
     d="$TMP/$n"; mkdir -p "$d/sysroot/usr/bin" "$d/sysroot/etc"
@@ -35,6 +36,8 @@ mk() {
 import json, sys
 out, S, flags = sys.argv[1:4]
 paths = ["/usr/bin/foo", "/etc/foo.conf", "/etc/allowed"]
+if " noallowed " in flags: paths.remove("/etc/allowed")
+if " noowners " in flags: paths = ["/etc/allowed"]
 if " stray " in flags: paths.append("/usr/bin/stray")
 arts = []
 if " noowners " not in flags:
@@ -80,14 +83,16 @@ neg "a missing Syft JSON" missjson owned --syft "$TMP/missjson/nonexistent.json"
 mk nofiles nofiles
 neg "an empty files[]" nofiles owned
 
-mk missallow
-neg "a missing allowlist file" missallow owned --allow "$TMP/missallow/nonexistent.yaml"
+mk missallow noallowed
+mk ctlallow noallowed
+neg "a missing allowlist file" missallow ctlallow --allow "$TMP/missallow/nonexistent.yaml"
 
 mk nopkgdb nopkgdb
 neg "a sysroot with no var/db/pkg (no owned paths read from the sysroot)" nopkgdb owned
 
 mk noowners noowners
-neg "a sysroot with no owned paths at all" noowners owned
+mk ctlowners
+neg "a sysroot with no owned paths at all" noowners ctlowners
 
 echo
 [ "$fails" -eq 0 ] && { echo "check-unowned: all passed"; exit 0; }
