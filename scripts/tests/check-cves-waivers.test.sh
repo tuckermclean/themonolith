@@ -93,7 +93,7 @@ PY
 waiver() { # CVE COMPONENT EXPIRES-LINE
     printf 'allowlist:\n  - cve: %s\n    component: %s\n    justification: test\n    approved_by: "T <t@example.org>"\n%s\n' "$1" "$2" "$3"
 }
-FIND='{f["cve"]: (f["gating"], f["waived"]) for f in r["findings"]}'
+FIND='dict(sorted({f["cve"]: (f["gating"], f["waived"]) for f in r["findings"]}.items()))'
 EXPIRED='[str(w) for w in (r.get("expired_waivers") or (r.get("summary") or {}).get("expired_waivers") or (r.get("policy") or {}).get("expired_waivers") or [])]'
 
 # ---- S01-AC-3 --------------------------------------------------------------------
