@@ -95,5 +95,27 @@ if [ -f "$S" ] && head -1 "$TMP/step2.md" | grep -q preexisting && grep -q 'CVE-
     ok "S01-AC-6 GITHUB_STEP_SUMMARY is appended to, not overwritten"
 else fail "S01-AC-6 GITHUB_STEP_SUMMARY is appended to, not overwritten"; fi
 
+# S01-AC-9 (summary half): "raw matches: N", N = the number of raw grype matches.  The coverage report
+# records them as summary.total_findings (one finding per grype match; coverage.matched counts distinct
+# components and differs here: 4 matches over 2 components).
+mk rm pass fail pass fail "$D" yes
+python3 - "$TMP/rm/cve-report-coverage.json" <<'PY'
+import json, sys
+p = sys.argv[1]; r = json.load(open(p))
+r["findings"] = [{"cve": "CVE-2099-%04d" % i, "severity": "High", "component": c, "gating": True}
+                 for i, c in enumerate(["zlib", "zlib", "openssl", "openssl"])]
+r["coverage"] = {"total_components": 10, "scanned": 9, "unscanned": 1, "matched": 2, "clean": 7}
+r["summary"] = {"total_findings": 4, "gating_findings": 4, "waived_findings": 0}
+json.dump(r, open(p, "w"))
+PY
+gv "$TMP/rm" --rc1
+if [ -f "$S" ] && echo "$OUT" | grep -Eq '^raw matches: 4$'; then ok "S01-AC-9 gates-verdict prints 'raw matches: N' (N=4 matches, not 2 components)"
+else fail "S01-AC-9 gates-verdict prints 'raw matches: N' (N=4 matches, not 2 components)"; fi
+: > "$TMP/stepm.md"
+if [ -f "$S" ]; then GITHUB_STEP_SUMMARY="$TMP/stepm.md" sh "$S" --rc1 "$TMP/rm" >/dev/null 2>&1; fi
+if [ -f "$S" ] && grep -Eq 'raw matches: 4' "$TMP/stepm.md" && grep -q 'CVE-2099-0000' "$TMP/stepm.md"; then
+    ok "S01-AC-9 GITHUB_STEP_SUMMARY carries 'raw matches: 4' with the gating findings"
+else fail "S01-AC-9 GITHUB_STEP_SUMMARY carries 'raw matches: 4' with the gating findings"; fi
+
 echo "gates-verdict: $fails failure(s)"
 [ "$fails" -eq 0 ]
