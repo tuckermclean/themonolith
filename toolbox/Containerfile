@@ -9,10 +9,12 @@ ARG ACTIONLINT_VERSION=1.7.7
 ARG ACTIONLINT_SHA256=023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
 ARG ORAS_VERSION=1.2.0
 ARG ORAS_SHA256=5b3f1cbb86d869eee68120b9b45b9be983f3738442f87ee5f06b00edd0bab336
+ARG PKGCHECK_VERSION=0.10.49
 
 # Fast tier: sh, bash, python3 + PyYAML, zstd (pr-validate.yml); shellcheck; jq.
 # Slow tier: qemu-system-x86 + ovmf + pexpect (boot-test.yml), kmod (its module check),
-# squashfs-tools, xorriso, mtools, dosfstools, cpio (ISO and rootfs inspection), pax-utils (scanelf, O02).
+# squashfs-tools, xorriso, mtools, dosfstools, cpio (ISO and rootfs inspection), pax-utils (scanelf, O02),
+# python3-venv (pkgcheck, R02).
 RUN set -eu; \
     rm -f /etc/apt/sources.list.d/debian.sources; \
     printf '%s\n' \
@@ -33,7 +35,7 @@ RUN set -eu; \
     apt-get -o Acquire::Retries=5 update; \
     DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
       bash ca-certificates cpio curl diffutils dosfstools e2fsprogs file git jq kmod make mtools ovmf \
-      pax-utils python3 python3-pexpect python3-yaml qemu-system-x86 shellcheck squashfs-tools \
+      pax-utils python3 python3-pexpect python3-venv python3-yaml qemu-system-x86 shellcheck squashfs-tools \
       xorriso zstd; \
     rm -rf /var/lib/apt/lists/*
 
@@ -51,7 +53,25 @@ RUN set -eu; \
     install -m 0755 oras /usr/local/bin/oras; \
     rm -f /tmp/*
 
+# pkgcheck (R02) and its dependencies from PyPI, every wheel pinned by sha256; Debian does not package it.
+RUN set -eu; \
+    printf '%s\n' \
+      "pkgcheck==${PKGCHECK_VERSION} --hash=sha256:d62b79779ba5fa9a6e471ea6ffee48c1697f2f0e69d37db5c9008b366f2f5cd6" \
+      'pkgcore==0.12.48 --hash=sha256:d1400150ceabac4a49d0b3f2df8f40471aa68d3920eed58fd4da6b8ef6e85126' \
+      'snakeoil==0.11.7 --hash=sha256:cbf783379eaca7398a99e03cc7e34c3c986ffac571814334e66a213b4375b9ed' \
+      'charset-normalizer==3.5.2 --hash=sha256:7218e8f32b0956cfcd048fd42d9d5779809745ca1d86113ca56f66e7ae1549c4' \
+      'lxml==6.1.3 --hash=sha256:d85dfab42dd672f87a7f76e9de7172962aee69fa12044f0d6e1a23cbd53fb80e' \
+      'pathspec==1.1.1 --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189' \
+      'py-landlock==0.1.1 --hash=sha256:a4dd8dad2032edeb6974031d10be8758acf6c9747ab18616921a03779d97e404' \
+      'tree-sitter==0.26.0 --hash=sha256:7075ef857ef86f327dbb72d1e2574dda78db5754b3a1fca6506acd7fe5d561a7' \
+      'tree-sitter-bash==0.25.1 --hash=sha256:3f484c4bb8796cde7a87ca351e6116f09653edac0eb3c6d238566359dd28b117' \
+      > /tmp/pkgcheck.txt; \
+    python3 -m venv /opt/pkgcheck; \
+    /opt/pkgcheck/bin/pip install --no-cache-dir --no-deps --only-binary=:all: --require-hashes -r /tmp/pkgcheck.txt; \
+    ln -s /opt/pkgcheck/bin/pkgcheck /usr/local/bin/pkgcheck; \
+    rm -f /tmp/pkgcheck.txt
+
 COPY selfcheck /usr/local/bin/toolbox-selfcheck
 ENV TZ=UTC LC_ALL=C.UTF-8 TOOLBOX=1 \
-    ACTIONLINT_VERSION=${ACTIONLINT_VERSION} ORAS_VERSION=${ORAS_VERSION}
+    ACTIONLINT_VERSION=${ACTIONLINT_VERSION} ORAS_VERSION=${ORAS_VERSION} PKGCHECK_VERSION=${PKGCHECK_VERSION}
 RUN toolbox-selfcheck
