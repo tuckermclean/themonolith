@@ -312,7 +312,7 @@ attest-builder: rootfs pull-image grype-db-update
 # The gates on the rootfs of ISO. Any ISO: attestation.sh must exit 0. rc1's ISO (its sha256 is RC1_SHA256): the licence and
 # unowned gates must pass and the CVE coverage report must record db.built; the CVE gating findings are printed (and added to
 # $GITHUB_STEP_SUMMARY), not gating; then the SBOM must equal rc1's outside SBOM_DIFF_LIST.
-test-gates: rootfs pull-image grype-db-update $(if $(filter $(ISO),$(DEFAULT_ISO)),fetch-rc1-sbom)
+test-gates: rootfs pull-image grype-db-update
 	rm -rf $(ATTEST_OUT)
 	mkdir -p $(ATTEST_OUT)
 	@sha256sum '$(ISO)' | cut -d' ' -f1 > output/gates-iso.sha256
@@ -322,7 +322,7 @@ test-gates: rootfs pull-image grype-db-update $(if $(filter $(ISO),$(DEFAULT_ISO
 	flag=; [ $$rc1 = 1 ] && flag=--rc1; \
 	toolbox/run --network none -e GITHUB_STEP_SUMMARY -- sh scripts/gates-verdict.sh $$flag $(ATTEST_OUT) || exit 1; \
 	[ -f $(ATTEST_OUT)/bom.cdx.json ] || { echo "test-gates: attestation.sh wrote no $(ATTEST_OUT)/bom.cdx.json"; exit 1; }; \
-	if [ $$rc1 = 1 ]; then [ -f '$(RC1_SBOM)' ] || { echo "test-gates: no $(RC1_SBOM); run make fetch-rc1-sbom"; exit 1; }; $(sbom_diff) || exit 1; \
+	if [ $$rc1 = 1 ]; then $(fetch_rc1_sbom) || exit 1; $(sbom_diff) || exit 1; \
 	else [ $$arc -eq 0 ] || exit 1; fi; \
 	echo "test-gates: PASS"
 
@@ -330,10 +330,10 @@ test-gates: rootfs pull-image grype-db-update $(if $(filter $(ISO),$(DEFAULT_ISO
 test-cve-canary: pull-image grype-db-update
 	$(ATTEST_RUN) grype db status
 	@$(ATTEST_RUN) bash /scripts/run-cve-canary.sh || { \
-		echo "::error::The CVE gate canary failed. See the output above."; \
+		echo "::error::The CVE gate canary failed — see the output of make test-cve-canary above."; \
 		echo "::error::This means Grype produced zero findings against a fixture SBOM pinned to"; \
 		echo "::error::CVE-2014-0160 (Heartbleed), a permanent, fully-analyzed CVE. That is not"; \
 		echo "::error::possible for a working scanner. Every real build's CVE PASS is suspect"; \
-		echo "::error::until this is fixed; do not merge or release until it is green again."; \
+		echo "::error::until this is fixed — do not merge/release until it's green again."; \
 		echo "::error::See docs/cve-gate.md for background and scripts/run-cve-canary.sh for the check."; \
 		exit 1; }
