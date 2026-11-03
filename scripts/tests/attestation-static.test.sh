@@ -13,6 +13,7 @@ fail() { echo "FAIL: $1"; fails=$((fails+1)); }
 TMP=$(mktemp -d) || { echo "FAIL: mktemp"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
+S3P="s3:""//"   # built from parts so this file is not itself an S3 reference (I01)
 SRC="$ROOT/scripts/attestation.sh"
 ENR="$ROOT/scripts/enrich-sbom.py"
 have_src=0; [ -f "$SRC" ] && have_src=1
@@ -102,27 +103,27 @@ if need_src "S01-AC-5 no PROVENANCE text"; then
     else
         fail "S01-AC-5 (ruling 7) no STAGE3_DIGEST in attestation.sh"
     fi
-    if ! grep -Eq 's3://|--distribution-url' "$TMP/code.sh"; then
-        ok "S01-AC-5 (change 2) no s3:// or --distribution-url in attestation.sh"
+    if ! grep -Eq "${S3P}|--distribution-url" "$TMP/code.sh"; then
+        ok "S01-AC-5 (change 2) no S3 URI or --distribution-url in attestation.sh"
     else
-        fail "S01-AC-5 (change 2) no s3:// or --distribution-url in attestation.sh"
+        fail "S01-AC-5 (change 2) no S3 URI or --distribution-url in attestation.sh"
     fi
 else
     for c in "no PROVENANCE / generate-provenance text in attestation.sh" \
              "no OVERALL_STATUS assignment driven by BUILDER_SBOM_RC / BUILDER_CVE_RC" \
              "(ruling 7) no STAGE3_DIGEST in attestation.sh" \
-             "(change 2) no s3:// or --distribution-url in attestation.sh"; do
+             "(change 2) no S3 URI or --distribution-url in attestation.sh"; do
         fail "S01-AC-5 $c (scripts/attestation.sh is absent)"
     done
 fi
 if [ -f "$ENR" ]; then
-    if ! grep -v '^[[:space:]]*#' "$ENR" | grep -Eq 's3://|--distribution-url'; then
-        ok "S01-AC-5 (change 2) no s3:// or --distribution-url in enrich-sbom.py"
+    if ! grep -v '^[[:space:]]*#' "$ENR" | grep -Eq "${S3P}|--distribution-url"; then
+        ok "S01-AC-5 (change 2) no S3 URI or --distribution-url in enrich-sbom.py"
     else
-        fail "S01-AC-5 (change 2) no s3:// or --distribution-url in enrich-sbom.py"
+        fail "S01-AC-5 (change 2) no S3 URI or --distribution-url in enrich-sbom.py"
     fi
 else
-    fail "S01-AC-5 (change 2) no s3:// or --distribution-url in enrich-sbom.py (scripts/enrich-sbom.py is absent)"
+    fail "S01-AC-5 (change 2) no S3 URI or --distribution-url in enrich-sbom.py (scripts/enrich-sbom.py is absent)"
 fi
 # generate-provenance.py absent: this can pass before the port, it is a guard against porting it
 if [ ! -e "$ROOT/scripts/generate-provenance.py" ]; then
