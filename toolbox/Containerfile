@@ -54,6 +54,7 @@ RUN set -eu; \
     rm -f /tmp/*
 
 # pkgcheck (R02) and its dependencies from PyPI, every wheel pinned by sha256; Debian does not package it.
+# pkgcore reads /etc/portage (repos.conf, make.profile); it points into HOME=/tmp so a run can write them.
 RUN set -eu; \
     printf '%s\n' \
       "pkgcheck==${PKGCHECK_VERSION} --hash=sha256:d62b79779ba5fa9a6e471ea6ffee48c1697f2f0e69d37db5c9008b366f2f5cd6" \
@@ -69,6 +70,7 @@ RUN set -eu; \
     python3 -m venv /opt/pkgcheck; \
     /opt/pkgcheck/bin/pip install --no-cache-dir --no-deps --only-binary=:all: --require-hashes -r /tmp/pkgcheck.txt; \
     ln -s /opt/pkgcheck/bin/pkgcheck /usr/local/bin/pkgcheck; \
+    ln -s /tmp/portage /etc/portage; \
     rm -f /tmp/pkgcheck.txt
 
 COPY selfcheck /usr/local/bin/toolbox-selfcheck
