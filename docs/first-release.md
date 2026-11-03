@@ -67,7 +67,7 @@ The oracle and gates are ported and made to pass against rc1's own artifacts fir
 |---|---|---|---|
 | rc1 builder image | `ghcr.io/tuckermclean/monolith-builder:20260810-d9d08d1c7422` (public) | `sha256:ab04002a13794c2ad90d821b5de535a4e4df2945346bb04d8073883ea8aab3fa`, 1.36 GB | Adopted by digest (I03); rebuilt later (M02) |
 | rc1 binpkg cache | `ghcr.io/tuckermclean/monolith-binpkgs:20260811` (public) | `sha256:d0a1838d7504d41c95c050e70d0d5399dbf546dd2e21fdd5f793df2ad700b92d`, 2.09 GB | Preserved for comparison only. It is not restored: it was built across many commits under one epoch, so its entries need not match `b9f533b`'s config. One cold build (~78 min) replaces it. |
-| rc1's Gentoo tree | `github.com/gentoo-mirror/gentoo` history | All 25 sampled `versions.lock` entries exist at `d4d0b0c7` (2026-08-10T22:30Z) | I02 picks the exact commit and archives it |
+| rc1's Gentoo tree | `github.com/gentoo-mirror/gentoo` history | rc1's VDB names gentoo.git `6622796b` (`REPO_REVISIONS`); its gentoo-mirror commit is `6e88ed01` (2026-08-11T23:00:56Z) | I02 archives it |
 | v0.1.0-rc1 release | GitHub release on the predecessor | ISO `a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a`, SBOM `3cfc322a0e105638452baa6900552769a6ad5bfbf3be190a9808ac98ca575887` | rc1 lane for O01, O02, S01; baseline for the SBOM diff |
 | Gentoo stage3 for the builder | Docker Hub `gentoo/stage3:amd64-openrc-20260810` | pin by digest (M02) | Rebuilding the builder image |
 
