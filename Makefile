@@ -3,7 +3,7 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: pull-image builder-manifest test test-lint test-unit test-revbump test-boot test-artifact rootfs fetch-iso run-bios run-uefi iso-artifact-name
+.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-boot test-artifact rootfs fetch-iso run-bios run-uefi iso-artifact-name
 
 test: test-lint test-unit test-revbump test-boot test-artifact
 
@@ -166,6 +166,10 @@ pull-image:
 	$(DOCKER) pull $(BUILDER_REF) || { echo "pull-image: cannot pull $(BUILDER_REF)"; exit 1; }
 	$(DOCKER) tag $(BUILDER_REF) $(IMAGE_NAME)
 	@echo "==> Pulled $(BUILDER_REF) and tagged it $(IMAGE_NAME)"
+
+# Copies SRC (pinned by digest) to $(REGISTRY)/DST (<name>:<tag>) and checks the digest. CI: registry-copy.yml.
+registry-copy:
+	toolbox/run -e GITHUB_TOKEN -e GITHUB_ACTOR -- env REGISTRY='$(REGISTRY)' sh scripts/registry-copy.sh '$(SRC)' '$(DST)'
 
 # Records what is in the builder image.
 builder-manifest:
