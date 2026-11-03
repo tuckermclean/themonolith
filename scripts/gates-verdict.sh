@@ -7,7 +7,7 @@
 #   with --rc1:    exit 0 iff the licence and unowned gates passed and the coverage report records a
 #                  non-empty db.built; the CVE gate's own verdict is reported, not gating (rc1's tree
 #                  carries CVEs the owner waives after this run lists them).
-# Both modes print the CVE gating findings (CVE id, component, severity) and, when GITHUB_STEP_SUMMARY
+# Both modes print the raw grype match count ("raw matches: N") and the CVE gating findings (CVE id, component, severity) and, when GITHUB_STEP_SUMMARY
 # is set, append them to that file as a Markdown table.
 # A missing or unparseable attestation-summary.json, or a missing cve-report-coverage.json, exits 1
 # and names the file.
@@ -54,13 +54,17 @@ gating = [f for f in (cov.get("findings") or []) if f.get("gating")]
 print("gates-verdict: licence=%s cve=%s unowned=%s overall=%s db.built=%s"
       % (summary.get("license_check"), summary.get("cve_check"), summary.get("unowned_check"),
          summary.get("overall"), built))
+raw = (cov.get("summary") or {}).get("total_findings")
+if raw is None:
+    raw = len(cov.get("findings") or [])
+print("raw matches: %d" % raw)
 print("gates-verdict: %d CVE gating finding(s)" % len(gating))
 for f in gating:
     print("  %s  %s  %s" % (f.get("cve", "?"), f.get("component", "?"), f.get("severity", "?")))
 
 if step:
     with open(step, "a") as out:
-        out.write("\n### CVE gating findings (%d)\n\n" % len(gating))
+        out.write("\n### CVE gating findings (%d)\n\nraw matches: %d\n\n" % (len(gating), raw))
         out.write("| CVE | Component | Severity |\n| --- | --- | --- |\n")
         for f in gating:
             out.write("| %s | %s | %s |\n" % (f.get("cve", "?"), f.get("component", "?"), f.get("severity", "?")))

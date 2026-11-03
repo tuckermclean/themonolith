@@ -157,6 +157,34 @@ else:
     print("[check-cves] All packages have CPE mappings — full candidate coverage.")
 PYEOF
 
+# ── Hand grype an SBOM without syft:package:type ─────────────────────────────
+# With that property grype takes the package for a Portage package and matches it
+# with the Portage matcher, which has no feed and no CPE fallback, so it finds
+# nothing. Without it grype matches on the CPE. A copy is scanned; the input is
+# left untouched.
+GRYPE_SBOM="$(mktemp)"
+trap 'rm -f "$GRYPE_SBOM"' EXIT
+if ! python3 - "$SBOM" "$GRYPE_SBOM" <<'PYEOF'
+import json, sys
+
+def strip(node):
+    if isinstance(node, dict):
+        return {k: strip(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [strip(v) for v in node
+                if not (isinstance(v, dict) and v.get("name") == "syft:package:type")]
+    return node
+
+with open(sys.argv[1]) as f:
+    sbom = json.load(f)
+with open(sys.argv[2], "w") as f:
+    json.dump(strip(sbom), f)
+PYEOF
+then
+    echo "[check-cves] ERROR: could not prepare the SBOM for grype: $SBOM" >&2
+    exit 1
+fi
+
 # ── Run Grype: two single-format invocations (see docs/cve-gate.md) ──────────
 # We deliberately run grype twice rather than passing two `-o fmt=path` flags
 # in one invocation. Grype's multi-output syntax is version-sensitive and this
@@ -168,7 +196,7 @@ PYEOF
 echo ""
 echo "[check-cves] Running Grype against SBOM (native JSON: fix-state + full severity)..."
 GRYPE_RC=0
-grype "sbom:${SBOM}" -o json --file "${NATIVE_OUTPUT}" 2>&1 || GRYPE_RC=$?
+grype "sbom:${GRYPE_SBOM}" -o json --file "${NATIVE_OUTPUT}" 2>&1 || GRYPE_RC=$?
 if [[ $GRYPE_RC -ne 0 ]]; then
     echo "[check-cves] ERROR: grype (native JSON pass) exited with code $GRYPE_RC" >&2
     echo "[check-cves] Check grype DB status with: grype db status" >&2
@@ -176,7 +204,7 @@ if [[ $GRYPE_RC -ne 0 ]]; then
 fi
 
 echo "[check-cves] Running Grype against SBOM (CycloneDX VEX: dashboard-compatible)..."
-grype "sbom:${SBOM}" -o cyclonedx-json --file "${OUTPUT}" 2>&1 || GRYPE_RC=$?
+grype "sbom:${GRYPE_SBOM}" -o cyclonedx-json --file "${OUTPUT}" 2>&1 || GRYPE_RC=$?
 if [[ $GRYPE_RC -ne 0 ]]; then
     echo "[check-cves] ERROR: grype (cyclonedx-json pass) exited with code $GRYPE_RC" >&2
     echo "[check-cves] Check grype DB status with: grype db status" >&2
