@@ -141,7 +141,10 @@ mk hooknotbuilt hooknotbuilt; neg "(--source-audit) postinst: entry whose packag
 mk stale stale;        neg "stale allowlist entry" stale "" etc/nothere
 mk stalemod stalemod;  neg "stale modified: entry" stalemod "" usr/bin/ghost
 mk stray stray;        neg "an unowned, unlisted file still fails (ported gate)" stray "" /usr/bin/stray
-mk noboot;             neg "a toolchain file missing from the bootstrap exceptions is unowned" noboot noboot /lib/ld-musl-i386.so.1
+mk noboot; prov clean ""; rc_ctl=$RC; prov noboot noboot  # control keeps the bootstrap exceptions, the defect drops them
+if [ "$rc_ctl" -eq 0 ] && [ "$RC" -ne 0 ] && grep -q -- /lib/ld-musl-i386.so.1 "$TMP/noboot/out.txt"; then
+    ok "B01-AC-14 a toolchain file missing from the bootstrap exceptions is unowned: exits non-zero and names /lib/ld-musl-i386.so.1"
+else fail "B01-AC-14 a toolchain file missing from the bootstrap exceptions is unowned: exits non-zero and names /lib/ld-musl-i386.so.1 (defect rc=$RC, control rc=$rc_ctl)"; fi
 
 # Not under --source-audit, an unbuilt cpv is not checked (MS1 builds run without it)
 prov notbuilt
