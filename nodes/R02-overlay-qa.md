@@ -12,7 +12,7 @@
 The overlay passes `pkgcheck scan` against the pinned tree, as any Gentoo repository should. The minimal revbump rule that the cache depends on is already enforced by R04 on the critical path; this node adds the full QA scan, which passes before the first release (P01 depends on it).
 
 ## Standard mechanism
-`pkgcheck scan` with `--repo configs/overlay` and the pinned tree (I02) as master. Custom code: none. If `pkgcheck scan --commits` reports a missing revision for an overlay in a repository subdirectory (unverified), it replaces R04's script.
+`pkgcheck scan` with `--repo configs/overlay` and the pinned tree (I02) as master, in the toolbox, which carries pkgcheck pinned by sha256 (`toolbox/Containerfile`). Custom code: none. If `pkgcheck scan --commits` reports a missing revision for an overlay in a repository subdirectory (unverified), it replaces R04's script.
 
 ## Tests
 - **Ported first:** none; the predecessor had no overlay check.
@@ -20,7 +20,7 @@ The overlay passes `pkgcheck scan` against the pinned tree, as any Gentoo reposi
 - **Baseline:** `pkgcheck` over `b9f533b`'s overlay records the warnings that `docs/overlay-qa.md` accepts.
 
 ## Changes from the port
-1. **Scan.** Add `make test-overlay` to `make test`: `pkgcheck scan` of `configs/overlay` in the builder image, with the pinned tree restored from I02's archive (the target's prerequisite). `pr-validate.yml` runs it as a second step, `make test-overlay`, because it needs the network that `test-lint` and `test-unit` run without. Accepted warnings are listed in `docs/overlay-qa.md`, each with a reason. *AC-1.*
+1. **Scan.** Add `make test-overlay` to `make test`: `pkgcheck scan` of `configs/overlay` in the toolbox, with the pinned tree restored from I02's archive (the target's prerequisite) as the `gentoo` master and the target's profile, `profiles/embedded` (the rc1 builder's `/usr/i486-linux-musl/etc/portage/make.profile`). `pr-validate.yml` runs it as a second step, `make test-overlay`, because it needs the network that `test-lint` and `test-unit` run without. Accepted warnings are listed in `docs/overlay-qa.md`, each with a reason. *AC-1.*
 2. **Replace R04 if pkgcheck covers it.** Run `pkgcheck scan --commits` on R04's fixture cases. If it fails all the cases R04 fails, delete `check-revbump.sh` and fold `test-revbump` into `test-overlay`; if not, keep R04 and record why in `docs/overlay-qa.md`. *AC-2.*
 
 ## Gate
@@ -30,4 +30,6 @@ The overlay passes `pkgcheck scan` against the pinned tree, as any Gentoo reposi
 ## Risks
 - pkgcheck git-check behaviour in a subdirectory repository is unverified.
 - The tree pull adds time to every PR; it uses the I02 archive by digest.
-- Whether `pkgcheck` is installed in the rc1 builder image is unverified; the first slice checks it.
+- pkgcheck is not in the rc1 builder image (checked 2026-11-03) and Debian does not package it, so the toolbox installs pkgcheck 0.10.49 and its eight dependencies from PyPI into a venv, each wheel pinned by sha256. On the toolbox's Python 3.13 its profile cache fails to write; `--cache no` avoids it (about 25 s to load the profiles). A dry run on today's overlay reports two warnings on `monolith-base` (`MissingRemoteId`, `BadDescription`).
+- The toolbox's bash is 5.2, so pkgcore disables EAPI 9; the overlay uses EAPI 8.
+- pkgcore finds `repos.conf` and `make.profile` only under `/etc/portage`, and the toolbox runs as the caller's uid; `/etc/portage` is a symlink to `/tmp/portage` (`HOME=/tmp`), which the target writes. `pkgcheck scan --commits` on an ebuild and `files/` edit without a revbump reported nothing (2026-11-03 dry run), so AC-2 is expected to keep R04.
