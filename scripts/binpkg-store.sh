@@ -63,7 +63,8 @@
 #   BUILDER_DIGEST, TREE_COMMIT   the tag's inputs (the Makefile's pins).
 #   PORTAGE_CONFIG_DIR   the config the tag hashes. Defaults to configs/portage.
 #   GITHUB_ACTIONS, GITHUB_REF   the CI ref policy: with GITHUB_ACTIONS=true, push runs
-#                   only on refs/heads/main and pull is skipped on refs/tags/*.
+#                   only on refs/heads/main and pull is skipped on refs/tags/*. An empty
+#                   GITHUB_REF under GITHUB_ACTIONS=true is an error for both, not a skip.
 #   PKGDIR          the binpkg tree. Defaults to <repo>/output/packages,
 #                   which is what /output/packages resolves to under the
 #                   repo checkout on the runner (see configs/portage/make.conf).
