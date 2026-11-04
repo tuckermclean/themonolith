@@ -14,6 +14,9 @@ HOST_ETC="${HOST_ETC:-/etc}"
 CONFIGS_DIR="${CONFIGS_DIR:-/configs}"
 PORTAGE_DIR="${CONFIGS_DIR}/portage"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+# The run's start: a release's source audit takes only packages built at or after it.
+RUN_START="$(date +%s)"
 
 # Parallelism settings (can be overridden via environment)
 # Exported so Portage can use ${JOBS} in make.conf MAKEOPTS
@@ -286,7 +289,8 @@ if [ "${MONOLITH_USEPKG:-y}" = "n" ]; then
 
     # Packages already installed in the target root would be skipped, not rebuilt, and then
     # shipped. Name each one (cat/pn:slot) so Portage merges it again in this run; --oneshot
-    # keeps them out of the world file.
+    # keeps these dependency atoms out of the sysroot's world file, and with them the world
+    # atoms of this command line (nothing reads that file).
     for vdb in "${SYSROOT}"/var/db/pkg/*/*/; do
         [ -f "${vdb}SLOT" ] || continue
         pf=$(basename "${vdb}")
@@ -485,6 +489,27 @@ fi
 echo "==> Decompressing bzip2 man pages..."
 find "${SYSROOT_DIR}/usr/share/man" -name "*.bz2" -print0 2>/dev/null | \
     xargs -0 -r bunzip2 2>/dev/null || true
+
+# Release: every file shipped must come from a package merged from source in this run.
+BOOTSTRAP_EXCEPTIONS="${CONFIGS_DIR}/attestation/bootstrap-exceptions.txt"
+if [ "${RELEASE}" -eq 1 ] && [ ! -f "${BOOTSTRAP_EXCEPTIONS}" ]; then
+    # The builder mounts the repo's configs, which hold this file; only a fixture CONFIGS_DIR lacks it.
+    echo "::warning::Source audit NOT run: ${BOOTSTRAP_EXCEPTIONS} not found"
+elif [ "${RELEASE}" -eq 1 ]; then
+    echo "==> Source audit of ${SYSROOT_DIR}"
+    if ! sh "${SCRIPTS_DIR}/source-audit.sh" \
+            --sysroot "${SYSROOT_DIR}" \
+            --vdb "${SYSROOT}/var/db/pkg" \
+            --log "${LOGFILE}" \
+            --start "${RUN_START}" \
+            --exceptions "${BOOTSTRAP_EXCEPTIONS}" \
+            --output "${OUTPUT_DIR}/source-audit.tsv"; then
+        echo "::error::Source audit failed: the sysroot holds files not built from source in this run"
+        exit 1
+    fi
+else
+    echo "==> Source audit skipped: development mode (MONOLITH_USEPKG=y) ships cached packages by design"
+fi
 
 TOTAL_SIZE=$(du -sh "${SYSROOT_DIR}" | cut -f1)
 TOTAL_FILES=$(find "${SYSROOT_DIR}" -type f | wc -l)
