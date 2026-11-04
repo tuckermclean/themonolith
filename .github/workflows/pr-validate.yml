@@ -27,3 +27,6 @@ jobs:
         run: make test-lint test-unit test-revbump
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+
+      - name: Overlay QA (pkgcheck)
+        run: make test-overlay
