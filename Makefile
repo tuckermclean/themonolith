@@ -3,15 +3,19 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-boot test-artifact test-gates test-cve-canary attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline
+.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline
 
-test: test-lint test-unit test-revbump test-boot test-artifact test-gates test-cve-canary
+test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
 
 test-unit:
 	toolbox/run --network none -- sh -c 'echo "==> Shell unit tests (scripts/tests/*.sh)"; rc=0; for t in scripts/tests/*.sh; do [ -e "$$t" ] || continue; echo "==> Running $$t"; sh "$$t" || { echo "::error file=$$t::test suite failed"; rc=1; }; done; exit $$rc'
+
+# pkgcheck scan of the overlay against the pinned tree (needs the network for sync-portage).
+test-overlay: sync-portage
+	toolbox/run -- sh scripts/overlay-qa.sh $(TREE_DIR) configs/overlay docs/overlay-qa.md
 
 # BASE: the merge base of HEAD with origin/main if that ref exists, else with main.
 BASE ?= $(shell git merge-base HEAD $$(git rev-parse --verify -q origin/main >/dev/null && echo origin/main || echo main))
