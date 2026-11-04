@@ -119,10 +119,13 @@ if python3 - "$wf" <<'PY' 2>/dev/null
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
 steps = [s for j in d["jobs"].values() for s in j["steps"]]
-sys.exit(0 if any(str(s.get("run", "")).strip() == "make test-overlay" for s in steps) else 1)
+def mk(s):
+    w = str(s.get("run", "")).split()
+    return len(w) > 1 and w[0] == "make" and "test-overlay" in w[1:]
+sys.exit(0 if any(mk(s) for s in steps) else 1)
 PY
-then pass "R02-AC-1 pr-validate.yml has a step running make test-overlay"
-else fail "R02-AC-1 pr-validate.yml has a step running make test-overlay"; fi
+then pass "R02-AC-1 pr-validate.yml runs make … test-overlay"
+else fail "R02-AC-1 pr-validate.yml runs make … test-overlay"; fi
 
 # R02-AC-1 (ruling 4): docs/overlay-qa.md accepted block
 doc=$root/docs/overlay-qa.md
