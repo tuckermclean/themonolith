@@ -3,7 +3,7 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-boot test-artifact test-gates test-cve-canary attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline
+.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-boot test-artifact test-gates test-cve-canary attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push
 
 test: test-lint test-unit test-revbump test-boot test-artifact test-gates test-cve-canary
 
@@ -337,3 +337,22 @@ test-cve-canary: pull-image grype-db-update
 		echo "::error::until this is fixed — do not merge/release until it's green again."; \
 		echo "::error::See docs/cve-gate.md for background and scripts/run-cve-canary.sh for the check."; \
 		exit 1; }
+
+# ---- B01: the binary package cache ----
+
+PKGDIR ?= output/packages
+# The cache tag inputs are the pins above; the CI ref policy (main pushes, tags do not pull) is in the script.
+CACHE_RUN = toolbox/run -e GITHUB_TOKEN -e GITHUB_ACTOR -e GITHUB_ACTIONS -e GITHUB_REF --
+CACHE_ENV = REGISTRY='$(REGISTRY)' BUILDER_DIGEST='$(BUILDER_DIGEST)' TREE_COMMIT='$(TREE_COMMIT)' PKGDIR='$(PKGDIR)'
+
+# Prints the cache tag.
+cache-tag:
+	@toolbox/run --network none -- env $(CACHE_ENV) bash scripts/binpkg-store.sh tag
+
+# Pulls the cache for the current tag into PKGDIR; a miss leaves it empty, any other failure stops here.
+cache-pull:
+	$(CACHE_RUN) sh -c 'set -eu; $(tree_login); $(CACHE_ENV) bash scripts/binpkg-store.sh pull'
+
+# Prunes superseded packages, packs PKGDIR and pushes it under the current tag.
+cache-push:
+	$(CACHE_RUN) sh -c 'set -eu; $(tree_login); $(CACHE_ENV) bash scripts/binpkg-store.sh prune && $(CACHE_ENV) bash scripts/binpkg-store.sh pack && $(CACHE_ENV) bash scripts/binpkg-store.sh push'
