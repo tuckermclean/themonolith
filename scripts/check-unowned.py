@@ -232,11 +232,11 @@ def read_bootstrap_exceptions(path: str) -> dict:
             line = line.split("#", 1)[0].strip()
             if not line:
                 continue
-            parts = line.split()
-            if len(parts) != 2 or not parts[0].startswith("/"):
+            m = re.match(r"^(/.*\S)\s+(\S+)$", line)   # the path is everything before the last space
+            if not m:
                 print(f"[check-unowned] ERROR: bad bootstrap exception line: {line}", file=sys.stderr)
                 sys.exit(1)
-            exceptions[parts[0]] = parts[1]
+            exceptions[m.group(1)] = m.group(2)
     return exceptions
 
 
@@ -299,10 +299,12 @@ def provenance_check(disk_files, sysroot, allowlist, modified, exceptions, packa
     def built_col(cpv):
         if built is None:
             return ""
-        if cpv not in built and cpv not in unbuilt_reported:
+        if cpv in built:
+            return "built-this-run"
+        if cpv not in unbuilt_reported:
             unbuilt_reported.add(cpv)
             failures.append(f"{cpv} is owned in the rootfs but not built-this-run")
-        return "built-this-run"
+        return "not-built-this-run"
 
     def match_first(path, entries, used):
         rel = path.lstrip("/")
@@ -317,8 +319,9 @@ def provenance_check(disk_files, sysroot, allowlist, modified, exceptions, packa
     for path in sorted(disk_files):
         real = sysroot + path
         recs = records.get(path)
+        e = match_first(path, allowlist, used_allow)   # an entry is stale only if it matches no file, owned or not
         if recs is None and (path + ".bz2") in records:
-            # Installed as path.bz2, decompressed by extract-packages.sh: the recorded MD5 is of the compressed bytes.
+            # Installed as path.bz2, decompressed by build-packages.sh: the recorded MD5 is of the compressed bytes.
             cpv = records[path + ".bz2"][0][0]
             rows.append((path, "package", cpv, built_col(cpv)))
             continue
@@ -327,6 +330,7 @@ def provenance_check(disk_files, sysroot, allowlist, modified, exceptions, packa
             mod = match_first(path, modified, used_mod)
             if path in exceptions:
                 used_exc.add(path)
+                failures.append(f"{path}: a bootstrap exception, but owned by {cpv}")
             if kind == "obj":
                 if os.path.islink(real) or not os.path.isfile(real):
                     ok = False
@@ -348,7 +352,6 @@ def provenance_check(disk_files, sysroot, allowlist, modified, exceptions, packa
             used_exc.add(path)
             rows.append((path, "bootstrap", exceptions[path], "bootstrap" if built is not None else ""))
             continue
-        e = match_first(path, allowlist, used_allow)
         if e is not None:
             rows.append((path, "generated", str(e.get("source") or ""), "built-this-run" if built is not None else ""))
         else:
@@ -404,12 +407,13 @@ Exit codes:
                         help="also check owned files' bytes and every allowlist entry's source")
     parser.add_argument("--package-tree", metavar="DIR", help="output/sysroot (with --provenance)")
     parser.add_argument("--source-audit", metavar="TSV", help="source-audit.sh report; release mode (with --provenance)")
-    parser.add_argument("--bootstrap-exceptions", metavar="FILE", help="toolchain files: '<abs path> <host cpv>' lines")
+    parser.add_argument("--bootstrap-exceptions", metavar="FILE",
+                        help="toolchain files: '<abs path> <host cpv>' lines; allowed as unowned (also without --provenance)")
     parser.add_argument("--provenance-report", metavar="TSV", help="write rootfs-provenance.tsv here")
     args = parser.parse_args()
     if args.provenance and not args.package_tree:
         parser.error("--provenance needs --package-tree")
-    for opt in ("source_audit", "bootstrap_exceptions", "provenance_report", "package_tree"):
+    for opt in ("source_audit", "provenance_report", "package_tree"):
         if getattr(args, opt) and not args.provenance:
             parser.error("--" + opt.replace("_", "-") + " needs --provenance")
 
@@ -495,12 +499,18 @@ Exit codes:
                 for r in rows:
                     f.write("\t".join(r) + "\n")
 
+    port_exceptions = {} if args.provenance or not args.bootstrap_exceptions else read_bootstrap_exceptions(args.bootstrap_exceptions)
     for path in ([] if args.provenance else sorted(disk_files)):
-        if path in owned_paths:
+        if path in port_exceptions and (path in owned_paths or (path + ".bz2") in owned_paths):
+            prov_failures.append(f"{path}: a bootstrap exception, but owned in the rootfs")
+            owned_count += 1
+        elif path in port_exceptions:
+            allowlisted_count += 1
+        elif path in owned_paths:
             owned_count += 1
         elif (path + ".bz2") in owned_paths:
             # File was installed as path.bz2 by portage and decompressed during
-            # rootfs assembly (extract-packages.sh runs bunzip2 on man pages).
+            # rootfs assembly (build-packages.sh runs bunzip2 on man pages).
             # The portage CONTENTS entry uses the original .bz2 name.
             owned_count += 1
         elif is_allowlisted(path, allowlist):

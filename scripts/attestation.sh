@@ -24,6 +24,8 @@
 #   --cve-policy PATH    CVE gate policy YAML [default: /configs/attestation/cve-policy.yaml]
 #   --unowned-allowlist PATH
 #                        Unowned files allowlist YAML [default: /configs/attestation/unowned-allowlist.yaml]
+#   --bootstrap-exceptions PATH
+#                        Toolchain files the unowned gate accepts: '<abs path> <host cpv>' lines [default: none]
 #   --include-builder    Also attest to the builder image itself (Pillar 5): scans the
 #                        running container's filesystem (dir:/) with Syft + Grype,
 #                        excluding bind-mounted volumes that are not part of the image.
@@ -62,6 +64,7 @@ OVERRIDES_FILE="/configs/attestation/cpe-overrides.yaml"
 POLICY_FILE="/configs/attestation/license-policy.yaml"
 CVE_POLICY_FILE="/configs/attestation/cve-policy.yaml"
 UNOWNED_ALLOWLIST_FILE="/configs/attestation/unowned-allowlist.yaml"
+BOOTSTRAP_EXCEPTIONS_FILE=""
 INCLUDE_BUILDER=1
 BUILDER_DIGEST=""
 
@@ -112,6 +115,7 @@ while [[ $# -gt 0 ]]; do
         --policy)             POLICY_FILE="$2";            shift 2 ;;
         --cve-policy)         CVE_POLICY_FILE="$2";        shift 2 ;;
         --unowned-allowlist)  UNOWNED_ALLOWLIST_FILE="$2"; shift 2 ;;
+        --bootstrap-exceptions) BOOTSTRAP_EXCEPTIONS_FILE="$2"; shift 2 ;;
         --include-builder)    INCLUDE_BUILDER=1;           shift ;;
         --builder-digest)     BUILDER_DIGEST="$2";         shift 2 ;;
         --help)         usage; exit 0 ;;
@@ -432,6 +436,7 @@ if [[ -f "${SYFT_JSON_FILE}" ]]; then
         --output    "${OUTPUT_DIR}/unowned-report.json"
     )
     UNOWNED_ARGS+=(--allowlist "${UNOWNED_ALLOWLIST_FILE}")
+    [[ -z "${BOOTSTRAP_EXCEPTIONS_FILE}" ]] || UNOWNED_ARGS+=(--bootstrap-exceptions "${BOOTSTRAP_EXCEPTIONS_FILE}")
     python3 "${UNOWNED_SCRIPT}" "${UNOWNED_ARGS[@]}" || UNOWNED_RC=$?
 else
     fail "Syft native JSON not found at ${SYFT_JSON_FILE} — unowned files check cannot run"

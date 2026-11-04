@@ -279,6 +279,7 @@ ATTEST_ARGS = --sysroot /output/rootfs --iso /output/$(notdir $(ISO)) --build-ta
 	--policy /configs/attestation/license-policy.yaml \
 	--cve-policy /configs/attestation/cve-policy.yaml \
 	--unowned-allowlist /configs/attestation/unowned-allowlist.yaml \
+	--bootstrap-exceptions /configs/attestation/bootstrap-exceptions.txt \
 	--output-dir /output/attestation
 
 # Downloads RC1_SBOM_URL to $(RC1_SBOM) and checks its sha256; a mismatch deletes it and fails.
