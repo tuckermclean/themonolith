@@ -160,7 +160,7 @@ scripts/nightly-cve-monitor.py	100755	44ed144305e0651238bd544e3de654d9cdd7beca	P
 scripts/pcf-fontname.py	100644	fa3aa8cda64c27dd2e4cddf9481d69e39878a349	B03	port	scripts/pcf-fontname.py	-
 scripts/run-cve-canary.sh	100755	f701a3cf45765576a7ce9b7c893d10cff318bea4	S01	port	scripts/run-cve-canary.sh	-
 scripts/s3-gc.sh	100755	300153e3b3858b51d7b836a15fd9cd5d908aa649	-	drop	-	-
-scripts/savedconfig-cache.sh	100755	d95fc93936a1b1dace8be2178556c29a5ad63dd8	B01	port	scripts/savedconfig-cache.sh	B02
+scripts/savedconfig-cache.sh	100755	d95fc93936a1b1dace8be2178556c29a5ad63dd8	B01	port+fix	scripts/savedconfig-cache.sh	B02
 scripts/static-audit.sh	100755	139c9ee97bb447e2dbd1fa854e222a9f352689af	O02	port+fix	scripts/static-audit.sh	-
 scripts/sync-portage.sh	100755	1204b067269634177018f80322008c0deaaa1fad	I02	port+fix	scripts/sync-portage.sh	-
 scripts/tests/binpkg-store.test.sh	100755	dca3f7ee715a7f90acb3ad5207347e6f8c03c663	B01	port+fix	scripts/tests/binpkg-store.test.sh	-
