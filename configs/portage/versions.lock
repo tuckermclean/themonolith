@@ -31,7 +31,7 @@ app-editors/vim:9.1.1652-r2:0
 app-editors/nano:9.2:0
 sys-apps/man-pages:6.17-r1:0
 app-text/mandoc:1.14.6-r1:0
-sys-devel/binutils:2.47:2.47
+sys-devel/binutils:2.46.1:2.46
 dev-build/make:4.4.1-r102:0
 dev-debug/strace:7.1:0
 sys-devel/patch:2.8-r1:0
@@ -44,7 +44,7 @@ app-arch/gzip:1.14:0
 sys-apps/iproute2:7.0.0:0
 sys-apps/net-tools:2.10:0
 net-misc/iputils:20250605-r4:0
-net-misc/dhcpcd:10.5.0:0
+net-misc/dhcpcd:10.3.2:0
 sys-apps/ethtool:7.0:0
 net-firewall/nftables:1.1.6:0
 net-dns/dnsmasq:2.93:0
