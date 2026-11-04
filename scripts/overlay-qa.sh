@@ -46,15 +46,31 @@ rm -rf "$conf/make.profile"
 ln -s "$tree/profiles/embedded" "$conf/make.profile"
 
 [ -e "$overlay/metadata/md5-cache" ] || rmcache=$overlay/metadata/md5-cache
-rc=0
-# -j 1: the toolbox's 63M /dev/shm is too small for the parallel check runners (SIGBUS)
-pkgcheck scan -j 1 --config no --cache no --repo "$overlay" -R FormatReporter \
-	--format '{category}/{package} {name}' >"$work/out" 2>"$work/err" || rc=$?
-if [ "$rc" -ne 0 ]; then
+# pkgcheck's tree-sitter stack crashes at random in a native call ("check runner N killed by SIGBUS/SIGSEGV",
+# about 40-50% of full scans of dev-lang/monolith-perl). A scan is repeated only for that error, at most
+# 8 attempts; any other failure fails at once. Toolbox follow-up: report it upstream or pin a stack that
+# does not crash. -j 1 does not prevent the crash; it only keeps one check runner per attempt.
+max=8
+attempt=1
+while :; do
+	rc=0
+	pkgcheck scan -j 1 --config no --cache no --repo "$overlay" -R FormatReporter \
+		--format '{category}/{package} {name}' >"$work/out" 2>"$work/err" || rc=$?
+	[ "$rc" -ne 0 ] || break
+	if grep -Eq 'check runner [0-9]+ killed by SIG' "$work/err"; then
+		if [ "$attempt" -lt "$max" ]; then
+			echo "overlay-qa: pkgcheck crashed (attempt $attempt of $max): $(grep -E 'check runner [0-9]+ killed by SIG' "$work/err" | head -n 1); retrying" >&2
+			attempt=$((attempt + 1))
+			continue
+		fi
+		cat "$work/out" "$work/err" >&2
+		echo "overlay-qa: pkgcheck crashed in all $max attempts" >&2
+		exit 1
+	fi
 	cat "$work/out" "$work/err" >&2
 	echo "overlay-qa: pkgcheck exited $rc" >&2
 	exit 1
-fi
+done
 if [ -s "$work/err" ]; then
 	cat "$work/err" >&2
 fi
