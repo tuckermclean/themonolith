@@ -154,7 +154,7 @@ man-db sys-apps/man-db
 gcc sys-devel/gcc
 usbutils sys-apps/usbutils
 fortune-mod games-misc/fortune-mod
-thttpd net-www/thttpd'
+thttpd www-servers/thttpd'
 # a mask line is the bare category/package (every version)
 masked_in() { # atom file...
     a="$1"; shift
