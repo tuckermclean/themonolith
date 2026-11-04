@@ -8,7 +8,8 @@
 #   --log         this run's emerge log; a cpv is built from source iff a line
 #                 '>>> Emerging (N of M) <cpv>[::repo] ...' names it ('Emerging binary' lines do not count)
 #   --start       the run's start, epoch seconds; the owner's BUILD_TIME must be at or after it
-#   --exceptions  configs/attestation/bootstrap-exceptions.txt: '<absolute path> <host cpv>', '#' comments
+#   --exceptions  configs/attestation/bootstrap-exceptions.txt: '<absolute path> <host cpv>', '#' comments;
+#                 the path is everything before the last space
 #   --output      report: header 'path<TAB>owner<TAB>provenance', one row per file,
 #                 provenance 'built-this-run' or 'bootstrap'
 #
@@ -46,7 +47,11 @@ find "$VDB" -mindepth 3 -maxdepth 3 -name CONTENTS -print | LC_ALL=C sort > "$WO
 
 mkdir -p "$(dirname "$OUTPUT")"
 awk -v vdb="$VDB" -v start="$START" -v logf="$LOG" -v exc="$EXCEPTIONS" -v out="$OUTPUT" '
-function cpv_of(f,   c) { c = f; sub("^" vdb "/", "", c); sub("/CONTENTS$", "", c); return c }
+function cpv_of(f,   c, n) {
+    c = f; n = length(vdb) + 1
+    if (substr(c, 1, n) == vdb "/") c = substr(c, n + 1)   # literal prefix, not a regex
+    sub("/CONTENTS$", "", c); return c
+}
 BEGIN {
     # cpvs merged from source this run
     while ((getline l < logf) > 0) {
@@ -57,9 +62,11 @@ BEGIN {
     close(logf)
     # declared bootstrap exceptions
     while ((getline l < exc) > 0) {
-        sub(/#.*/, "", l)
-        if (split(l, w, " ") != 2) { if (l ~ /[^ \t]/) { print "FAIL: bad exception line: " l; bad++ } ; continue }
-        host[w[1]] = w[2]
+        sub(/#.*/, "", l); sub(/[ \t]+$/, "", l)
+        if (l !~ /[^ \t]/) continue
+        # the path is everything before the last space
+        if (l !~ /^\/.* [^ \t]+$/ || !match(l, / [^ ]+$/)) { print "FAIL: bad exception line: " l; bad++; continue }
+        host[substr(l, 1, RSTART - 1)] = substr(l, RSTART + 1)
     }
     close(exc)
     print "path\towner\tprovenance" > out

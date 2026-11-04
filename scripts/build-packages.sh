@@ -9,6 +9,7 @@ set -o pipefail
 
 CROSS_TARGET="${CROSS_TARGET:-i486-linux-musl}"
 # The target root and the build host's /etc, overridable so the script can be tested unprivileged.
+SYSROOT_IS_SEAM="${SYSROOT:+1}"
 SYSROOT="${SYSROOT:-/usr/${CROSS_TARGET}}"
 HOST_ETC="${HOST_ETC:-/etc}"
 CONFIGS_DIR="${CONFIGS_DIR:-/configs}"
@@ -146,6 +147,8 @@ grep -q "^gamestat:" "${HOST_ETC}/group" || echo "gamestat:x:36:" >> "${HOST_ETC
 # Observed needs: root:portage (eselect/vim/lua), root:gamestat (bsd-games).
 # portage id is 250 (Gentoo standard); grep guards keep this idempotent and
 # non-destructive if baselayout later provides the real entries.
+# These seeded files are build scaffolding: build-rootfs.sh overwrites /etc/passwd and /etc/group in
+# full, and the sysroot export below leaves them out.
 SYSROOT_ETC="${SYSROOT}/etc"
 mkdir -p "${SYSROOT_ETC}"
 touch "${SYSROOT_ETC}/group" "${SYSROOT_ETC}/passwd"
@@ -444,6 +447,7 @@ mkdir -p "${SYSROOT_DIR}"
 #   usr/i486-linux-musl/ nested crossdev sysroot created by some packages (e.g. binutils)
 #   usr/bin/i486-linux-musl-* crossdev wrapper symlinks (binutils-config eselect, not runtime tools)
 #   etc/portage/         portage build config synced into crossdev sysroot by build-packages.sh
+#   etc/passwd, etc/group  seeded accounts for the install phases; build-rootfs.sh writes both in full
 #   usr/lib/pkgconfig/   .pc files — needed to compile against libs, not to run them
 #   usr/lib/lib{c,m,pthread,dl,rt,resolv,util,xnet,crypt}.a  musl static stubs
 #   usr/lib/{crt1,Scrt1,rcrt1,crti,crtn}.o  musl CRT startup objects
@@ -453,6 +457,8 @@ rsync -a \
     --exclude='/usr/i486-linux-musl/' \
     --exclude='/usr/bin/i486-linux-musl-*' \
     --exclude='/etc/portage/' \
+    --exclude='/etc/passwd' \
+    --exclude='/etc/group' \
     --exclude='/usr/lib/pkgconfig/' \
     --exclude='/usr/lib/libc.a' \
     --exclude='/usr/lib/libm.a' \
@@ -493,8 +499,13 @@ find "${SYSROOT_DIR}/usr/share/man" -name "*.bz2" -print0 2>/dev/null | \
 # Release: every file shipped must come from a package merged from source in this run.
 BOOTSTRAP_EXCEPTIONS="${CONFIGS_DIR}/attestation/bootstrap-exceptions.txt"
 if [ "${RELEASE}" -eq 1 ] && [ ! -f "${BOOTSTRAP_EXCEPTIONS}" ]; then
-    # The builder mounts the repo's configs, which hold this file; only a fixture CONFIGS_DIR lacks it.
-    echo "::warning::Source audit NOT run: ${BOOTSTRAP_EXCEPTIONS} not found"
+    if [ -n "${SYSROOT_IS_SEAM}" ]; then
+        # SYSROOT set by the caller is the test seam, whose CONFIGS_DIR is a fixture without this file.
+        echo "::warning::Source audit NOT run: ${BOOTSTRAP_EXCEPTIONS} not found (test seam SYSROOT)"
+    else
+        echo "::error::Source audit cannot run: ${BOOTSTRAP_EXCEPTIONS} not found"
+        exit 1
+    fi
 elif [ "${RELEASE}" -eq 1 ]; then
     echo "==> Source audit of ${SYSROOT_DIR}"
     if ! sh "${SCRIPTS_DIR}/source-audit.sh" \
