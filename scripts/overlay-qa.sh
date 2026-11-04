@@ -13,7 +13,13 @@ accepted=$3
 [ -d "$tree/profiles/embedded" ] || { echo "overlay-qa: $tree/profiles/embedded: no such directory" >&2; exit 2; }
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/overlay-qa.XXXXXX")
-trap 'rm -rf "$work"' EXIT INT TERM
+rmcache=
+cleanup() {
+	rm -rf "$work"
+	[ -z "$rmcache" ] || rm -rf "$rmcache"
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM
 
 # Accepted pairs.
 awk '/^## /{s=($0=="## Accepted warnings");f=0;next} s&&/^```/{if(f){exit}f=1;next} s&&f' "$accepted" \
@@ -39,6 +45,7 @@ printf '[DEFAULT]\nmain-repo = gentoo\n\n[gentoo]\nlocation = %s\n\n[monolith]\n
 rm -rf "$conf/make.profile"
 ln -s "$tree/profiles/embedded" "$conf/make.profile"
 
+[ -e "$overlay/metadata/md5-cache" ] || rmcache=$overlay/metadata/md5-cache
 rc=0
 pkgcheck scan --config no --cache no --repo "$overlay" -R FormatReporter \
 	--format '{category}/{package} {name}' >"$work/out" 2>"$work/err" || rc=$?

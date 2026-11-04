@@ -24,9 +24,6 @@ jobs:
           fetch-depth: 0
 
       - name: Lint and unit tests
-        run: make test-lint test-unit test-revbump
+        run: make test-lint test-unit test-revbump test-overlay
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-
-      - name: Overlay QA (pkgcheck)
-        run: make test-overlay
