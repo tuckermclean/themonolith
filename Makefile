@@ -343,7 +343,7 @@ test-cve-canary: pull-image grype-db-update
 PKGDIR ?= output/packages
 # The cache tag inputs are the pins above; the CI ref policy (main pushes, tags do not pull) is in the script.
 CACHE_RUN = toolbox/run -e GITHUB_TOKEN -e GITHUB_ACTOR -e GITHUB_ACTIONS -e GITHUB_REF --
-CACHE_ENV = REGISTRY='$(REGISTRY)' BUILDER_DIGEST='$(BUILDER_DIGEST)' TREE_COMMIT='$(TREE_COMMIT)' PKGDIR='$(PKGDIR)'
+CACHE_ENV = REGISTRY=$(REGISTRY) BUILDER_DIGEST=$(BUILDER_DIGEST) TREE_COMMIT=$(TREE_COMMIT) PKGDIR=$(PKGDIR)
 
 # Prints the cache tag.
 cache-tag:
@@ -351,11 +351,11 @@ cache-tag:
 
 # Pulls the cache for the current tag into PKGDIR; a miss leaves it empty, any other failure stops here.
 cache-pull:
-	$(CACHE_RUN) sh -c 'set -eu; $(tree_login); $(CACHE_ENV) bash scripts/binpkg-store.sh pull'
+	$(CACHE_RUN) sh -c 'set -eu; $(tree_login); $(CACHE_ENV) bash scripts/binpkg-store.sh pull; bash scripts/savedconfig-cache.sh check $(PKGDIR)'
 
 # Prunes superseded packages, packs PKGDIR and pushes it under the current tag.
 cache-push:
-	$(CACHE_RUN) sh -c 'set -eu; $(tree_login); $(CACHE_ENV) bash scripts/binpkg-store.sh prune && $(CACHE_ENV) bash scripts/binpkg-store.sh pack && $(CACHE_ENV) bash scripts/binpkg-store.sh push'
+	$(CACHE_RUN) sh -c 'set -eu; $(tree_login); bash scripts/savedconfig-cache.sh mark $(PKGDIR) && $(CACHE_ENV) bash scripts/binpkg-store.sh prune && $(CACHE_ENV) bash scripts/binpkg-store.sh pack && $(CACHE_ENV) bash scripts/binpkg-store.sh push'
 
 # ---- B01: the package build, in the builder image (I03) on the pinned tree (I02) ----
 
