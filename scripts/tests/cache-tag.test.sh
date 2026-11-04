@@ -27,7 +27,15 @@ cat > "$STUBS/oras" <<'STUB'
 #!/bin/sh
 echo "$*" >> "$ORAS_LOG"
 case "$1" in
-    pull) if [ -n "${ORAS_PULL_ERR:-}" ]; then echo "$ORAS_PULL_ERR" >&2; exit 1; fi ;;
+    pull) if [ -n "${ORAS_PULL_ERR:-}" ]; then echo "$ORAS_PULL_ERR" >&2; exit 1; fi
+          # success: write one layer (a zstd-compressed tar of an empty dir) into the -o directory
+          shift; out=""
+          while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done
+          if [ -n "$out" ]; then
+              mkdir -p "$out" "$out.empty.$$"
+              tar -C "$out.empty.$$" -cf - . | zstd -q -f -o "$out/binpkgs.tar.zst" -
+              rmdir "$out.empty.$$"
+          fi ;;
 esac
 exit 0
 STUB
@@ -52,11 +60,25 @@ REG="registry.invalid/team/proj"
 
 # bs ARGS... — run the script with a clean cache environment; stdout+stderr -> $OUT, status -> $RC.
 bs() {
+    # EXTRA_ENV holds NAME=value assignments separated by spaces; a value may itself contain spaces
+    # (ORAS_PULL_ERR=manifest unknown), so split only where a space precedes NAME= and keep each
+    # assignment one argument.
+    _nl='
+'
+    _x="$(printf '%s' "${EXTRA_ENV:-}" | sed 's/ \([A-Za-z_][A-Za-z0-9_]*=\)/\
+\1/g')"
+    set -- bash "$SCRIPT" "$@"
+    if [ -n "$_x" ]; then
+        _old_ifs="$IFS"; IFS="$_nl"; set -f
+        # shellcheck disable=SC2086
+        set -- $_x "$@"
+        set +f; IFS="$_old_ifs"
+    fi
     OUT="$(env -u GITHUB_ACTIONS -u GITHUB_REF -u GHCR_OWNER -u GITHUB_REPOSITORY_OWNER -u BUILD_EPOCH \
         PATH="$STUBS:$PATH" ORAS_LOG="$ORAS_LOG" REGISTRY="${REGISTRY_V:-$REG}" \
         BUILDER_DIGEST="${BD:-$B_DIG}" TREE_COMMIT="${TC:-$T_COM}" PORTAGE_CONFIG_DIR="$CFGDIR" \
         PKGDIR="$TMP/pkgdir" BINPKG_TARBALL="$TMP/blob/binpkgs.tar.zst" \
-        ${EXTRA_ENV:-} bash "$SCRIPT" "$@" 2>&1)"
+        "$@" 2>&1)"
     RC=$?
 }
 
