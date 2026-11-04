@@ -47,7 +47,8 @@ ln -s "$tree/profiles/embedded" "$conf/make.profile"
 
 [ -e "$overlay/metadata/md5-cache" ] || rmcache=$overlay/metadata/md5-cache
 rc=0
-pkgcheck scan --config no --cache no --repo "$overlay" -R FormatReporter \
+# -j 1: the toolbox's 63M /dev/shm is too small for the parallel check runners (SIGBUS)
+pkgcheck scan -j 1 --config no --cache no --repo "$overlay" -R FormatReporter \
 	--format '{category}/{package} {name}' >"$work/out" 2>"$work/err" || rc=$?
 if [ "$rc" -ne 0 ]; then
 	cat "$work/out" "$work/err" >&2
