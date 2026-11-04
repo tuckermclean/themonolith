@@ -328,8 +328,8 @@ else fail "R04-AC-4 make test includes test-revbump"; fi
 wf=$root/.github/workflows/pr-validate.yml
 if grep -Eq 'fetch-depth:[[:space:]]*0' "$wf"; then pass "R04-AC-4 pr-validate.yml checks out with fetch-depth: 0"
 else fail "R04-AC-4 pr-validate.yml checks out with fetch-depth: 0"; fi
-if grep -Eq 'run:[[:space:]]*make test-lint test-unit test-revbump[[:space:]]*$' "$wf"; then pass "R04-AC-4 pr-validate.yml runs make test-lint test-unit test-revbump"
-else fail "R04-AC-4 pr-validate.yml runs make test-lint test-unit test-revbump"; fi
+if grep -Eq 'run:[[:space:]]*make test-lint test-unit test-revbump([[:space:]]+test-[A-Za-z0-9_-]+)*[[:space:]]*$' "$wf"; then pass "R04-AC-4 pr-validate.yml runs make test-lint test-unit test-revbump (later targets allowed)"
+else fail "R04-AC-4 pr-validate.yml runs make test-lint test-unit test-revbump (later targets allowed)"; fi
 if grep -Eq 'BASE:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.base\.sha[[:space:]]*\}\}' "$wf"; then pass "R04-AC-4 pr-validate.yml maps BASE from the PR base sha via env"
 else fail "R04-AC-4 pr-validate.yml maps BASE from the PR base sha via env"; fi
 if grep -q 'check-revbump\.sh' "$wf"; then fail "R04-AC-4 pr-validate.yml does not run the script directly"
