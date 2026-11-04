@@ -1,0 +1,361 @@
+# Portage bashrc for cross-compilation environment
+#
+# Sourced by Portage at the start of each ebuild phase.
+# $EBUILD_PHASE contains the current phase name.
+
+# Fix libtool stripping -static from LDFLAGS.
+#
+# Libtool intercepts -static and "prefers" static archives but does NOT
+# pass -static to the compiler — so the binary still uses the dynamic CRT
+# and interpreter. The -all-static flag does pass -static, but it's a
+# libtool-only flag that breaks configure tests if placed in LDFLAGS.
+#
+# Solution: after configure generates the libtool script, sed-patch it so
+# the -static handler also passes $link_static_flag to the compiler
+# (matching -all-static behavior). Runs unconditionally — if no libtool
+# script exists in WORKDIR (e.g. cmake/meson packages) the find returns
+# nothing and the loop is a no-op.
+if [[ ${EBUILD_PHASE} == "configure" ]]; then
+	# Inject -Ddefault_library=static into every meson configure call.
+	#
+	# With -static in global LDFLAGS, any package that also links a .so via
+	# meson fails with "undefined reference to main" (GCC pulls in crt1.o when
+	# -static is present, even for -shared link steps).  Telling meson to build
+	# only static archives eliminates all .so link steps entirely, so -static
+	# never conflicts with -shared.
+	#
+	# Uses bash dynamic scoping: emesonargs+=() here appends to the local
+	# emesonargs array declared inside the ebuild's src_configure(), which
+	# meson_src_configure() then passes to 'meson setup'.
+	pre_src_configure() {
+		# kmod: its meson.build hardcodes `libkmod = shared_library('kmod', …)`,
+		# which ignores the -Ddefault_library=static we inject below — so the .so
+		# link step still runs and collides with -static in LDFLAGS ("ld returned
+		# 1": gcc pulls crt1.o into a -shared link). Rewrite it to library() so
+		# default_library=static takes effect and only libkmod.a is built. The
+		# kmod tools link libkmod_internal (a static_library of the same objects),
+		# so modprobe/lsmod/depmod come out fully static; we don't ship libkmod.so
+		# anyway (the postinst so-cleanup strips .so files). Patched here in
+		# pre_src_configure so it lands before `meson setup` reads meson.build.
+		if [[ ${CATEGORY}/${PN} == "sys-apps/kmod" ]]; then
+			local kmb="${S}/meson.build"
+			if [[ -f ${kmb} ]] && grep -qE 'libkmod[[:space:]]*=[[:space:]]*shared_library\(' "${kmb}"; then
+				einfo "kmod: rewriting shared_library() → library() for static libkmod"
+				sed -i -E 's/libkmod[[:space:]]*=[[:space:]]*shared_library\(/libkmod = library(/' "${kmb}"
+			else
+				ewarn "kmod: expected 'libkmod = shared_library(' not found in ${kmb} — static rewrite skipped (upstream may have changed)"
+			fi
+		fi
+
+		# meson: force static-only library builds so .so link steps never
+		# occur and -static in LDFLAGS never conflicts with -shared.
+		if declare -f meson_src_configure > /dev/null 2>&1; then
+			eval "$(declare -f meson_src_configure | sed '1s/meson_src_configure/_orig_msc/')"
+			meson_src_configure() {
+				emesonargs+=( -Ddefault_library=static )
+				# glib links libmount.a which pulls in blkid symbols; disable
+				# the libmount feature to avoid the transitive dep entirely.
+				[[ ${CATEGORY}/${PN} == "dev-libs/glib" ]] && \
+					emesonargs+=( -Dlibmount=disabled )
+				_orig_msc "$@"
+			}
+			einfo "meson: injected -Ddefault_library=static"
+		fi
+
+		# cmake: prefer .a over .so when finding libraries, and disable
+		# shared library builds.  Prevents cmake from picking up stale .so
+		# files from the sysroot that can't be used with -static LDFLAGS.
+		if declare -f cmake_src_configure > /dev/null 2>&1; then
+			eval "$(declare -f cmake_src_configure | sed '1s/cmake_src_configure/_orig_csc/')"
+			cmake_src_configure() {
+				mycmakeargs+=(
+					-DBUILD_SHARED_LIBS=OFF
+					-DCMAKE_FIND_LIBRARY_SUFFIXES=".a"
+				)
+				_orig_csc "$@"
+			}
+			einfo "cmake: injected BUILD_SHARED_LIBS=OFF, CMAKE_FIND_LIBRARY_SUFFIXES=.a"
+		fi
+	}
+
+	post_src_configure() {
+		# Patch libtool scripts so -static actually reaches the linker.
+		local lt
+		while IFS= read -r -d '' lt; do
+			einfo "Patching libtool for full static linking: ${lt}"
+			sed -i 's/prefer_static_libs=built/prefer_static_libs=built\n\tcompile_command="$compile_command $link_static_flag"\n\tfinalize_command="$finalize_command $link_static_flag"/' "${lt}"
+		done < <(find "${WORKDIR}" -name libtool -type f -print0 2>/dev/null)
+
+		# coreutils: remove libstdbuf.so from the generated Makefile.
+		# --disable-stdbuf is unrecognised by coreutils configure (it
+		# autodetects stdbuf via dlopen on Linux).  The .so can't be linked
+		# with -static in LDFLAGS (-static + -shared pulls in crt1.o →
+		# "undefined reference to main").  Removing the target from the
+		# Makefile is the only reliable way to skip it.
+		if [[ ${CATEGORY}/${PN} == "sys-apps/coreutils" ]]; then
+			local mf="${S}/Makefile"
+			if [[ -f ${mf} ]]; then
+				einfo "coreutils: removing src/libstdbuf.so from Makefile"
+				sed -i 's|src/libstdbuf\.so||g' "${mf}"
+			fi
+		fi
+
+		# gpm uses a custom Makefile.in (no autotools/libtool).  The .so recipe
+		# is generated by configure substituting @LDFLAGS@ as literal text, so
+		# -static ends up hardcoded in the recipe AND is also passed again via
+		# $(LDFLAGS) from Portage's emake command line.  Both sources of -static
+		# must be removed for just the .so link step.
+		#
+		# post_src_configure is used (not pre_src_compile) because multilib-minimal
+		# sets BUILD_DIR inside the ABI loop inside src_configure; by the time
+		# pre_src_compile fires BUILD_DIR is unset.  WORKDIR is always available
+		# here and contains all generated Makefiles.
+		if [[ ${CATEGORY}/${PN} == "sys-libs/gpm" ]]; then
+			einfo "gpm: patching Makefiles to allow static build"
+			python3 - "${WORKDIR}" <<'PYEOF'
+import os, re, sys
+
+def patch_makefile(path, is_template):
+    """Patch a gpm Makefile (generated) or Makefile.in (template).
+
+    is_template=True  → file uses @LDFLAGS@ and lib/libgpm.so.@abi_lev@ tokens
+    is_template=False → file uses literal expanded values
+    """
+    try:
+        content = open(path).read()
+    except OSError:
+        return
+    if 'libgpm.so' not in content:
+        return
+    orig = content
+
+    if is_template:
+        # In Makefile.in the .so target is lib/libgpm.so.@abi_full@ and the
+        # recipe uses @LDFLAGS@; the all rule references lib/libgpm.so.@abi_lev@.
+        so_target_pat = r'^lib/libgpm\.so\.@abi_full@\s*:'
+        all_prog_pat   = r'(\ball\s*:[^\n]*)\s+\$\(PROG\)'
+    else:
+        # In the generated Makefile the tokens are already substituted.
+        so_target_pat = r'^lib/libgpm\.so\.[\d.]+\s*:'
+        all_prog_pat   = r'(\ball\s*:[^\n]*)\s+\$\(PROG\)'
+
+    # Step 1: Strip -static and -no-pie from the .so link recipe lines.
+    # @LDFLAGS@ is baked as literal text at configure time; it cannot be
+    # overridden by a make variable — the recipe text itself must be edited.
+    # -no-pie is a GCC driver flag that pulls in crt1.o even with -shared,
+    # causing "undefined reference to main" on this musl crossdev toolchain.
+    lines = content.split('\n')
+    in_so_recipe = False
+    result = []
+    for line in lines:
+        if re.match(so_target_pat, line):
+            in_so_recipe = True
+        elif in_so_recipe and not line.startswith('\t'):
+            in_so_recipe = False
+        if in_so_recipe and line.startswith('\t'):
+            line = re.sub(r'\s+(?:-static|-no-pie)\b', '', line)
+        result.append(line)
+    content = '\n'.join(result)
+
+    # Step 2 (generated Makefile only): add a GNU make target-specific
+    # 'override' so $(LDFLAGS) passed on the emake command line also has
+    # -static and -no-pie stripped for the .so link step.
+    if not is_template:
+        m = re.search(r'(lib/libgpm\.so\.[\d.]+)\s*:', content)
+        if m:
+            sotarget = m.group(1)
+            content += (
+                '\n# bashrc: strip -static/-no-pie from shared library link\n'
+                f'{sotarget}: override LDFLAGS := $(filter-out -static -no-pie,$(LDFLAGS))\n'
+            )
+
+    # Step 3: Remove $(PROG) from the 'all' target so utility programs
+    # (mev, gpm-root, etc.) are never requested.  Programs link against
+    # lib/libgpm.so.1 with -static in LDFLAGS and fail with "attempted
+    # static link of dynamic object".
+    content = re.sub(all_prog_pat, r'\1', content)
+
+    # Belt-and-suspenders: also clear the PROG variable itself.
+    content = re.sub(r'^PROG\s*=.*$', 'PROG =', content, flags=re.MULTILINE)
+
+    # Step 4 (generated Makefile only): remove the Makefile self-remake rule.
+    #
+    # gpm's src/Makefile.in contains:
+    #   Makefile: Makefile.in
+    #       $(top_builddir)/config.status Makefile
+    #
+    # GNU make evaluates this rule at startup.  When make is run AFTER our
+    # post_src_configure hook has patched both Makefile and Makefile.in, the
+    # two files have nearly identical mtimes.  Filesystem mtime granularity
+    # (especially on overlayfs inside Docker) can give Makefile.in a timestamp
+    # >= Makefile, which causes make to invoke config.status and regenerate
+    # Makefile from the template — undoing Steps 1, 2, and 3.
+    #
+    # Removing the rule entirely prevents this.  The Makefile has already been
+    # correctly generated by configure; there is no benefit to regenerating it.
+    if not is_template:
+        content = re.sub(
+            r'^Makefile\s*:\s*Makefile\.in\n(?:\t[^\n]*\n)*',
+            '',
+            content, flags=re.MULTILINE
+        )
+
+    if content != orig:
+        open(path, 'w').write(content)
+        print(f'gpm: patched {path}')
+        # Debug: show what the all rule and PROG look like after patching
+        for i, line in enumerate(content.split('\n'), 1):
+            if re.match(r'^all\s*:', line) or re.match(r'^PROG\s*=', line):
+                print(f'  line {i}: {repr(line)}')
+
+workdir = sys.argv[1]
+for root, dirs, files in os.walk(workdir):
+    dirs[:] = [d for d in dirs if not d.startswith('.')]
+    for fname in ('Makefile', 'Makefile.in'):
+        if fname not in files:
+            continue
+        path = os.path.join(root, fname)
+        patch_makefile(path, is_template=(fname == 'Makefile.in'))
+PYEOF
+		fi
+
+	}
+
+fi
+
+# nethack: makedefs/lev_comp/dgn_comp/dlb are compiled for i486 (the target)
+# but immediately executed on the x86_64 build host to generate source files.
+# This is the classic "build tool" cross-compilation problem.
+#
+# Fix: use Python to patch util/Makefile (generated by configure from
+# sys/unix/Makefile.utl) before compilation:
+#   1. Set OBJDIR = . so host-tool .o files land in util/, not src/.
+#      Without this, makedefs links against already-built i486 ../src/monst.o
+#      and ../src/objects.o, producing an i486 binary that can't run on x86_64.
+#   2. Insert CC_FOR_BUILD/CFLAGS_FOR_BUILD variable defaults.
+#   3. Use 'override' target-specific vars for makedefs/lev_comp/dgn_comp/dlb.
+#      'override' is required because the ebuild calls make with CC= and CFLAGS=
+#      on the command line, which normally beats target-specific assignments.
+#      Target-specific vars propagate to prerequisites, so ./monst.o and
+#      ./objects.o (with OBJDIR=.) will also compile with the host gcc.
+if [[ ${EBUILD_PHASE} == "compile" ]]; then
+	pre_src_compile() {
+		# iproute2: tc/Makefile calls 'yacc-reference' as a bare command, but the
+		# script lives in ${S} (the source root) and isn't in PATH. Adding ${S}
+		# to PATH lets the tc sub-make find it without patching the Makefile.
+		if [[ ${CATEGORY}/${PN} == "sys-apps/iproute2" ]]; then
+			einfo "iproute2: adding source dir to PATH for yacc-reference"
+			export PATH="${S}:${PATH}"
+			return 0
+		fi
+
+		# gpm: verify the src/Makefile state right before compilation.
+		# This catches any Makefile regeneration that would undo post_src_configure patches.
+		if [[ ${CATEGORY}/${PN} == "sys-libs/gpm" ]]; then
+			einfo "gpm: Makefile state at pre_src_compile:"
+			while IFS= read -r -d '' mf; do
+				einfo "  ${mf}:"
+				grep -E '^all[[:space:]]*:|^PROG[[:space:]]*=' "${mf}" 2>/dev/null | while read -r l; do
+					einfo "    ${l}"
+				done
+			done < <(find "${WORKDIR}" -path '*/src/Makefile' -not -name '*.in' -print0 2>/dev/null)
+			return 0
+		fi
+
+		[[ ${CATEGORY}/${PN} == "games-roguelike/nethack" ]] || return 0
+
+		# configure copies sys/unix/Makefile.utl → util/Makefile; patch the copy
+		local makefile="${S}/util/Makefile"
+		if [[ ! -f "${makefile}" ]]; then
+			ewarn "nethack: util/Makefile not found at pre_src_compile — patch skipped"
+			ewarn "  Expected: ${makefile}"
+			return 0
+		fi
+
+		einfo "nethack: patching util/Makefile for CC_FOR_BUILD cross-compilation"
+
+		# vis_tab.h and vis_tab.c ship pre-generated in the tarball, so make
+		# considers them up-to-date and skips 'makedefs -v'. Delete them to
+		# force makedefs -v to regenerate them for the current build.
+		rm -f "${S}/include/vis_tab.h" "${S}/src/vis_tab.c"
+
+		python3 - "${makefile}" <<'PYEOF'
+import re, sys
+f = sys.argv[1]
+content = open(f).read()
+
+# 1. Change OBJDIR = ../src to OBJDIR = .
+content = re.sub(r'^OBJDIR\s*=\s*\.\./src', 'OBJDIR = .', content, flags=re.MULTILINE)
+
+# 2. Insert CC_FOR_BUILD block after the LFLAGS definition line.
+#    'override' beats command-line CC=/CFLAGS=/LFLAGS= passed by the ebuild.
+insert = """
+# Cross-compilation: build host tools with the native compiler.
+# 'override' is required to beat the command-line CC=/CFLAGS=/LFLAGS= set by the ebuild.
+# Target-specific vars propagate to prerequisites (makedefs.o, ./monst.o, etc.)
+CC_FOR_BUILD ?= gcc
+# Append required flags to whatever Portage/crossdev already set (e.g. -O2 -m32).
+# Use := not ?= so we always add -I../include even if CFLAGS_FOR_BUILD is in the env.
+CFLAGS_FOR_BUILD := $(CFLAGS_FOR_BUILD) -std=gnu89 -I$(abspath ../include) -DDLB -DSECURE -DTIMED_DELAY -DVISION_TABLES -DDUMPLOG -DSCORE_ON_BOTL
+
+makedefs lev_comp dgn_comp dlb: override CC := $(CC_FOR_BUILD)
+makedefs lev_comp dgn_comp dlb: override CFLAGS := $(CFLAGS_FOR_BUILD)
+makedefs lev_comp dgn_comp dlb: override LFLAGS := -m32
+makedefs lev_comp dgn_comp dlb: override LDFLAGS := -m32
+"""
+
+# Append to end of file — util/Makefile doesn't define LFLAGS as a variable
+# (it's only passed on the command line), so anchoring on LFLAGS would miss.
+content += insert
+
+open(f, 'w').write(content)
+print("nethack: util/Makefile patched OK")
+PYEOF
+
+		einfo "nethack: util/Makefile patched successfully"
+	}
+fi
+
+# After every package installs, remove .so files from the sysroot.
+#
+# Packages (e.g. ncurses) always install both .so and .a regardless of
+# --disable-shared in EXTRA_ECONF, because their ebuilds manage shared/static
+# independently.  cmake and meson then find the .so via pkg-config and pass
+# its full path to the linker, which refuses it with -static in LDFLAGS.
+#
+# Portage guarantees that a package's postinst completes before any dependent
+# package starts configure, so removing .so files here is safe — by the time
+# cmatrix (for example) runs cmake, ncurses .so files are already gone and
+# cmake finds only libncursesw.a.
+if [[ ${EBUILD_PHASE} == "postinst" ]]; then
+	post_pkg_postinst() {
+		local sysroot="/usr/${CHOST:-i486-linux-musl}"
+		einfo "so-cleanup: starting for ${CATEGORY}/${PF}"
+		timeout 30 find "${sysroot}/usr/lib" "${sysroot}/lib" \
+			\( -name "*.so" -o -name "*.so.*" \) -type f -delete 2>/dev/null \
+			|| ewarn "so-cleanup: find (regular) timed out or failed for ${CATEGORY}/${PF}"
+		timeout 30 find "${sysroot}/usr/lib" "${sysroot}/lib" \
+			-name "*.so*" -xtype l -delete 2>/dev/null \
+			|| ewarn "so-cleanup: find (symlinks) timed out or failed for ${CATEGORY}/${PF}"
+		einfo "so-cleanup: done for ${CATEGORY}/${PF}"
+	}
+fi
+
+# mandoc: pkg_postinst calls 'makewhatis || die' but makewhatis is an i486 binary
+# that cannot run on the x86_64 build host. Override pkg_postinst to use the
+# host's native makewhatis (installed via Dockerfile) to build the whatis database
+# against the sysroot's man pages at build time.
+# Bashrc is sourced after the ebuild is loaded, so this definition wins.
+if [[ ${EBUILD_PHASE} == "postinst" ]] && [[ ${CATEGORY}/${PN} == "app-text/mandoc" ]]; then
+	pkg_postinst() {
+		local host_makewhatis="/usr/sbin/makewhatis"
+		if [[ -x "${host_makewhatis}" ]]; then
+			einfo "mandoc: building whatis database with host makewhatis (60s timeout)"
+			timeout 60 "${host_makewhatis}" "${ROOT}/usr/share/man" || \
+				ewarn "mandoc: makewhatis timed out or failed — whatis database not built"
+		else
+			ewarn "mandoc: host makewhatis not found; whatis database not built"
+			ewarn "Rebuild the Docker image to install app-text/mandoc on the host."
+		fi
+	}
+fi

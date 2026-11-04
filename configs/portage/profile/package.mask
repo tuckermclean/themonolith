@@ -1,0 +1,5 @@
+# Masked for the target root only. build-packages.sh copies profile/ into the sysroot's
+# /etc/portage and never to the build host, so the host toolchain keeps its gcc.
+
+# No compiler on the target (doctrine D-no-readding-removed-things).
+sys-devel/gcc
