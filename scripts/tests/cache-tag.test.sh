@@ -196,4 +196,33 @@ for e in 'unauthorized' 'denied' '401'; do
     if [ "$RC" -ne 0 ] && pulled; then pass "B01-AC-17 pull returns non-zero for '$e'"; else fail "B01-AC-17 pull should return non-zero for '$e' (rc=$RC)"; fi
 done
 
+
+# --- slice 1 review follow-up (ruling 16) ---
+
+# B1 (B01-AC-17): a 401 whose text names a hex tag containing "404" is an auth error, not a benign miss.
+run_case x "ORAS_PULL_ERR=Error: GET \"https://registry.invalid/v2/team/proj/binpkgs/manifests/9e6404b25dc8c1e9\": response status code 401: Unauthorized" pull
+if [ "$RC" -ne 0 ] && pulled; then pass "B01-AC-17 pull is fatal for a 401 naming a tag containing 404"; else fail "B01-AC-17 pull must be fatal for a 401 naming tag 9e6404b25dc8c1e9 (rc=$RC)"; fi
+
+# B2 (B01-AC-2, ruling 1): when .github/workflows/build.yml exists, its cache steps call the make
+# targets and carry no `if:` ref condition of their own (the script decides). This passes trivially
+# while build.yml is absent (it arrives with B03).
+BUILD_YML="$HERE/../../.github/workflows/build.yml"
+if [ ! -f "$BUILD_YML" ]; then
+    pass "B01-AC-2 build.yml absent (until B03): no cache steps to check"
+else
+    # a cache step is a step whose name or run line mentions cache-pull/cache-push; look at the lines
+    # of each such step (from its '- ' marker to the next one) for an `if:` containing github.ref.
+    bad="$(awk '
+        function flush() { if (blk ~ /cache-(pull|push)/ && blk ~ /(^|\n)[ \t-]*if:[^\n]*(github\.ref|GITHUB_REF)/) n++ ; blk="" }
+        /^[ \t]*- / { flush() }
+        { blk = blk "\n" $0 }
+        END { flush(); print n+0 }' "$BUILD_YML")"
+    if [ "$bad" -eq 0 ]; then pass "B01-AC-2 build.yml cache steps carry no ref condition"; else fail "B01-AC-2 build.yml has $bad cache step(s) with an if: ref condition contradicting the script"; fi
+    if grep -q 'make[^#]*cache-pull' "$BUILD_YML" && grep -q 'make[^#]*cache-push' "$BUILD_YML"; then pass "B01-AC-2 build.yml calls make cache-pull and make cache-push"; else fail "B01-AC-2 build.yml must call make cache-pull and make cache-push"; fi
+fi
+
+# B3 (B01-AC-9): prune-predicate warns on stderr about a malformed path.
+PP_ERR="$(printf 'net-dns/dnsmasq/not-a-gpkg\n' | bash "$SCRIPT" prune-predicate 2>&1 >/dev/null)"
+if [ -n "$PP_ERR" ]; then pass "B01-AC-9 prune-predicate warns on stderr for a malformed path"; else fail "B01-AC-9 prune-predicate printed no stderr warning for a malformed path"; fi
+
 [ "$fails" -eq 0 ] && echo ALL PASS || { echo "$fails FAILED"; exit 1; }
