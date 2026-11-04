@@ -1,0 +1,12 @@
+# bootstrap-exceptions.txt
+#
+# Files in the root filesystem that the crossdev toolchain installs from host-side
+# cross-i486-linux-musl/* packages. The target VDB does not own them; the host VDB does, found
+# with `qfile` on the host root. The pinned BUILDER_DIGEST is their provenance.
+#
+# Format: <absolute path> <host cpv>. The cpv's version equals configs/portage/crossdev.lock.
+# Nothing else may be listed: a preinstalled package that cannot be re-merged in the sysroot is a
+# finding to fix, not an exception. Read by scripts/source-audit.sh and check-unowned.py --provenance.
+
+# The musl libc.so, copied by build-packages.sh to the dynamic linker path (R03 removes it).
+/lib/ld-musl-i386.so.1 cross-i486-linux-musl/musl-1.2.6
