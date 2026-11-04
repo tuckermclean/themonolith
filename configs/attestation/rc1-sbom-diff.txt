@@ -1,0 +1,17 @@
+# Paths removed from both SBOMs (jq paths) before scripts/sbom-diff.sh compares the regenerated
+# bom.cdx.json with v0.1.0-rc1's. AC-7: they differ only in these paths.
+
+# Differs on every run.
+volatile:
+.serialNumber
+.metadata.timestamp
+.metadata.tools
+
+# Differs on purpose; each line says why.
+deliberate:
+.metadata.component.externalReferences   # all four of rc1's are deliberate: the distribution URL on object storage is left out (S01 change 2); the release asset URL is written on a tag build only (GITHUB_REF refs/tags/v*); the vcs and build-system references name the commit and CI run that produced the SBOM, rc1's being its factory repository's, a run here having its own or, locally, none
+.formulation[]?.properties[]? | select(.name == "monolith:workflow:commit" or .name == "monolith:workflow:run_id")   # the same commit and run id of the producing CI run
+.formulation[]?.components[]? | select(.name == "gentoo/stage3")   # written only when BUILD_EPOCH is set (enrich-sbom.py's --stage3-epoch); rc1's CI exported BUILD_EPOCH from its Dockerfile (20260811), the builder image and test-gates set none; it goes when B03 passes BUILD_EPOCH
+.formulation[]?.components[]? | select(.name == "versions.lock")   # hashes configs/portage/versions.lock, which this repository does not have until B01
+.formulation[]?.components[]? | select(.name | test("^linux-.*[.]tar[.]xz$"))   # reads the kernel ebuild's Manifest (configs/overlay/sys-kernel/monolith-kernel/Manifest), which this repository does not have yet
+.dependencies[]? | select(.ref == "themonolith-0.1.0-rc1")   # the product's dependsOn roots come from configs/portage/world, which this repository does not have until B01
