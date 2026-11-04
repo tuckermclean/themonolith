@@ -7,7 +7,7 @@ fail() { echo "toolbox-selfcheck: $*" >&2; rc=1; }
 
 for cmd in sh bash make git curl jq zstd cpio file python3 shellcheck actionlint oras \
            qemu-system-i386 qemu-system-x86_64 unsquashfs mksquashfs xorriso mcopy mkfs.vfat \
-           scanelf modinfo mkfs.ext4; do
+           scanelf modinfo mkfs.ext4 pkgcheck; do
 	command -v "$cmd" >/dev/null 2>&1 || fail "missing: $cmd"
 done
 python3 -c 'import yaml, pexpect' 2>/dev/null || fail "python3 cannot import yaml and pexpect"
@@ -17,6 +17,8 @@ v=$(actionlint -version 2>/dev/null | head -n 1)
 [ "$v" = "${ACTIONLINT_VERSION:-unset}" ] || fail "actionlint is '$v', pinned ${ACTIONLINT_VERSION:-unset}"
 v=$(oras version 2>/dev/null | sed -n 's/^Version: *//p')
 [ "$v" = "${ORAS_VERSION:-unset}" ] || fail "oras is '$v', pinned ${ORAS_VERSION:-unset}"
+v=$(pkgcheck --version 2>/dev/null | sed -n 's/^pkgcheck \([^ ]*\).*/\1/p')
+[ "$v" = "${PKGCHECK_VERSION:-unset}" ] || fail "pkgcheck is '$v', pinned ${PKGCHECK_VERSION:-unset}"
 
 [ $rc -eq 0 ] && echo "toolbox-selfcheck: ok"
 exit $rc

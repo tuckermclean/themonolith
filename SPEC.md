@@ -418,7 +418,7 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
     and fixed before a tag. `make test-repro` runs the same steps on one machine.
 - **Where tests run.** Every target runs locally. `toolbox/run` runs a command in the test toolbox
   (`toolbox/Containerfile`: Debian by digest and snapshot date, QEMU, OVMF, pexpect, PyYAML,
-  shellcheck, actionlint, oras, squashfs-tools, xorriso, scanelf), with the checkout mounted. Package
+  shellcheck, actionlint, oras, squashfs-tools, xorriso, scanelf, pkgcheck), with the checkout mounted. Package
   builds and the SBOM gates run in the builder image, pulled by digest. CI runs the same commands, and
   only what needs GitHub itself (registry pushes, attestation, tag pipelines) is CI-only.
 - **Make is the build interface.** Every operation is a Make target, backed by a script in `scripts/`
