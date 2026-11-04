@@ -335,26 +335,30 @@ prune_predicate() {
 # unauthorized/denied/401 are NOT benign: an expired token or a private package
 # answers them, and treating that as a miss would silently compile from source.
 _bp_pull_is_benign_miss() {
-    printf '%s' "$1" | grep -qiE 'not found|manifest unknown|name unknown|404'
+    printf '%s' "$1" | grep -qiwE 'not found|manifest unknown|name unknown|404'
 }
 
 # --- cache tag, reference and CI ref policy -----------------------------------
 
 # _bp_config_hash — sha256 over the path and content of make.conf, bashrc and
 # every file under env/, package.env/ and profile/ of PORTAGE_CONFIG_DEFAULT.
+# An input that is absent is skipped; one that exists but cannot be read is an error.
 _bp_config_hash() {
-    local d="$PORTAGE_CONFIG_DEFAULT" f
+    local d="$PORTAGE_CONFIG_DEFAULT" sums
     [[ -d "$d" ]] || { echo "binpkg-store: tag: ERROR: ${d} is not a directory" >&2; return 1; }
-    (
+    sums="$(
+        set -o pipefail
         cd "$d" || exit 1
         for f in make.conf bashrc; do
-            [[ -f "$f" ]] && sha256sum -- "$f"
+            if [[ -e "$f" ]]; then sha256sum -- "$f" || exit 1; fi
         done
         for f in env package.env profile; do
-            [[ -d "$f" ]] && find "$f" -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum --
+            if [[ -d "$f" ]]; then
+                find "$f" -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum -- || exit 1
+            fi
         done
-        exit 0
-    ) | sha256sum | cut -d' ' -f1
+    )" || { echo "binpkg-store: tag: ERROR: cannot hash ${d}" >&2; return 1; }
+    printf '%s\n' "$sums" | sha256sum | cut -d' ' -f1
 }
 
 # cmd_tag — the first 16 hex of sha256 over BUILDER_DIGEST, TREE_COMMIT and the config hash.
@@ -380,6 +384,10 @@ _bp_ref() {
 _bp_ci_allows() {
     [[ "${GITHUB_ACTIONS:-}" == "true" ]] || return 0
     local ref="${GITHUB_REF:-}"
+    if [[ -z "$ref" ]]; then
+        echo "binpkg-store: $1: ERROR: GITHUB_ACTIONS=true but GITHUB_REF is empty" >&2
+        return 2
+    fi
     case "$1" in
         push)
             if [[ "$ref" != "refs/heads/main" ]]; then
@@ -453,9 +461,7 @@ cmd_pack() {
 cmd_push() {
     local tarball="${1:-$TARBALL_DEFAULT}"
 
-    if ! _bp_ci_allows push; then
-        return 0
-    fi
+    _bp_ci_allows push || { local rc=$?; [[ $rc -eq 1 ]] && return 0; return $rc; }
 
     if [[ ! -f "$tarball" ]]; then
         echo "binpkg-store: push: ${tarball} not found — run 'pack' first" >&2
@@ -486,9 +492,7 @@ cmd_pull() {
 
     mkdir -p "$pkgdir"
 
-    if ! _bp_ci_allows pull; then
-        return 0
-    fi
+    _bp_ci_allows pull || { local rc=$?; [[ $rc -eq 1 ]] && return 0; return $rc; }
 
     if ! command -v oras >/dev/null 2>&1; then
         echo "binpkg-store: pull: WARNING: oras not found on PATH — leaving ${pkgdir} empty (fail-open, build compiles from source)" >&2
