@@ -334,7 +334,7 @@ test-gates: rootfs pull-image grype-db-update
 # The scanner is alive: check-cves.sh on the canary SBOM (Heartbleed) must find something.
 # B01-AC-16: a revbump or package.use change rebuilds a cached static consumer, in the pinned builder, on the host.
 test-static-rebuild: pull-image sync-portage
-	DOCKER='$(DOCKER)' TREE_DIR='$(TREE_DIR)' sh scripts/tests/static-rebuild.itest.sh
+	DOCKER='$(DOCKER)' TREE_DIR='$(abspath $(TREE_DIR))' sh scripts/tests/static-rebuild.itest.sh
 
 test-cve-canary: pull-image grype-db-update
 	$(ATTEST_RUN) grype db status
