@@ -1,0 +1,36 @@
+name: Toolbox Image
+
+# Publishes the test toolbox to ${REGISTRY}/toolbox:<inputs> (SPEC §6) when its inputs change on main, so
+# toolbox/run in every other job pulls it instead of rebuilding it from snapshot.debian.org. Only main
+# publishes: a pulled tag is trusted, so pull requests never get packages: write here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - toolbox/Containerfile
+      - toolbox/selfcheck
+      - toolbox/run
+      - .github/workflows/toolbox-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: toolbox-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the toolbox and push it
+        run: make toolbox-publish

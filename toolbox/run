@@ -2,8 +2,12 @@
 # Run a command in the test toolbox, with this checkout mounted at its own path.
 #   toolbox/run [--build] [--network none] [-e NAME]... [--] <cmd> [args...]
 #   toolbox/run                      # interactive shell
+#   toolbox/run --push               # build the image and push it to ${REGISTRY}/toolbox (toolbox-image.yml)
 # Uses podman if present, else docker (MONOLITH_ENGINE overrides). The image is tagged by the hash
-# of toolbox/, so editing the Containerfile or selfcheck rebuilds it on the next run.
+# of its inputs (the Containerfile and selfcheck). With no local image for those inputs, it pulls
+# ${REGISTRY}/toolbox:<inputs>, which toolbox-image.yml publishes from main (SPEC §6), and builds
+# when the pull fails, so a toolbox change works before main publishes it. MONOLITH_TOOLBOX_PULL=0
+# always builds. REGISTRY comes from the environment, else from the Makefile, its one home.
 # The same command runs here and in CI (SPEC §7, CI parity), so the container sees the same things in
 # both: CI, GITHUB_ACTIONS, the GITHUB_OUTPUT/ENV/STEP_SUMMARY/PATH files when set, and each -e NAME.
 # No /dev/kvm: boot tests run `-cpu 486` under TCG, which is what catches a non-486 instruction.
@@ -15,11 +19,13 @@ die() { echo "toolbox/run: $*" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd -P)
 root=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null) || die "not inside a git checkout"
 build=0
+push=0
 network=
 fwd="CI GITHUB_ACTIONS"
 while [ $# -gt 0 ]; do
 	case $1 in
 	--build) build=1; shift ;;
+	--push) build=1; push=1; shift ;;
 	--network) [ $# -ge 2 ] || die "--network needs a value"; network=$2; shift 2 ;;
 	-e) [ $# -ge 2 ] || die "-e needs a variable name"; fwd="$fwd $2"; shift 2 ;;
 	--) shift; break ;;
@@ -27,7 +33,7 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-if [ "${TOOLBOX:-}" = 1 ]; then
+if [ "${TOOLBOX:-}" = 1 ] && [ $push = 0 ]; then
 	[ $# -gt 0 ] || set -- bash
 	exec "$@"
 fi
@@ -48,9 +54,32 @@ fi
 
 inputs=$(cd "$root/toolbox" && cat Containerfile selfcheck | sha256sum | cut -c1-12)
 image=localhost/monolith-toolbox:$inputs
-if [ $build = 1 ] || ! $eng image inspect "$image" >/dev/null 2>&1; then
+registry=${REGISTRY:-$(sed -n 's/^REGISTRY[[:space:]]*?=[[:space:]]*//p' "$root/Makefile" | head -n 1)}
+remote=${registry:+$registry/toolbox:$inputs}
+if [ $build = 0 ] && ! $eng image inspect "$image" >/dev/null 2>&1; then
+	if [ "${MONOLITH_TOOLBOX_PULL:-1}" != 0 ] && [ -n "$remote" ] && $eng pull -q "$remote" >/dev/null 2>&1 \
+		&& $eng tag "$remote" "$image"; then
+		echo "toolbox/run: pulled $remote" >&2
+	else
+		echo "toolbox/run: no ${remote:-registry image} to pull; building" >&2
+		build=1
+	fi
+fi
+if [ $build = 1 ]; then
 	echo "toolbox/run: building $image" >&2
 	$eng build -t "$image" -f "$root/toolbox/Containerfile" "$root/toolbox" >&2
+fi
+
+if [ $push = 1 ]; then
+	[ -n "$remote" ] || die "--push: no REGISTRY in the environment or the Makefile"
+	# In CI, log in with the job's token; elsewhere, log in to the registry beforehand.
+	if [ "${GITHUB_ACTIONS:-}" = true ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+		printf '%s\n' "$GITHUB_TOKEN" | $eng login "${registry%%/*}" -u "${GITHUB_ACTOR:-token}" --password-stdin >&2
+	fi
+	$eng tag "$image" "$remote"
+	$eng push "$remote" >&2
+	echo "toolbox/run: pushed $remote" >&2
+	exit 0
 fi
 
 [ $# -gt 0 ] || set -- bash

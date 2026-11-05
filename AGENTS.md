@@ -24,7 +24,9 @@ credential handling.
 
 - `toolbox/run -- <cmd>` runs a command in the test toolbox, with the checkout mounted at its own path.
   `toolbox/run` alone opens a shell; `--build` rebuilds the image; `--network none` cuts the network.
-  The image rebuilds by itself when `toolbox/` changes.
+  With no local image for the current `toolbox/` inputs, it pulls `${REGISTRY}/toolbox:<inputs>`
+  (published from `main` by `toolbox-image.yml`) and builds only when that pull fails;
+  `MONOLITH_TOOLBOX_PULL=0` always builds. `sh toolbox/run.test.sh` tests that choice.
   `-e NAME` forwards a variable; `CI`, `GITHUB_ACTIONS` and the `GITHUB_OUTPUT`-style files always pass.
 - Read predecessor files with `git fetch --no-tags https://github.com/tuckermclean/linux-live-iso-factory
   b9f533b740b1db7bf5658d2805603d84e9b1f185`, then `git show b9f533b:<path>`. The fetch creates no branch
