@@ -112,6 +112,10 @@ if [ -d "${PORTAGE_DIR}" ] && [ -d "${SYSROOT_PORTAGE}" ]; then
     mkdir -p "${SYSROOT_PORTAGE}/repos.conf"
     printf '[monolith]\nlocation = /configs/overlay\npriority = 20\nmasters = gentoo\nauto-sync = no\n' \
         > "${SYSROOT_PORTAGE}/repos.conf/monolith.conf"
+    # Repositories the config tree declares (the test seam's fixture overlay).
+    if compgen -G "${CONFIGS_DIR}/portage/repos.conf/*" >/dev/null; then
+        cp "${CONFIGS_DIR}"/portage/repos.conf/* "${SYSROOT_PORTAGE}/repos.conf/"
+    fi
 
     # ALSO mirror package.mask onto the BUILD HOST's /etc/portage. Cross-emerge
     # resolves TARGET packages against the sysroot config above, but a package's
@@ -281,7 +285,8 @@ EMERGE_CMD="${CROSS_TARGET}-emerge"
 # also skips the GHCR cache pull.
 # With --usepkg on, the binary package flags go with it: respect USE, rebuild on changed
 # dependencies, and rebuild a consumer whose dependency was rebuilt.
-USEPKG_FLAGS=(--usepkg --binpkg-respect-use=y --binpkg-changed-deps=y --rebuild-if-unbuilt)
+# --with-bdeps=y: a DEPEND-only static library must enter a binary consumer's graph so that --rebuild-if-unbuilt can see it.
+USEPKG_FLAGS=(--usepkg --binpkg-respect-use=y --binpkg-changed-deps=y --rebuild-if-unbuilt --with-bdeps=y)
 RELEASE=0
 PREINSTALLED=()
 EXTRA_FLAGS=()

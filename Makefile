@@ -3,9 +3,9 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox check-updates update-versions list-packages show-failed shell clean
+.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox check-updates update-versions list-packages show-failed shell clean
 
-test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary
+test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -332,6 +332,10 @@ test-gates: rootfs pull-image grype-db-update
 	echo "test-gates: PASS"
 
 # The scanner is alive: check-cves.sh on the canary SBOM (Heartbleed) must find something.
+# B01-AC-16: a revbump or package.use change rebuilds a cached static consumer, in the pinned builder, on the host.
+test-static-rebuild: pull-image sync-portage
+	DOCKER='$(DOCKER)' TREE_DIR='$(TREE_DIR)' sh scripts/tests/static-rebuild.itest.sh
+
 test-cve-canary: pull-image grype-db-update
 	$(ATTEST_RUN) grype db status
 	@$(ATTEST_RUN) bash /scripts/run-cve-canary.sh || { \
