@@ -103,9 +103,9 @@ mk edgebar edgebar; go edgebar
 # --- change 10: configs/attestation/bootstrap-exceptions.txt ---
 EX="$ROOT/configs/attestation/bootstrap-exceptions.txt"
 LOCK="$ROOT/configs/portage/crossdev.lock"
-if [ -f "$EX" ] && grep -q '^/lib/ld-musl-i386\.so\.1[[:space:]]' "$EX"; then
-    ok "B01-AC-11 bootstrap-exceptions.txt lists /lib/ld-musl-i386.so.1"
-else fail "B01-AC-11 bootstrap-exceptions.txt lists /lib/ld-musl-i386.so.1"; fi
+if [ -f "$EX" ] && grep -q '^/usr/bin/ldd[[:space:]]' "$EX"; then
+    ok "B01-AC-11 bootstrap-exceptions.txt lists /usr/bin/ldd"
+else fail "B01-AC-11 bootstrap-exceptions.txt lists /usr/bin/ldd"; fi
 bad=$(grep -v '^[[:space:]]*\(#\|$\)' "$EX" 2>/dev/null | awk -v lock="$LOCK" '
     BEGIN { while ((getline l < lock) > 0) { if (l ~ /^#/ || l == "") continue; split(l, a, ":"); n = a[1]; sub(/.*\//, "", n); ver[n] = a[2] } }
     { cpv = $2; if (cpv !~ /^cross-i486-linux-musl\//) { print "not a cross package: " $0; next }
