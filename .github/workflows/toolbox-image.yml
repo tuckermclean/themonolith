@@ -1,6 +1,6 @@
 name: Toolbox Image
 
-# Publishes the test toolbox to ${REGISTRY}/toolbox:<inputs> (SPEC §6) when its inputs change on main, so
+# Publishes the test toolbox image (make toolbox-publish; SPEC §6, toolbox:<inputs>) when its inputs change on main, so
 # toolbox/run in every other job pulls it instead of rebuilding it from snapshot.debian.org. Only main
 # publishes: a pulled tag is trusted, so pull requests never get packages: write here.
 
