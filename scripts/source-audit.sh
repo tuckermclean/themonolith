@@ -64,8 +64,8 @@ BEGIN {
     while ((getline l < exc) > 0) {
         sub(/#.*/, "", l); sub(/[ \t]+$/, "", l)
         if (l !~ /[^ \t]/) continue
-        # the path is everything before the last space
-        if (l !~ /^\/.* [^ \t]+$/ || !match(l, / [^ ]+$/)) { print "FAIL: bad exception line: " l; bad++; continue }
+        # the path is everything before the last space or tab
+        if (l !~ /^\/.*[ \t][^ \t]+$/ || !match(l, /[ \t][^ \t]+$/)) { print "FAIL: bad exception line: " l; bad++; continue }
         host[substr(l, 1, RSTART - 1)] = substr(l, RSTART + 1)
     }
     close(exc)

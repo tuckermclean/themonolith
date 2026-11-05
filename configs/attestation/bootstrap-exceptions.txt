@@ -10,8 +10,6 @@
 # Nothing else may be listed: a preinstalled package that cannot be re-merged in the sysroot is a
 # finding to fix, not an exception. Read by scripts/source-audit.sh and check-unowned.py (both modes).
 
-# The musl libc.so, copied by build-packages.sh to the dynamic linker path (R03 removes it).
-/lib/ld-musl-i386.so.1 cross-i486-linux-musl/musl-1.2.6-r2
-# The ldd symlink and the libc.so itself, exported from the crossdev sysroot.
+# The ldd symlink, exported from the crossdev sysroot. The dynamic linker and libc.so are not listed:
+# bashrc's so-cleanup removes them from the target, so the rootfs has no unowned copy.
 /usr/bin/ldd cross-i486-linux-musl/musl-1.2.6-r2
-/usr/lib/libc.so cross-i486-linux-musl/musl-1.2.6-r2

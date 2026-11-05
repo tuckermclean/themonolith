@@ -232,7 +232,7 @@ def read_bootstrap_exceptions(path: str) -> dict:
             line = line.split("#", 1)[0].strip()
             if not line:
                 continue
-            m = re.match(r"^(/.*\S)\s+(\S+)$", line)   # the path is everything before the last space
+            m = re.match(r"^(/.*\S)\s+(\S+)$", line)   # the path is everything before the last space or tab
             if not m:
                 print(f"[check-unowned] ERROR: bad bootstrap exception line: {line}", file=sys.stderr)
                 sys.exit(1)
@@ -535,6 +535,7 @@ Exit codes:
     }
     if args.provenance:
         report["summary"]["bootstrap"] = bootstrap_count
+    if args.provenance or prov_failures:
         report["provenance_failures"] = prov_failures
 
     out_path = Path(args.output)
