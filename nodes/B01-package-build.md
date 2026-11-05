@@ -48,7 +48,7 @@ Portage `PKGDIR` with gpkg, `--usepkg`, `--binpkg-respect-use=y`, `--binpkg-chan
    - an exception entry matches no file.
 
    The report, `source-audit.tsv` (`path`, `owner`, `built-this-run`|`bootstrap`), is a release asset. *AC-11, AC-12.*
-10. **Declared bootstrap exceptions.** The crossdev toolchain installs some files into the sysroot from host-side `cross-i486-linux-musl/*` packages. They are owned in the host VDB, not the target VDB. The known case is the musl `libc.so` copied to `/lib/ld-musl-i386.so.1` (`build-packages.sh:380-389`; R03 removes it).
+10. **Declared bootstrap exceptions.** The crossdev toolchain installs some files into the sysroot from host-side `cross-i486-linux-musl/*` packages. They are owned in the host VDB, not the target VDB. The known case is `/usr/bin/ldd`, crossdev musl's symlink to the loader, which ships dangling. The loader copy (`build-packages.sh:380-389`, `libc.so` to `/lib/ld-musl-i386.so.1`; R03 removes it) never fires in a real build: `bashrc`'s `post_pkg_postinst` so-cleanup (`configs/portage/bashrc:329-340`) deletes `libc.so` from the sysroot after every target merge, so neither file ships, as rc1 shows (SPEC D-all-static).
     - `bootstrap-exceptions.txt` lists each such path with its host owner, found with `qfile` on the host root. Every line names a cpv whose version equals `crossdev.lock`.
     - The pinned `BUILDER_DIGEST` is the provenance of these files.
     - Code that the toolchain links into every static binary (musl `libc.a`, `libgcc.a`, `libatomic.a`, `libssp_nonshared.a`) is not a rootfs file. Its provenance is also `BUILDER_DIGEST`, and SPEC §6 says so.
