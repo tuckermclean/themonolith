@@ -5,7 +5,7 @@
 # with `qfile` on the host root at the path under /usr/i486-linux-musl (the crossdev sysroot) in the
 # pinned builder, BUILDER_DIGEST in the Makefile. out/node/B01/qfile.log records the run.
 #
-# Format: <absolute path> <host cpv>. The path is everything before the last space. The cpv's
+# Format: <absolute path> <host cpv>. The path is everything before the last space or tab. The cpv's
 # version equals configs/portage/crossdev.lock, without its -rN.
 # Nothing else may be listed: a preinstalled package that cannot be re-merged in the sysroot is a
 # finding to fix, not an exception. Read by scripts/source-audit.sh and check-unowned.py (both modes).

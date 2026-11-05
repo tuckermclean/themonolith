@@ -9,7 +9,7 @@
 #                 '>>> Emerging (N of M) <cpv>[::repo] ...' names it ('Emerging binary' lines do not count)
 #   --start       the run's start, epoch seconds; the owner's BUILD_TIME must be at or after it
 #   --exceptions  configs/attestation/bootstrap-exceptions.txt: '<absolute path> <host cpv>', '#' comments;
-#                 the path is everything before the last space
+#                 the path is everything before the last space or tab
 #   --output      report: header 'path<TAB>owner<TAB>provenance', one row per file,
 #                 provenance 'built-this-run' or 'bootstrap'
 #
@@ -66,7 +66,8 @@ BEGIN {
         if (l !~ /[^ \t]/) continue
         # the path is everything before the last space or tab
         if (l !~ /^\/.*[ \t][^ \t]+$/ || !match(l, /[ \t][^ \t]+$/)) { print "FAIL: bad exception line: " l; bad++; continue }
-        host[substr(l, 1, RSTART - 1)] = substr(l, RSTART + 1)
+        p = substr(l, 1, RSTART - 1); sub(/[ \t]+$/, "", p)
+        host[p] = substr(l, RSTART + 1)
     }
     close(exc)
     print "path\towner\tprovenance" > out
