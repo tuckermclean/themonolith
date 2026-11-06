@@ -3,7 +3,7 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox check-updates update-versions list-packages show-failed shell clean
+.PHONY: toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox check-updates update-versions list-packages show-failed shell clean
 
 test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild
 
@@ -170,6 +170,11 @@ pull-image:
 	$(DOCKER) pull $(BUILDER_REF) || { echo "pull-image: cannot pull $(BUILDER_REF)"; exit 1; }
 	$(DOCKER) tag $(BUILDER_REF) $(IMAGE_NAME)
 	@echo "==> Pulled $(BUILDER_REF) and tagged it $(IMAGE_NAME)"
+
+# Builds the test toolbox from its Containerfile and pushes $(REGISTRY)/toolbox:<inputs>, which toolbox/run pulls
+# before building (SPEC §6, §7). CI: toolbox-image.yml on main, with GITHUB_TOKEN; locally, log in first.
+toolbox-publish:
+	REGISTRY='$(REGISTRY)' toolbox/run --push
 
 # Copies SRC (pinned by digest) to $(REGISTRY)/DST (<name>:<tag>) and checks the digest. CI: registry-copy.yml.
 registry-copy:
