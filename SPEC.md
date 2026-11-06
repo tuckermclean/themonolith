@@ -348,6 +348,7 @@ GitHub Action references are full commit SHAs in the workflow `uses:` lines, and
 | `binpkgs:<cache-tag>` | The development `PKGDIR`, as one layer in the ported format. `<cache-tag>` is the first 16 hex digits of a sha256 over `BUILDER_DIGEST`, `TREE_COMMIT` and the global config files listed in §5. | overwritten by `main` builds only |
 | `distfiles:<version>` | The archive both release builds used, pushed after the gate | immutable |
 | `rc1-binpkgs:20260811` | A preserved copy of rc1's cache, for comparison only; never restored | immutable |
+| `toolbox:<inputs>` | The test toolbox image. `<inputs>` is the first 12 hex digits of a sha256 over `toolbox/Containerfile` and `toolbox/selfcheck`, the tag `toolbox/run` gives a local build. Published by `toolbox-image.yml` from `main` | overwritten by `main` only |
 
 **`release-inputs.json`** is written by P02's fetch job before either release build starts, and it is
 published as a release asset. Together with the source commit and the distfiles archive, it is everything a
@@ -418,7 +419,9 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
     and fixed before a tag. `make test-repro` runs the same steps on one machine.
 - **Where tests run.** Every target runs locally. `toolbox/run` runs a command in the test toolbox
   (`toolbox/Containerfile`: Debian by digest and snapshot date, QEMU, OVMF, pexpect, PyYAML,
-  shellcheck, actionlint, oras, squashfs-tools, xorriso, scanelf, pkgcheck), with the checkout mounted. Package
+  shellcheck, actionlint, oras, squashfs-tools, xorriso, scanelf, pkgcheck), with the checkout mounted. When
+  no local image has the current inputs, it pulls `${REGISTRY}/toolbox:<inputs>` (§6), and builds from the
+  Containerfile when that pull fails, so a toolbox change works before `main` publishes it. Package
   builds and the SBOM gates run in the builder image, pulled by digest. CI runs the same commands, and
   only what needs GitHub itself (registry pushes, attestation, tag pipelines) is CI-only.
 - **Make is the build interface.** Every operation is a Make target, backed by a script in `scripts/`
