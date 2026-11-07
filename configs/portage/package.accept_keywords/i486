@@ -1,0 +1,20 @@
+# Accept unstable keywords for i486 builds
+#
+# i486 is not an officially supported Gentoo architecture,
+# so we often need to accept ~x86 keywords
+
+# Accept unstable for all our target packages
+*/* ~x86
+
+# monolith overlay packages — accept all keywords (local overlay, no arch support matrix)
+sys-kernel/monolith-kernel **
+games-roguelike/rl144 **
+dev-db/monolith-sqlite **
+dev-lang/monolith-perl **
+app-misc/monolith-base **
+x11-libs/libXfont **
+x11-base/monolith-xserver **
+x11-base/xcb-proto **
+www-client/stele **
+x11-terms/monolith-st **
+x11-wm/monolith-dwm **

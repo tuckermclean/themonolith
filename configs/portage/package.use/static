@@ -1,0 +1,351 @@
+# Force static linking for all packages
+#
+# These USE flags ensure packages are built as static binaries
+
+# Global static flags (applied via make.conf, but can be overridden here)
+*/* static static-libs
+
+# BusyBox — static with savedconfig (savedconfig reads from configs/portage/savedconfig/sys-apps/busybox)
+sys-apps/busybox savedconfig static
+
+# kmod — modprobe/lsmod/depmod for the booted rootfs's Tier-2 coldplug. The
+# `tools` flag gates the actual command-line binaries; our global USE="-*"
+# strips it, which both leaves us with only libkmod (no modprobe) AND makes
+# kmod's meson abort ("test suite requires also building the tools"). Modules
+# are plain uncompressed .ko (no CONFIG_MODULE_COMPRESS), so no zlib/xz/zstd.
+sys-apps/kmod tools
+
+# app-alternatives packages need an explicit implementation choice since
+# our global USE="-*" strips their defaults.
+app-alternatives/* reference
+app-alternatives/tar gnu
+# cpio's alternatives selector has REQUIRED_USE exactly-one-of(gnu libarchive)
+# which the wildcard `reference` above doesn't satisfy — pick GNU cpio.
+app-alternatives/cpio gnu
+
+# Bash - minimal static build
+app-shells/bash static -net -plugins readline
+
+# Dropbear - minimal SSH server/client
+net-misc/dropbear static minimal -pam -shadow -syslog multicall
+
+# Curl - static with minimal features
+net-misc/curl static static-libs ssl openssl curl_ssl_openssl -gnutls -nss -ldap -rtmp -ssh -telnet
+
+# Nano - minimal editor
+app-editors/nano static minimal -magic -spell -ncurses unicode
+
+# Compression tools - static only
+app-arch/xz-utils static -nls
+app-arch/bzip2 static static-libs
+app-arch/gzip static
+
+# Lua - minimal static interpreter
+dev-lang/lua static -readline
+
+# File - static file type detection
+sys-apps/file static static-libs -python -seccomp
+
+# Less - minimal pager
+sys-apps/less static -pcre
+
+# sysvinit - PID 1 + killall5
+sys-apps/sysvinit static
+
+# GNU coreutils - ls, cp, mv, rm, mkdir, chmod, chown, ln, cat, etc.
+sys-apps/coreutils static -nls -xattr -acl -attr
+
+# util-linux - mount, umount, fdisk, df, agetty, mountpoint, etc.
+sys-apps/util-linux static -nls -udev
+
+# findutils - find, xargs
+sys-apps/findutils static -nls
+
+# grep - grep, egrep, fgrep
+sys-apps/grep static -nls -pcre
+
+# sed
+sys-apps/sed static -nls -acl
+
+# gawk - awk
+sys-apps/gawk static -nls -readline -mpfr
+
+# tar
+app-arch/tar static -nls -acl -xattr
+
+# procps - ps, free, top, kill
+sys-process/procps static -nls
+
+# iproute2 - ip
+sys-apps/iproute2 static -nls
+
+# iputils - ping
+net-misc/iputils static -nls
+
+# dhcpcd - DHCP client (replaces udhcpc)
+net-misc/dhcpcd static
+
+# app-alternatives: select implementations for /bin/sh and vi
+app-alternatives/sh dash
+app-alternatives/lex flex
+
+# dash - minimal POSIX /bin/sh
+app-shells/dash static
+
+# Core libraries - static-libs for development use
+sys-libs/readline static static-libs
+sys-libs/ncurses static static-libs tinfo -gpm -minimal unicode
+sys-libs/zlib static-libs
+dev-libs/libpcre2 static static-libs
+dev-libs/openssl static static-libs
+
+# diffutils - diff, cmp, patch
+sys-apps/diffutils static -nls
+
+# tree - directory listing
+app-text/tree static
+
+# vim - full-featured; -minimal overrides global minimal to keep syntax highlighting
+app-editors/vim static -minimal
+
+# mandoc - man page reader; system-man needed to satisfy virtual/man
+app-text/mandoc static system-man
+
+# binutils - assembler, linker, objdump, nm, strip, etc.
+sys-devel/binutils static -nls
+
+# make - GNU make
+dev-build/make static -nls
+
+# gdb — target-native debugger, runs ON the i486 disc (not a cross-host
+# debugger). PROJECT DOCTRINE: Python is excluded from this image, so
+# -python is mandatory here regardless of upstream's +python default.
+# -server: gdbserver's in-process agent (libinproctrap / tdesc-ipa) is built
+# -fPIC as a shared object, which fails under this repo's global -static
+# LDFLAGS ("undefined reference to `main'", the same -static+-shared class
+# that breaks ppp plugins and coreutils' libstdbuf.so). Dropping USE=server
+# builds just gdb — the native ptrace debugger, which is the point on a live
+# disc — and sidesteps the .so entirely. (Reviving gdbserver would need
+# --disable-inprocess-agent wired in; deferred.)
+# +xml: parses XML target descriptions / syscall-catchpoint tables; pulls
+# dev-libs/expat, a small new dep. +lzma: reads LZMA-compressed separate
+# debuginfo; free, since app-arch/xz-utils is already a static world package.
+# Everything else left at the global USE="-*" default (off): -debuginfod
+# avoids a new dev-libs/elfutils dep; -guile/-source-highlight/-babeltrace/
+# -rocm avoid heavy optional deps; -multitarget/-cet/-zstd/-xxhash/-sim/
+# -test/-vanilla are pure minimalism. "static" is documentation parity (no
+# IUSE=static; static linking comes from the repo-wide package.env catch-all).
+dev-debug/gdb static -server xml lzma -python -guile -source-highlight -nls
+
+# gmp — unconditional gdb RDEPEND (arbitrary-precision value arithmetic
+# since gdb ~13); pulled in automatically, no separate world entry needed
+# (same pattern as cJSON/jansson/libmnl in prior batteries reports).
+# static-libs is already on globally (make.conf USE=static-libs); asm and
+# cpudetection are left at the global -* default (off) so gmp builds its
+# portable C implementation rather than gambling on its i386 hand-tuned
+# assembly paths against this exact musl/i486 cross toolchain — see report
+# §3 for the reasoning.
+dev-libs/gmp static-libs
+
+# mpfr — unconditional gdb RDEPEND alongside gmp; static-libs propagates
+# the same requirement onto gmp above, already satisfied.
+dev-libs/mpfr static-libs
+
+# expat — new dep, only pulled if gdb's xml USE is on (see above). -unicode
+# overrides this repo's global USE=unicode (make.conf), which would
+# otherwise make expat also build a redundant wide-char libexpatw.a that
+# nothing in this image links against — see report §1.
+dev-libs/expat static-libs -unicode
+
+# strace - syscall tracer
+dev-debug/strace static
+
+# patch - apply diffs
+sys-devel/patch static -nls
+
+# wget - HTTP/FTP downloader with SSL
+net-misc/wget static ssl -nls
+
+# netcat
+net-analyzer/netcat static
+
+# whois
+net-misc/whois static
+
+# traceroute
+net-analyzer/traceroute static
+
+# iperf3 — SCTP support pulls in net-misc/lksctp-tools; not needed for the
+# TCP/UDP bandwidth-testing use case and keeps the dependency set minimal.
+net-misc/iperf -sctp
+
+# mtr — combined ping+traceroute network diagnostic (My TraceRoute). ncurses
+# UI (sys-libs/ncurses is already in world with tinfo+unicode — mtr-0.96-r1
+# ships a Gentoo patch specifically for tinfo-split ncurses, see report).
+# JSON output via jansson (new transitive dep — dev-libs/jansson, MIT,
+# static-libs; see .batteries/reports/mtr.md §3). No GTK (-gui avoids
+# pulling glib+gtk+:3).
+# No file capabilities (-filecaps): raw sockets need root/CAP_NET_RAW, and
+# this disc runs everything as root already, so fcaps.eclass's setcap step
+# (and its sys-libs/libcap IDEPEND) is unneeded — same as this rootfs's
+# existing no-cap posture elsewhere. filecaps also already defaults off
+# under the global "USE=-*" reset; the line is kept for self-documentation
+# matching this file's house style (e.g. the kmod/nethack entries above).
+net-analyzer/mtr ncurses jansson -gui -filecaps
+
+# ppp (pppd + chat) — dial-up / PPPoE WAN client. No IUSE=static on this
+# ebuild (like ethtool/hdparm); static linking comes from the repo-wide
+# package.env static.conf catch-all. Optional features left at the global
+# USE="-*" default (spelled out for parity): -atm (no linux-atm/DSL hw),
+# -pam (root rootfs, no PAM anywhere in world), -selinux, -systemd, and
+# -activefilter (avoids net-libs/libpcap; also needs kernel CONFIG_PPP_FILTER,
+# left unset). The dlopen plugin subsystem is disabled via EXTRA_ECONF
+# --disable-plugins (env/ppp-no-plugins.conf), not a USE flag.
+net-dialup/ppp static -atm -pam -selinux -systemd -activefilter
+
+# net-tools - ifconfig, netstat, arp, route
+sys-apps/net-tools static -nls
+
+# ethtool — NIC driver/hardware control tool. Netlink interface via
+# net-libs/libmnl (tiny, static-clean; Alpine ships a libmnl-static
+# subpackage as direct evidence static linking is supported upstream).
+# The ioctl fallback for old kernels/drivers stays compiled in regardless —
+# netlink and ioctl are not mutually exclusive in this ebuild.
+# No native IUSE=static on this ebuild (unlike net-tools/curl/wget); static
+# linking here comes entirely from the repo-wide package.env static.conf
+# catch-all (see configs/portage/package.env/cross-compile), same mechanism
+# already relied on by hdparm/dmidecode/smartmontools/tcpdump/etc., which
+# also carry no package.use/static entry of their own. "static" is included
+# here only for documentation parity with dev-libs/openssl and
+# dev-libs/libpcre2 above, which do the same despite lacking IUSE=static too.
+sys-apps/ethtool static netlink
+
+# libmnl — minimalistic netlink library (net-tools/nftables-adjacent code,
+# now also pulled in by ethtool's netlink USE). New transitive dep; see
+# .batteries/reports/ethtool.md §3. static-libs so ethtool links libmnl.a,
+# not a .so this rootfs can't load.
+net-libs/libmnl static static-libs
+
+# tmux - terminal multiplexer
+app-misc/tmux static -minimal
+
+# htop - interactive process viewer
+sys-process/htop static -minimal
+
+# lsof - list open files
+sys-process/lsof static
+
+# sysklogd - syslog daemon
+app-admin/sysklogd static
+
+# dcron - minimal cron daemon
+sys-process/dcron static
+
+# e2fsprogs - ext2/3/4 tools (mkfs, fsck, tune2fs)
+# tools USE flag builds static exes linked against libext2fs.so → linker error; drop it
+sys-fs/e2fsprogs static static-libs -nls
+
+# shadow - passwd, useradd, etc.; libsubid install location fixed via shadow-libdir.conf
+sys-apps/shadow static -static-libs -pam -cracklib
+
+# dosfstools - FAT filesystem tools (mkfs.fat, fsck.fat)
+sys-fs/dosfstools static -nls
+
+# squashfs-tools - mksquashfs, unsquashfs
+sys-fs/squashfs-tools static
+
+# lynx - text web browser with HTTPS
+www-client/lynx static ssl -minimal -nls
+
+# w3m - text web browser with HTTPS; disable image rendering (needs X)
+www-client/w3m static ssl -minimal -imlib
+
+# mutt - email client with SSL/SMTP/IMAP; smtp requires sasl per REQUIRED_USE
+# sasl pulls cyrus-sasl → virtual/tmpfiles → systemd-utils Python trap; drop smtp+sasl
+# imap with ssl still works via IMAP LOGIN without SASL
+# mutt — email client. IMAP+SMTP over TLS. smtp needs sasl (REQUIRED_USE); use
+# USE=gsasl (net-misc/gsasl) instead of the default cyrus-sasl backend, which
+# would drag in virtual/tmpfiles -> systemd-utils -> Python. ncurses UI links
+# via -ltinfo (env/mutt-tinfo.conf) since this repo's ncurses is tinfo-split.
+mail-client/mutt static ssl imap smtp sasl gsasl -gpgme -autocrypt -idn -kerberos -hcache -doc -nls
+
+# gsasl — SASL library, pulled by mutt's USE=gsasl for SMTP AUTH. REQUIRED_USE
+# is any-of(client server); mutt is a client, so enable client (the global
+# USE="-*" leaves both off). No server, no gnutls/idn/kerberos extras.
+net-misc/gsasl static-libs client -server
+
+# irssi — terminal IRC client. No Perl scripting (project doctrine excludes
+# Perl from the rootfs; perl stays a build-host BDEPEND). No OTR (would pull
+# libotr+libgcrypt) and no built-in proxy/BNC. SSL is NOT a USE flag here —
+# dev-libs/openssl:= is an unconditional RDEPEND (already in world). The old
+# `static ssl -minimal -socks -nls` tokens don't exist on irssi-1.4.5's IUSE.
+net-irc/irssi -perl -otr -proxy
+
+# glib — irssi's crux dependency (RDEPEND). glib's 8-byte atomics needed
+# libatomic on -march=i486, which is why irssi was masked — now fixed by the
+# cross-gcc libatomic.a build (#32). static-libs makes meson build both libs;
+# the generic bashrc meson hook forces =static, and the glib-specific hook
+# disables libmount (else it'd pull util-linux's blkid symbols). The large
+# optional surface is off (no introspection→Python/bison, no dbus/mime/elf/etc).
+dev-libs/glib static static-libs -dbus -debug -doc -elf -introspection -mime -selinux -sysprof -systemtap -test -utils -xattr
+
+# libffi — transitive dep of glib (GObject closure marshalling). Small,
+# dependency-free autotools/libtool; native static-libs IUSE.
+dev-libs/libffi static static-libs -debug -exec-static-trampoline -pax-kernel -test
+
+# figlet - ASCII art text banners
+app-misc/figlet static
+
+# cmatrix - terminal matrix rain animation
+app-misc/cmatrix static
+
+# sl - steam locomotive (typo correction for ls)
+app-misc/sl static
+
+# gpm - console mouse daemon
+app-misc/gpm static
+
+# nethack - curses roguelike; ncurses UI is unconditional in 3.6.x (no USE
+# flag gates it — only X11 is togglable). No qt/gtk/minimal IUSE exists on
+# this package; keep the atom minimal rather than setting no-op flags.
+games-roguelike/nethack -X
+
+# kbd — setfont/loadkeys/dumpkeys for the console (Monolith UX Pass Task
+# 5: Terminus PSF font in rcS + non-US keymaps, see topics/gui.txt).
+# zlib ON so setfont can read the .gz-compressed PSF terminus-font ships
+# (below) directly, with no build-time gunzip step; sys-libs/zlib is
+# already a static world package, so this is not a new dependency.
+# Everything else off: -pam (no PAM anywhere in this rootfs — same
+# posture as dropbear/shadow/ppp above), -nls (this repo's usual
+# doctrine), -bzip2 -lzma -zstd (no compressed-keymap use case here),
+# -selinux (n/a), -test (no dev-libs/check in world), -xkb (no
+# x11-libs/libxkbcommon in world — loadkeys' plain kernel keymaps are
+# enough). No native IUSE=static on this ebuild; "static" kept here for
+# documentation parity with ethtool/mtr above (repo-wide package.env
+# static.conf catch-all does the actual work). CI-UNVERIFIED — no
+# cross-toolchain available here to build-test i486-musl; if this fails
+# like w3m did, --keep-going silently drops it — rcS's setfont call and
+# topics/gui.txt's loadkeys note are both guarded/honest for that case.
+sys-apps/kbd static zlib -pam -nls -bzip2 -lzma -selinux -test -xkb -zstd
+
+# terminus-font — the PSF console font `setfont` loads in rcS (Monolith UX
+# Pass Task 5). Data-only: RDEPEND="" on the real ebuild (verified against
+# ::gentoo terminus-font-4.49.1.ebuild) — zero target-sysroot dependency,
+# only host-side BDEPEND (python-any-r1, app-alternatives/gzip,
+# app-alternatives/awk — build-host tools this image already has). +psf
+# is the only format flag kept on (PC Screen Font under
+# /usr/share/consolefonts — what setfont reads); -otf -pcf-8bit
+# -pcf-unicode drop the X11-facing outline/bitmap formats entirely (this
+# disc's X server already carries its own builtin "fixed" font — see
+# world's GUI section — so terminus adds nothing there, and pulling
+# x11-apps/bdftopcf for pcf-8bit/pcf-unicode would be pure waste). The
+# glyph-shape variant flags (a-like-o, center-tilde, distinct-l, quote,
+# ru-dv/g/i/k — alternate renderings of specific characters, mostly
+# Cyrillic disambiguation) are all off: this disc is Latin-1/ASCII, so the
+# vanilla upstream glyph set is the least-surprising default. Installs
+# ter-1*.psf.gz (ISO-8859-1/Latin-1) and ter-v*.psf.gz (VGA charset)
+# families under /usr/share/consolefonts regardless of these flags (both
+# come from the single "psf" build target — verified against upstream's
+# Makefile); rcS picks ter-116n.psf.gz (16px, normal weight, Latin-1).
+# CI-UNVERIFIED like kbd above.
+media-fonts/terminus-font -a-like-o -center-tilde -distinct-l -otf pcf -pcf-8bit pcf-unicode psf -quote -ru-dv -ru-g -ru-i -ru-k

@@ -12,6 +12,21 @@ reported pair that is not listed fails, and so does a listed pair that is no lon
 
 ```
 app-misc/monolith-base BadDescription  # R01's ported DESCRIPTION is over 80 characters; shortening it changes the ebuild and needs a revbump that rebuilds monolith-base, so it goes with the next functional revbump
+dev-lang/monolith-perl ExcessiveLineLength  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+dev-lang/monolith-perl MissingRemoteId  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+dev-lang/monolith-perl NonPosixHeadTailUsage  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+sys-kernel/monolith-kernel EbuildReservedName  # ported unchanged from b9f533b by B01; B02 changes it (a fix changes the ebuild and needs a revbump)
+sys-kernel/monolith-kernel ExcessiveLineLength  # ported unchanged from b9f533b by B01; B02 changes it (a fix changes the ebuild and needs a revbump)
+sys-kernel/monolith-kernel VariableOrderWrong  # ported unchanged from b9f533b by B01; B02 changes it (a fix changes the ebuild and needs a revbump)
+x11-base/monolith-xserver DeprecatedDep  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+x11-base/monolith-xserver EmptyGlobalAssignment  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+x11-base/monolith-xserver MissingRemoteId  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+x11-base/xcb-proto BadDescription  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+x11-base/xcb-proto EmptyGlobalAssignment  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+x11-base/xcb-proto MissingRemoteId  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+x11-libs/libXfont DeprecatedDep  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+x11-libs/libXfont MissingRemoteId  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+x11-wm/monolith-dwm BadDescription  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
 ```
 
 ## AC-2: `pkgcheck scan --commits` against R04's fixture cases

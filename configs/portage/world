@@ -1,0 +1,301 @@
+# Gentoo world file for i486-linux-musl cross-compiled packages
+#
+# Standard Gentoo format: one atom per line
+# These packages will be built statically for the minimal Linux system
+#
+# Add packages here and run: make build-packages
+
+# Kernel (cross-compiled via monolith overlay ebuild)
+sys-kernel/monolith-kernel
+
+# Hand-authored rootfs helpers (SP-base): monolith-net (SP1 ISA NIC probe),
+# monolith-router (SP2/SP3 NAT + dnsmasq DHCP/DNS), monolith-console (lazy
+# auto-login shell), a POSIX-sh `which`, the guestbook.cgi boot-test fixture
+# (SP5 P4), the advisory-check login banner, and the prompt square. Owns the
+# files formerly hand-installed by scripts/build-rootfs.sh from
+# configs/rootfs-overlay/ — see configs/overlay/app-misc/monolith-base.
+app-misc/monolith-base
+
+# BusyBox (for initramfs — cross-compiled with savedconfig)
+sys-apps/busybox
+
+# Shells
+app-shells/bash
+app-shells/dash
+
+# Init system (replaces BusyBox init)
+sys-apps/sysvinit
+
+# Core GNU userland (replaces BusyBox applets)
+sys-apps/coreutils
+sys-apps/util-linux
+sys-apps/findutils
+sys-apps/grep
+sys-apps/sed
+sys-apps/gawk
+sys-apps/diffutils
+app-arch/tar
+app-text/tree
+
+# Core libraries (available for development)
+sys-libs/readline
+sys-libs/ncurses
+sys-libs/zlib
+dev-libs/libpcre2
+dev-libs/openssl
+
+# File utilities
+sys-apps/file
+sys-apps/less
+
+# Text editors
+app-editors/vim
+app-editors/nano
+
+# Man pages
+sys-apps/man-pages
+app-text/mandoc
+
+# Development tools
+sys-devel/binutils
+dev-build/make
+dev-debug/strace
+sys-devel/patch
+# gdb — target-native debugger; runs ON the i486 disc (ptrace-based local
+# process debugging + gdbserver), not a cross-host remote debugger. Pulls
+# dev-libs/gmp + dev-libs/mpfr (unconditional) and dev-libs/expat (USE=xml).
+# See .batteries/reports/gdb.md for the musl thread-debugging caveats.
+dev-debug/gdb
+
+# Scripting languages
+dev-lang/lua
+
+# perl — static, -Uusedl (no dynamic loader on the disc, so no XS .so loading;
+# any XS module would need to be baked into the binary via static_ext — see
+# monolith-perl ebuild). Built with arsv/perl-cross driving vanilla perl
+# (Gentoo's dev-lang/perl Configure is cross-hostile). No threads, no CPAN
+# client. CGI.pm 4.10 (removed from perl core in 5.22) is baked in as a
+# PURE-PERL rider for the guestbook's param()/header() — pinned specifically
+# to 4.10 because every CGI.pm release from 4.11 onward hard-depends on
+# HTML::Entities, which ships inside the XS HTML-Parser distribution; 4.10 is
+# the newest release with zero XS in its dependency tree (verified against
+# its Makefile.PL and a tarball-wide *.xs/*.c/*.h grep).
+# DBI + DBD::SQLite are DEFERRED, not shipped: this is a hard perl-cross
+# limitation, not a fallback-not-yet-taken. DBD::SQLite's Makefile.PL needs
+# an already-importable DBI at ITS OWN configure time (it calls into
+# DBI::DBD's helper routines), but perl-cross's static_ext bake is a single
+# pass over the whole perl build — DBI is still mid-build, nothing to import
+# yet. There is no dynamic loader on this disc to build DBI first and
+# `use DBI` it into a second pass either. The guestbook therefore talks to
+# SQLite via the on-disc `sqlite3` CLI (dev-db/monolith-sqlite, P1) instead
+# of DBI — shelling out, not linking in.
+dev-lang/monolith-perl
+
+# Compression utilities
+app-arch/xz-utils
+app-arch/bzip2
+app-arch/gzip
+
+# Networking (replaces BusyBox udhcpc/ifconfig)
+sys-apps/iproute2
+sys-apps/net-tools
+net-misc/iputils
+net-misc/dhcpcd
+# ethtool — NIC driver/hardware control (speed/duplex/autoneg/offload/etc.).
+# net-tools is already in world above and covers ifconfig/route/mii-tool;
+# ethtool is the modern complement for NIC feature control net-tools never
+# had. Pulls in net-libs/libmnl (new dep, see below) for its netlink path.
+sys-apps/ethtool
+
+# Firewall / NAT (see monolith-router; SP2)
+net-firewall/nftables
+
+# DHCP + DNS for the LAN (see monolith-router --dhcp; SP3)
+net-dns/dnsmasq
+
+# Remote access
+net-misc/dropbear
+
+# Network utilities
+net-misc/curl
+net-misc/wget
+net-misc/whois
+net-analyzer/netcat
+net-analyzer/traceroute
+# iperf3 — TCP/UDP bandwidth tester (+cJSON). Also the canary for the cross-gcc
+# libatomic.a fix: iperf3 needs 8-byte atomics, which on -march=i486 require
+# libatomic — it failed to static-link until the toolchain built libatomic.a
+# (Dockerfile cross-gcc-static.conf). If this builds, the fix works.
+net-misc/iperf:3
+
+# Dial-up / WAN
+# ppp — pppd (PPP daemon) + chat, for serial and PPPoE WAN links. Kernel PPP
+# is already enabled (CONFIG_PPP=y). Loadable plugins are disabled entirely
+# (--disable-plugins via env/ppp-no-plugins.conf) since this all-static rootfs
+# has no dynamic loader; base pppd/chat are plain static programs. ppp-scripts
+# (ip-up/ip-down) is PDEPEND-pulled automatically, not listed here.
+net-dialup/ppp
+
+# Network clients
+www-client/lynx
+# mutt — terminal email client. IMAP+SMTP over TLS; SMTP send via USE=gsasl
+# (net-misc/gsasl) to avoid the cyrus-sasl -> tmpfiles -> Python chain. ncurses
+# UI links with -ltinfo (env/mutt-tinfo.conf) for this repo's tinfo-split ncurses.
+mail-client/mutt
+# irssi — terminal IRC client (no Perl). Pulls dev-libs/glib (+libffi); glib's
+# 8-byte atomics needed libatomic on i486 — was masked for it, now unblocked by
+# the cross-gcc libatomic.a fix (#32).
+net-irc/irssi
+
+# Terminal multiplexer
+app-misc/tmux
+
+# User/password management
+sys-apps/shadow
+
+# System utilities
+sys-process/procps
+sys-process/htop
+sys-process/lsof
+app-admin/sysklogd
+# psmisc — killall (kill by name), pstree (process tree), fuser (what's holding
+# a file/socket/mount). procps covers pgrep/pkill/watch; psmisc fills the rest.
+sys-process/psmisc
+# cpio — extract/create cpio archives; notably the initrd is a newc cpio, so
+# this lets you crack it open on the box itself (same tool the factory uses).
+app-arch/cpio
+# ncdu — ncurses disk-usage explorer. Pinned <2: ncdu 2.x is written in Zig
+# (no Zig toolchain here); 1.22 is the last C release.
+<sys-fs/ncdu-2
+# pv — pipe viewer: progress bars/throughput for shell pipelines.
+sys-apps/pv
+# NOTE: bc and jq are wanted too but blocked — both BDEPEND bison, which drags
+# gettext -> dev-libs/libxml2, and libxml2 is masked in package.mask/problematic
+# for a meson/multilib cross-compile failure. Unblocking them needs a libxml2
+# i486-linux-musl meson cross-file (tracked separately).
+
+# Filesystem tools
+sys-fs/e2fsprogs
+sys-fs/dosfstools
+sys-fs/squashfs-tools
+
+# Additional shells
+app-shells/zsh
+app-shells/bash-completion
+
+# File managers and search
+net-misc/rsync
+sys-apps/the_silver_searcher
+
+# Additional compression
+app-arch/zip
+app-arch/unzip
+
+# Network analysis
+net-misc/socat
+net-analyzer/iftop
+net-analyzer/tcpdump
+# mtr — combined ping+traceroute network diagnostic ("My TraceRoute").
+# JSON output via jansson (new transitive dep — see
+# .batteries/reports/mtr.md). Needs root for raw sockets; this disc runs
+# as root, so no setuid/setcap wiring is used (USE=-filecaps).
+net-analyzer/mtr
+
+# Hardware info
+sys-apps/smartmontools
+sys-apps/hdparm
+sys-apps/dmidecode
+
+# Console: Terminus font + keymap tooling (Monolith UX Pass Task 5, "the
+# kid's font, everywhere"). kbd gives us setfont (rcS loads a Terminus PSF
+# at boot, see scripts/build-rootfs.sh) and loadkeys/dumpkeys (non-US
+# keyboards — see topics/gui.txt); terminus-font is the data package
+# setfont points at (data-only: RDEPEND="" on the real ebuild, verified
+# against ::gentoo terminus-font-4.49.1.ebuild — no target-sysroot
+# dependency at all). See package.use/static for the exact USE flags
+# chosen for each and why. CI-UNVERIFIED: no cross-toolchain available in
+# this environment to build-test i486-musl locally — first real test is
+# the Task 7 CI full build; a failure here is silently dropped by
+# --keep-going the same way w3m was (see MEMORY.md).
+sys-apps/kbd
+media-fonts/terminus-font
+
+# Terminus as the default X font (GUI font pass). terminus-font gains USE=pcf
+# (+pcf-unicode) above -> iso10646-1 PCF bitmaps in /usr/share/fonts/terminus.
+# NOTHING else is added for this: our /usr/share/fonts/monolith fonts.alias
+# maps `fixed` to Terminus, and the Xfbdev built-in FPE still supplies the
+# `cursor` font the server needs to start (startx keeps `built-ins` LAST in
+# -fp). No font-misc-misc / font-cursor-misc / xlsfonts, and — critically — no
+# freetype: the font packages' font.eclass RDEPENDs mkfontscale -> freetype, so
+# those three are package.provided (configs/portage/profile/package.provided) to
+# keep the whole scalable-font chain off this bitmap-only 486 disc. We generate
+# fonts.dir ourselves from each PCF's FONT property (scripts/pcf-fontname.py).
+
+# Databases
+# sqlite — static SQLite (CLI + libsqlite3.a) from the amalgamation ebuild, not
+# ::gentoo (which BDEPENDs tcl). THREADSAFE=0, no dlopen extensions, FTS5+JSON1.
+# The `sqlite3` CLI is what the guestbook CGI shells out to for its INSERT/
+# SELECT (DBD::SQLite's static_ext bake into monolith-perl was attempted and
+# reverted — see the monolith-perl comment above — so libsqlite3.a/sqlite3.h
+# are not currently consumed by anything in-tree; kept in the sysroot for a
+# future DBD retry).
+dev-db/monolith-sqlite
+
+# Mouse support
+sys-libs/gpm
+
+# Amusements
+games-misc/bsd-games
+app-misc/figlet
+app-misc/cmatrix
+app-misc/sl
+
+# GUI — the X server (SP-GUI G1). TinyX/kdrive Xfbdev: static, framebuffer-native,
+# zero-dlopen, built over vesafb. Overlay ebuild pins the tinyx commit and pulls
+# its server-side X libs (xorg-proto, libXfont v1, libfontenc, xtrans) as DEPENDs
+# — they are NOT listed here (only the server is a world member). Bitmap-only, no
+# freetype/fontconfig anywhere. Clients (dwm/st/dmenu) land in later milestones.
+x11-base/monolith-xserver
+
+# GUI — the X CLIENT stack (SP-GUI G2). The §2 client libs, cross+static, and
+# NOTHING ELSE: xorg-proto (headers) + libxcb (+xcb-proto BDEPEND) + libX11 +
+# libXext. dwm/st/dmenu link ONLY these — no Xt/Xaw/Xmu/ICE/SM, no Xft (bitmap
+# core fonts only). libxcb/libXau/libXdmcp are pulled transitively by libX11 but
+# listed here per spec §2 for intent. Each distinct client statically bakes its
+# own libX11 (~1MB) — fewer resident clients = less RAM.
+x11-base/xorg-proto
+x11-libs/libxcb
+x11-libs/libX11
+x11-libs/libXext
+
+# GUI — st, the suckless terminal (first §2 client). Ported off Xft/
+# fontconfig/freetype entirely onto core X11 bitmap fonts (XLoadQueryFont /
+# XChar2b / XDrawString16) — see configs/overlay/x11-terms/monolith-st and its
+# files/st-0.9.2-core-fonts.patch. Links only libX11 + libXext. Uses the font
+# name "fixed" — the libXfont builtin 6x13 the Xfbdev server already carries
+# (-fp built-ins, no font files on disc, iso8859-1/Latin-1; ample for an ASCII
+# TTY). A Unicode iso10646-1 fixed (media-fonts/font-misc-misc) + terminus are
+# later polish; NO font package is needed for `startx → a term`.
+x11-terms/monolith-st
+
+# GUI — dwm, the suckless dynamic window manager (SP-GUI G3). Same de-Xft
+# treatment as st: drw.c/drw.h rewritten off Xft/fontconfig onto core X11 bitmap
+# fonts (XLoadQueryFont / XChar2b / XDrawString16), Xinerama compiled out (no
+# libXinerama on the disc) — see configs/overlay/x11-wm/monolith-dwm and its
+# files/dwm-6.5-core-fonts.patch. Links ONLY libX11. Bar font is the builtin
+# "fixed"; dwm's default Mod+Shift+Return spawns st (already on the disc). This
+# makes `startx` a managed desktop instead of a lone terminal.
+x11-wm/monolith-dwm
+
+# nethack — pinned to the last 3.6.x release. 5.0.0 (current ::gentoo head)
+# requires USE=lua (REQUIRED_USE on lua_single_target_*) and restructured its
+# util/Makefile build-variable names (MYCFLAGS/MYCXXFLAGS vs. this repo's
+# CC_FOR_BUILD patch in configs/portage/bashrc, written for the 3.6.x shape).
+# Pinning with '=' also stops any future epoch bump from silently floating
+# this back up to 5.0.0 the way the unqualified atom did on 2026-08-02.
+=games-roguelike/nethack-3.6.7-r1
+
+# Module tools for the loadable-driver regime — modprobe/lsmod/depmod in the
+# booted GNU rootfs (busybox's module applets are initramfs-only). Also gives
+# the user `modprobe` at the shell: the drivers are on the disc; load what you like.
+sys-apps/kmod
