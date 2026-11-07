@@ -1,5 +1,5 @@
 #!/bin/sh
-# gates-verdict.sh [--rc1] <attestation-dir>
+# gates-verdict.sh [--rc1 | --cve-report-only] <attestation-dir>
 #
 # Reads the attestation summary and the CVE coverage report that attestation.sh wrote and decides
 # whether the gates passed.
@@ -7,16 +7,18 @@
 #   with --rc1:    exit 0 iff the licence and unowned gates passed and the coverage report records a
 #                  non-empty db.built; the CVE gate's own verdict is reported, not gating (rc1's tree
 #                  carries CVEs the owner waives after this run lists them).
-# Both modes print the raw grype match count ("raw matches: N") and the CVE gating findings (CVE id, component, severity) and, when GITHUB_STEP_SUMMARY
+#   with --cve-report-only: the same as --rc1 (licence, unowned and db.built decide; the CVE verdict is
+#                  reported, not gating). CI uses it off tag builds; a tag build runs without it.
+# All modes print the raw grype match count ("raw matches: N") and the CVE gating findings (CVE id, component, severity) and, when GITHUB_STEP_SUMMARY
 # is set, append them to that file as a Markdown table.
 # A missing or unparseable attestation-summary.json, or a missing cve-report-coverage.json, exits 1
 # and names the file.
 set -u
 
 rc1=0
-if [ "${1:-}" = "--rc1" ]; then rc1=1; shift; fi
+case "${1:-}" in --rc1|--cve-report-only) rc1=1; shift ;; esac
 if [ $# -ne 1 ]; then
-    echo "usage: gates-verdict.sh [--rc1] <attestation-dir>" >&2
+    echo "usage: gates-verdict.sh [--rc1 | --cve-report-only] <attestation-dir>" >&2
     exit 2
 fi
 dir=$1

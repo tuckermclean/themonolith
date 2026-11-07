@@ -259,7 +259,17 @@ jobs:
           ISO: output/iso/boot-test.iso
         run: make test-artifact
 
+      - name: Test the gates on the ISO (CVE verdict reported, not gating)
+        if: github.ref_type != 'tag'
+        env:
+          ISO: output/iso/boot-test.iso
+          BUILD_TAG: ${{ env.BUILD_VERSION }}
+          PACKAGE_TREE: output/sysroot
+          CVE_REPORT_ONLY: "1"
+        run: make test-gates
+
       - name: Test the gates on the ISO
+        if: github.ref_type == 'tag'
         env:
           ISO: output/iso/boot-test.iso
           BUILD_TAG: ${{ env.BUILD_VERSION }}

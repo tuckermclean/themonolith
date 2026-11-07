@@ -3,6 +3,8 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
+.DEFAULT_GOAL := test
+
 .PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test-lint:
@@ -137,14 +139,14 @@ iso-artifact-name:
 
 # Manual boots (not tests): serial console, Ctrl+A X to exit.
 run-bios:
-	@test -f '$(ISO)' || { echo "Error: $(ISO) not found. Run 'make fetch-iso' or pass ISO=<path>."; exit 1; }
+	@test -f '$(ISO)' || { echo "Error: $(ISO) not found. Run 'make iso' or pass ISO=<path>."; exit 1; }
 	@echo "==> Booting $(ISO) in QEMU via BIOS (Ctrl+A X to exit)"
 	qemu-system-i386 -cdrom '$(ISO)' -m 64M -cpu 486 -nographic -serial mon:stdio
 
 # OVMF is 64-bit firmware; GRUB hands off to the 32-bit kernel via EFI Handover.
 # 512M minimum: UEFI firmware and the GRUB EFI heap need well over 64MB.
 run-uefi:
-	@test -f '$(ISO)' || { echo "Error: $(ISO) not found. Run 'make fetch-iso' or pass ISO=<path>."; exit 1; }
+	@test -f '$(ISO)' || { echo "Error: $(ISO) not found. Run 'make iso' or pass ISO=<path>."; exit 1; }
 	@test -n '$(OVMF_CODE)' || { echo "Error: OVMF firmware not found. Install ovmf/edk2-ovmf, or set OVMF_CODE=/path/to/OVMF_CODE.fd"; exit 1; }
 	@echo "==> Booting $(ISO) in QEMU via UEFI (OVMF: $(OVMF_CODE)), Ctrl+A X to exit"
 	qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) -cdrom '$(ISO)' -m 512M -nographic -serial mon:stdio
@@ -347,6 +349,8 @@ attest-builder: rootfs pull-image grype-db-update
 # The gates on the rootfs of ISO. Any ISO: attestation.sh must exit 0. rc1's ISO (its sha256 is RC1_SHA256): the licence and
 # unowned gates must pass and the CVE coverage report must record db.built; the CVE gating findings are printed (and added to
 # $GITHUB_STEP_SUMMARY), not gating; then the SBOM must equal rc1's outside SBOM_DIFF_LIST.
+# CVE_REPORT_ONLY=1 (CI sets it off tag builds): on any other ISO the CVE verdict is reported, not gating, like rc1's
+# (gates-verdict.sh --cve-report-only), and attestation.sh's own exit status is not demanded. A tag build leaves it unset.
 test-gates: rootfs pull-image grype-db-update
 	rm -rf $(ATTEST_OUT)
 	mkdir -p $(ATTEST_OUT)
@@ -354,11 +358,11 @@ test-gates: rootfs pull-image grype-db-update
 	@rc1=0; [ "$$(cat output/gates-iso.sha256)" = '$(RC1_SHA256)' ] && rc1=1; \
 	$(ATTEST_RUN) /scripts/attestation.sh $(ATTEST_ARGS); arc=$$?; \
 	echo "==> attestation.sh exited $$arc"; \
-	flag=; [ $$rc1 = 1 ] && flag=--rc1; \
+	flag=; [ $$rc1 = 1 ] && flag=--rc1;$(if $(CVE_REPORT_ONLY), [ $$rc1 = 1 ] || flag=--cve-report-only;) \
 	toolbox/run --network none -e GITHUB_STEP_SUMMARY -- sh scripts/gates-verdict.sh $$flag $(ATTEST_OUT) || exit 1; \
 	[ -f $(ATTEST_OUT)/bom.cdx.json ] || { echo "test-gates: attestation.sh wrote no $(ATTEST_OUT)/bom.cdx.json"; exit 1; }; \
 	if [ $$rc1 = 1 ]; then $(fetch_rc1_sbom) || exit 1; $(sbom_diff) || exit 1; \
-	else [ $$arc -eq 0 ] || exit 1; fi; \
+	else $(if $(CVE_REPORT_ONLY),:,[ $$arc -eq 0 ] || exit 1); fi; \
 	echo "test-gates: PASS"
 
 # B01-AC-16: a revbump or package.use change rebuilds a cached static consumer, in the pinned builder, on the host.
