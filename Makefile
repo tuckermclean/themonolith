@@ -358,11 +358,11 @@ test-gates: rootfs pull-image grype-db-update
 	@rc1=0; [ "$$(cat output/gates-iso.sha256)" = '$(RC1_SHA256)' ] && rc1=1; \
 	$(ATTEST_RUN) /scripts/attestation.sh $(ATTEST_ARGS); arc=$$?; \
 	echo "==> attestation.sh exited $$arc"; \
-	flag=; [ $$rc1 = 1 ] && flag=--rc1;$(if $(CVE_REPORT_ONLY), [ $$rc1 = 1 ] || flag=--cve-report-only;) \
+	flag=; [ $$rc1 = 1 ] && flag=--rc1;$(if $(filter 1,$(CVE_REPORT_ONLY)), [ $$rc1 = 1 ] || flag=--cve-report-only;) \
 	toolbox/run --network none -e GITHUB_STEP_SUMMARY -- sh scripts/gates-verdict.sh $$flag $(ATTEST_OUT) || exit 1; \
 	[ -f $(ATTEST_OUT)/bom.cdx.json ] || { echo "test-gates: attestation.sh wrote no $(ATTEST_OUT)/bom.cdx.json"; exit 1; }; \
 	if [ $$rc1 = 1 ]; then $(fetch_rc1_sbom) || exit 1; $(sbom_diff) || exit 1; \
-	else $(if $(CVE_REPORT_ONLY),:,[ $$arc -eq 0 ] || exit 1); fi; \
+	else $(if $(filter 1,$(CVE_REPORT_ONLY)),:,[ $$arc -eq 0 ] || exit 1); fi; \
 	echo "test-gates: PASS"
 
 # B01-AC-16: a revbump or package.use change rebuilds a cached static consumer, in the pinned builder, on the host.
