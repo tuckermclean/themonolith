@@ -41,6 +41,9 @@ jobs:
         run: make fetch-iso
 
       - name: Audit the rootfs of the rc1 ISO
+        env:
+          ISO_URL: https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
+          ISO_SHA256: a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
         run: make test-artifact
 
       - name: Upload the static-audit report
@@ -67,6 +70,9 @@ jobs:
         run: make fetch-iso
 
       - name: Audit the rootfs of the rc1 ISO
+        env:
+          ISO_URL: https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
+          ISO_SHA256: ${{ inputs.iso-sha256 }}
         run: make test-artifact
 
       - name: Upload the static-audit report
