@@ -142,5 +142,26 @@ if [ -f "$S" ] && ! echo "$OUT" | grep -q 'usage:' && echo "$OUT" | grep -q 'gat
 else fail "B03-AC-7 --cve-report-only: the non-zero exits are verdicts (unowned fail named), not a usage error"; fi
 gv "$TMP/c1"; expect_nz "B03-AC-7 without --cve-report-only a cve fail (overall fail) still exits non-zero"
 
+# --- slice 3b (S01 change 9, B03 change 13): --cve-report-only gates on sbom_check; --rc1 lane unchanged ---
+# setsbom <name> <value>: sets sbom_check in an mk-made summary
+setsbom() {
+    python3 - "$TMP/$1/attestation-summary.json" "$2" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p)); d["sbom_check"] = sys.argv[2]; json.dump(d, open(p, "w"))
+PY
+}
+mk s1 pass fail pass fail "$D" yes; setsbom s1 fail; gv "$TMP/s1" --cve-report-only
+expect_nz "B03-AC-7 --cve-report-only: sbom_check fail (licence, unowned pass; cve fail) exits non-zero"
+if [ -f "$S" ] && ! echo "$OUT" | grep -q 'usage:' && echo "$OUT" | grep -q 'gates-verdict: FAIL' && echo "$OUT" | grep -i 'FAIL:.*sbom' >/dev/null; then
+    ok "B03-AC-7 --cve-report-only: the sbom_check failure is a verdict naming the SBOM check, not a usage error"
+else fail "B03-AC-7 --cve-report-only: the sbom_check failure is a verdict naming the SBOM check, not a usage error"; fi
+mk s2 pass fail pass fail "$D" yes; setsbom s2 pass; gv "$TMP/s2" --cve-report-only
+expect_rc0 "B03-AC-7 --cve-report-only: sbom_check pass with cve fail exits 0 (regression guard, passes at head)"
+mk s3 pass pass pass pass "$D" yes; setsbom s3 fail; gv "$TMP/s3" --cve-report-only
+expect_nz "B03-AC-7 --cve-report-only: sbom_check fail with every other gate pass exits non-zero"
+# --rc1 at head ignores sbom_check (it compares the SBOM elsewhere); the rc1 lane must not move.
+mk s4 pass fail pass fail "$D" yes; setsbom s4 fail; gv "$TMP/s4" --rc1
+expect_rc0 "B03-AC-7 --rc1: sbom_check fail is still ignored, exit 0 as at head (regression guard, passes at head)"
+
 echo "gates-verdict: $fails failure(s)"
 [ "$fails" -eq 0 ]

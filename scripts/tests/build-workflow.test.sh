@@ -790,6 +790,22 @@ else
   fail "B03-AC-7 (change 13): the rc1 branch (--rc1, SBOM comparison) is present with and without the switch"
 fi
 
+# Change 13 / slice 3b: only the value 1 turns the switch on; 0 and empty behave as unset.
+mkn "$tmp/tg.zero" test-gates ISO="$tmp/dummy.iso" CVE_REPORT_ONLY=0
+mkn "$tmp/tg.empty" test-gates ISO="$tmp/dummy.iso" CVE_REPORT_ONLY=
+for v in zero empty; do
+  if grep -q 'gates-verdict\.sh' "$tmp/tg.$v" && ! grep -q -e '--cve-report-only' "$tmp/tg.$v"; then
+    pass "B03-AC-7 (change 13): make -n test-gates CVE_REPORT_ONLY=$([ $v = zero ] && echo 0 || echo '<empty>') passes no --cve-report-only"
+  else
+    fail "B03-AC-7 (change 13): make -n test-gates CVE_REPORT_ONLY=$([ $v = zero ] && echo 0 || echo '<empty>') passes no --cve-report-only"
+  fi
+  if grep -Eq 'arc -eq 0' "$tmp/tg.$v"; then
+    pass "B03-AC-7 (change 13): CVE_REPORT_ONLY=$([ $v = zero ] && echo 0 || echo '<empty>') keeps the arc -eq 0 requirement"
+  else
+    fail "B03-AC-7 (change 13): CVE_REPORT_ONLY=$([ $v = zero ] && echo 0 || echo '<empty>') keeps the arc -eq 0 requirement"
+  fi
+done
+
 # Change 13, build.yml: make test-gates steps set CVE_REPORT_ONLY=1 iff they run off tag pushes; one step per ref type.
 python3 -I - "$ROOT" >"$tmp/py3.out" 2>"$tmp/py3.err" <<'PY'
 import re, sys
