@@ -81,7 +81,7 @@ pkg_config() {
 	# Nothing under /configs is written: review the result and copy it to the savedconfig by hand.
 	local saved="${PORTAGE_CONFIGROOT%/}/etc/portage/savedconfig/${CATEGORY}/${PN}"
 	[[ -f ${saved} ]] || die "No kernel savedconfig at ${saved}"
-	[[ -d /output ]] || die "/output is not mounted; run this through make menuconfig-kernel"
+	[[ -d /output ]] || die "/output is not mounted; run this in the builder container with the checkout's output/ mounted at /output"
 
 	# Re-extracts source into T to avoid needing the build workdir to persist
 	einfo "Setting up kernel source for menuconfig..."

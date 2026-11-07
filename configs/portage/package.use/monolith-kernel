@@ -1,1 +1,2 @@
+# savedconfig: make.conf's USE="-*" strips the IUSE defaults, so enable the flag here; restore_config reads the savedconfig only with it.
 sys-kernel/monolith-kernel savedconfig
