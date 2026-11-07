@@ -3,7 +3,7 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox check-updates update-versions list-packages show-failed shell clean
+.PHONY: toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild
 
@@ -187,6 +187,9 @@ builder-manifest:
 
 # B01 adds configs/portage/versions.lock; M02's build-image consumes these pins.
 ifneq ($(wildcard configs/portage/versions.lock),)
+# Kernel version (with revision) — read from versions.lock so targets stay in sync with the pin
+KERNEL_VERSION := $(shell grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2)
+
 # Cross-toolchain version pins — all passed to crossdev to prevent live-ebuild (9999) selection
 # musl and gcc come from crossdev.lock (managed by update-build-pins, not update-versions)
 # binutils comes from versions.lock (it is a world package)
@@ -382,7 +385,8 @@ PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG) -e MONOLITH_USEPKG=$(MON
 DISTFILES_DIR ?= output/distfiles
 PORTAGE_LOGS_DIR ?= output/portage-logs
 
-# configs is writable because build-packages.sh exports the resolved kernel config to configs/kernel.config.
+# configs stays writable: update-versions and menuconfig-busybox write through it (versions.lock, the busybox savedconfig).
+# The kernel build writes nothing there; its resolved config is exported to output/kernel.resolved.config.
 # The pinned tree replaces the predecessor's repos volume; distfiles and the other state are directories under output.
 BUILD_MOUNTS := -v $(CURDIR)/configs:/configs -v $(CURDIR)/scripts:/scripts:ro \
 	-v $(CURDIR)/output:/output -v $(abspath $(TREE_DIR)):/var/db/repos/gentoo \
@@ -422,6 +426,33 @@ menuconfig-busybox: pull-image ensure-volume
 check-updates: pull-image ensure-volume
 	@echo "==> Checking for package updates"
 	$(BUILD_RUN) /scripts/update-versions.sh check
+
+# Interactive kernel menuconfig, starting from the kernel savedconfig (no fallback: it must exist).
+# Writes only output/kernel.config.new; review it and copy it to the savedconfig by hand.
+# Drives tar/patch/make directly: portage's environment sanitization breaks the ncurses TUI.
+# The container is --rm, so the scratch source tree needs no cleanup.
+menuconfig-kernel: pull-image ensure-volume
+	@echo "==> Running kernel menuconfig"
+	$(BUILD_RUN_IT) -e TERM sh -c \
+	    'set -e; \
+	     KVER=$(KERNEL_VERSION); KVER=$${KVER%-r*}; \
+	     SAVED=/configs/portage/savedconfig/sys-kernel/monolith-kernel; \
+	     PATCH=/configs/overlay/sys-kernel/monolith-kernel/files/linux-$${KVER%.*}-gcc15-std-gnu11.patch; \
+	     [ -f "$$SAVED" ] || { echo "menuconfig-kernel: no kernel savedconfig at configs/portage/savedconfig/sys-kernel/monolith-kernel"; exit 1; }; \
+	     SRCDIR=/tmp/kernel-menuconfig; \
+	     mkdir -p "$$SRCDIR"; \
+	     echo "==> Extracting linux-$${KVER}.tar.xz ..."; \
+	     tar xf /var/cache/distfiles/linux-$${KVER}.tar.xz -C "$$SRCDIR" --strip-components=1; \
+	     cd "$$SRCDIR"; \
+	     patch -p1 < "$$PATCH"; \
+	     cp "$$SAVED" .config; \
+	     make ARCH=i386 olddefconfig; \
+	     make ARCH=i386 menuconfig && cp .config /output/kernel.config.new && echo "==> Config saved to output/kernel.config.new"'
+
+# Regenerates the monolith-kernel Manifest (run after changing the ebuild)
+regen-manifest: pull-image ensure-volume
+	$(BUILD_RUN_IT) \
+	    ebuild /configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-$(KERNEL_VERSION).ebuild manifest
 
 # Regenerates versions.lock from world against the pinned tree; an atom that does not resolve fails.
 update-versions: pull-image sync-portage ensure-volume

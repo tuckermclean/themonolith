@@ -2375,7 +2375,7 @@ def parse_args():
             "Expected `uname -r` string, e.g. 6.12.80-i486-monolith. "
             "Compute this from configs/portage/versions.lock "
             "(sys-kernel/monolith-kernel) + CONFIG_LOCALVERSION in "
-            "configs/kernel.config — never hardcode it here or in CI."
+            "configs/portage/savedconfig/sys-kernel/monolith-kernel — never hardcode it here or in CI."
         ),
     )
     p.add_argument("--ram-mb", type=int, default=None, help="Guest RAM in MB (default depends on --mode)")

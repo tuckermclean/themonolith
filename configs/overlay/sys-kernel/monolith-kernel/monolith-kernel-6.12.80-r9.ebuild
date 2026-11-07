@@ -3,6 +3,8 @@
 
 EAPI=8
 
+inherit savedconfig
+
 DESCRIPTION="Linux kernel cross-compiled for i486 — The Monolith"
 HOMEPAGE="https://kernel.org"
 SRC_URI="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${PV}.tar.xz"
@@ -10,6 +12,7 @@ SRC_URI="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${PV}.tar.xz"
 LICENSE="GPL-2"
 SLOT="0"
 KEYWORDS="~amd64"
+IUSE="+savedconfig"
 
 S="${WORKDIR}/linux-${PV}"
 
@@ -24,15 +27,14 @@ BDEPEND="
 PATCHES=( "${FILESDIR}/linux-${PV%.*}-gcc15-std-gnu11.patch" )
 
 src_configure() {
-	# Load pinned config from bind-mounted /configs, fall back to allnoconfig
-	if [[ -f "${CONFIGS_DIR}/kernel.config" ]]; then
-		cp "${CONFIGS_DIR}/kernel.config" .config
-		einfo "Loaded kernel config from ${CONFIGS_DIR}/kernel.config"
-	else
-		ewarn "No kernel.config found at ${CONFIGS_DIR}/kernel.config — using allnoconfig"
-		make ARCH=i386 allnoconfig
-	fi
-	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig
+	# The pinned config is the package's savedconfig (configs/portage/savedconfig/
+	# sys-kernel/monolith-kernel, synced into the target's /etc/portage). restore_config
+	# only warns when it finds nothing, so a missing file is checked and fatal here.
+	local saved="${PORTAGE_CONFIGROOT%/}/etc/portage/savedconfig/${CATEGORY}/${PN}"
+	[[ -f ${saved} ]] || die "No kernel savedconfig at ${saved} — expected configs/portage/savedconfig/${CATEGORY}/${PN} in the checkout"
+	restore_config .config || die "Failed to restore the kernel savedconfig"
+	einfo "Loaded kernel config from ${saved}"
+	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig || die "olddefconfig failed"
 }
 
 src_compile() {
@@ -65,52 +67,42 @@ src_install() {
 	# gzip -9 gets it down to kernel.org's own config.gz convention size).
 	# Because it rides inside the binpkg's CONTENTS, it is installed identically
 	# whether monolith-kernel is built from source or pulled from the binpkg
-	# cache — unlike the old configs/kernel.config copy-back below, which is a
-	# no-op on a cache hit because src_install never runs. This is what makes
-	# scripts/verify-resolved-i2c-off.sh a real assertion on both CI paths
-	# instead of a vacuous pass on the common cache-hit path (DCX-99).
+	# cache. This is what makes scripts/verify-resolved-i2c-off.sh a real assertion
+	# on both CI paths instead of a vacuous pass on the common cache-hit path (DCX-99).
 	insinto /usr/share/monolith-kernel
 	gzip -9c .config > "${T}/resolved-kernel.config.gz" || die "Failed to gzip resolved kernel config"
 	doins "${T}/resolved-kernel.config.gz"
-
-	# Save final config back to /configs for local `make kernel-config`
-	# convenience. On a binpkg cache hit this copy never runs (src_install is
-	# skipped), which is why scripts/build-packages.sh separately re-derives
-	# this same file from the package artifact above on every run — that copy,
-	# not this one, is what CI actually asserts against.
-	# A failure here used to be silently swallowed (`|| true`); make it loud.
-	cp .config "${CONFIGS_DIR}/kernel.config" || die "Failed to copy resolved kernel config back to ${CONFIGS_DIR}/kernel.config"
 }
 
 pkg_config() {
-	# Run menuconfig interactively and save result back to /configs/kernel.config
+	# Run menuconfig interactively, starting from the savedconfig, and write the result
+	# to /output/kernel.config.new (the checkout's output/ in the builder container).
+	# Nothing under /configs is written: review the result and copy it to the savedconfig by hand.
+	local saved="${PORTAGE_CONFIGROOT%/}/etc/portage/savedconfig/${CATEGORY}/${PN}"
+	[[ -f ${saved} ]] || die "No kernel savedconfig at ${saved}"
+	[[ -d /output ]] || die "/output is not mounted; run this through make menuconfig-kernel"
+
 	# Re-extracts source into T to avoid needing the build workdir to persist
 	einfo "Setting up kernel source for menuconfig..."
 	local src="${T}/linux-${PV}"
 	mkdir -p "${src}"
 	local distfiles
-	distfiles=$(portageq distdir 2>/dev/null || echo "/var/cache/distfiles")
-	tar xf "${distfiles}/linux-${PV}.tar.xz" -C "${src}" --strip-components=1
+	distfiles=$(portageq distdir || echo "/var/cache/distfiles")
+	tar xf "${distfiles}/linux-${PV}.tar.xz" -C "${src}" --strip-components=1 || die "Failed to extract linux-${PV}"
 
 	pushd "${src}" >/dev/null || die
 
 	# Apply patches — use EBUILD path since FILESDIR/DISTDIR aren't populated for pkg_* phases
 	eapply "${EBUILD%/*}/files/linux-${PV%.*}-gcc15-std-gnu11.patch"
 
-	# Load existing config
-	if [[ -f "${CONFIGS_DIR}/kernel.config" ]]; then
-		cp "${CONFIGS_DIR}/kernel.config" .config
-	else
-		make ARCH=i386 allnoconfig
-	fi
-	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig
+	cp "${saved}" .config || die "Failed to load the kernel savedconfig"
+	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig || die "olddefconfig failed"
 
 	# Interactive menuconfig
-	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" menuconfig
+	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" menuconfig || die "menuconfig failed"
 
-	# Save result
-	cp .config "${CONFIGS_DIR}/kernel.config" || die "Failed to save kernel config"
-	einfo "Kernel config saved to ${CONFIGS_DIR}/kernel.config"
+	cp .config /output/kernel.config.new || die "Failed to save kernel config"
+	einfo "Kernel config saved to output/kernel.config.new"
 
 	popd >/dev/null || die
 }

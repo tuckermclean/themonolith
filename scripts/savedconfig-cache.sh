@@ -53,9 +53,11 @@ PKGDIR="${2:-${PKGDIR:-${REPO_ROOT}/output/packages}}"
 
 # Tracked packages: "category/package:relative-path-to-savedconfig"
 # Add a line here whenever a new savedconfig-governed, non-revbumped package is
-# introduced. (The kernel is intentionally absent — it uses a -rN revbump.)
+# introduced. The kernel is tracked too: a savedconfig edit purges its binpkg even
+# when the revbump is forgotten.
 TRACKED=(
     "sys-apps/busybox:configs/portage/savedconfig/sys-apps/busybox"
+    "sys-kernel/monolith-kernel:configs/portage/savedconfig/sys-kernel/monolith-kernel"
 )
 
 config_hash() {
