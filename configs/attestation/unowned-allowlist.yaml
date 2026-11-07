@@ -157,7 +157,7 @@ allowlist:
 
   # ── Symlinks set by build-rootfs.sh ─────────────────────────────────────────
   - path: bin/sh
-    source: "build-rootfs.sh"
+    source: "postinst:app-shells/bash"
   - path: usr/bin/more
     source: "build-rootfs.sh"
 
