@@ -79,6 +79,8 @@ Open the PR with `gh pr create`. The body has:
 - the RED → GREEN → review SHAs for each slice;
 - deviations and open questions.
 
+**Fresh review on the PR.** Once the PR is open, dispatch a **new** `monolith-reviewer` over the whole node: the brief, the node's base (the `origin/main` commit the branch started from), every slice's RED SHA, the head SHA, the PR URL and the evidence table. It has seen none of the slice reviews. Post its verdict and findings on the PR with `gh pr comment <N> --body-file <file>`, headed `Fresh review (<verdict>)`. The guard blocks GitHub reviews, so this is a comment, never an approval. On `request_changes`, give the findings to a new implementer (the slice retry budget applies), push, then run a new reviewer and post a new comment. On `test_spec_conflict`, go to step 7.
+
 Give the owner the PR URL. You never approve or merge.
 
 ## 7. Stop and ask the owner
