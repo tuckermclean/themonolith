@@ -5,8 +5,6 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
-test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild
-
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
 
@@ -47,9 +45,15 @@ ISO_SHA256 ?=
 EXPECTED_KERNEL ?= 6.12.80-i486-monolith
 BUILT_ISO := output/themonolith-$(BUILD_VERSION).iso
 DEFAULT_ISO := $(if $(ISO_URL),output/themonolith-0.1.0-rc1.iso,$(BUILT_ISO))
-# What an ISO left at its default needs first: the fetch in the rc1 lane, else the built ISO (the all chain, below).
-default_iso_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),fetch-iso,$(BUILT_ISO)))
+# What an ISO left at its default needs first: the fetch in the rc1 lane, else `make iso`.
+default_iso_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),fetch-iso,iso))
 ISO ?= $(DEFAULT_ISO)
+# make test builds the ISO it tests: in the default lane (no ISO_URL, ISO left at its default) the all chain
+# (packages, then rootfs; iso follows as the default ISO's prerequisite) runs before the first boot test.
+# The rc1 lane builds nothing. Prerequisites run left to right, so this sits ahead of test-boot.
+test_build_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),,sync-portage build-packages build-rootfs))
+test: test-lint test-unit test-revbump test-overlay $(test_build_dep) test-boot test-artifact test-gates test-cve-canary test-static-rebuild
+
 # Where fetch-iso writes the verified ISO.
 ISO_OUT ?= $(DEFAULT_ISO)
 ISO_ARTIFACT ?=
@@ -476,10 +480,6 @@ iso-stage:
 
 # Everything: packages, root filesystem, ISO.
 all: sync-portage build-packages build-rootfs iso
-
-# The built ISO as a prerequisite (the default ISO of the tests): the all chain, so that a clean checkout builds
-# the packages and the rootfs before the ISO. Its prerequisites are phony, so it is always rebuilt.
-$(BUILT_ISO): sync-portage build-packages build-rootfs iso
 
 # Writes build=true|false to $GITHUB_OUTPUT: whether this run builds (a pull request needs the full-ci label;
 # scripts/full-ci-label.sh). The branch-push path filter is the workflow's on.push.paths. It runs on the runner
