@@ -1,8 +1,10 @@
 #!/bin/bash
 # v0 node scheduler. Every 10 minutes: find the first ready node (ready.py) and, if no session is
 # running, start `claude -p "/node <ID>"` for it in its own worktree. One session at a time.
-#   tmux new -d -s sched .claude/scheduler/loop.sh     (from the main checkout, on main)
+#   git worktree add --detach ~/gitrepos/themonolith-sched origin/main    (once; its own checkout, never the owner's)
+#   cd ~/gitrepos/themonolith-sched && tmux new -d -s sched .claude/scheduler/loop.sh
 #   touch ~/STOP                                         (exits at the next tick; a session keeps going)
+# Node worktrees go in ../themonolith-wt/<ID>. SCHED_TICK overrides the 600 s tick (tests).
 # Reads: ~/.config/noodlebot/token (GitHub App token for gh), ~/.config/claude-scheduler/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, given to the session only). Writes: out/scheduler/status.log,
 # out/node/<ID>/session.jsonl, out/node/<ID>/FAILED.

@@ -3,9 +3,14 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline
+.PHONY: toolbox-publish test-scheduler pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline
 
-test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary
+test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-scheduler
+
+# The v0 node scheduler's ready-node choice (.claude/scheduler/). Outside scripts/tests because F01's
+# fixture tree leaves .claude/ out.
+test-scheduler:
+	toolbox/run --network none -- sh .claude/scheduler/ready.test.sh
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)

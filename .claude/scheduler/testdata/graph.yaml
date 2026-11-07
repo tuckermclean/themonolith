@@ -1,4 +1,4 @@
-# Fixture for scheduler-ready.test.sh: A01 -> (A02, A03) -> A04, in this order.
+# Fixture for ready.test.sh: A01 -> (A02, A03) -> A04, in this order.
 apiVersion: themonolith/v1
 kind: DependencyGraph
 nodes:

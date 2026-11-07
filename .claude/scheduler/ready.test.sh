@@ -1,11 +1,11 @@
 #!/bin/sh
 # Tests the scheduler's ready-node choice (.claude/scheduler/ready.py) against a fixture graph.
-#   sh scripts/tests/scheduler-ready.test.sh
+#   sh .claude/scheduler/ready.test.sh   (make test-scheduler, part of make test)
 set -u
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root" || exit 2
 ready=.claude/scheduler/ready.py
-graph=scripts/tests/fixtures/scheduler/graph.yaml
+graph=.claude/scheduler/testdata/graph.yaml
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 fails=0
