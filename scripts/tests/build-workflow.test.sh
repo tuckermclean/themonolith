@@ -102,15 +102,25 @@ for t in "test-boot:boot-test\\.py" "test-artifact:static-audit\\.sh" "test-gate
   tgt=${t%%:*}; tool=${t#*:}; toolname=$(printf %s "$tool" | tr -d '\\')
   mkn "$tmp/$tgt.def" "$tgt"
   before "B03-AC-6: make -n $tgt with the default ISO runs build-iso.sh before $toolname" "$tmp/$tgt.def" "$SH_ISO" "$tool"
-  if [ -n "$(firstline "$tmp/$tgt.def" "$tool")" ] && [ -z "$(firstline "$tmp/$tgt.def" 'curl -fsSL')" ]; then
-    pass "B03-AC-6: make -n $tgt with the default ISO does not fetch (no curl)"
+  if [ -n "$(firstline "$tmp/$tgt.def" "$tool")" ] && [ -z "$(firstline "$tmp/$tgt.def" 'curl -fsSL.*\.iso')" ]; then
+    pass "B03-AC-6: make -n $tgt with the default ISO does not fetch the ISO (no curl of ISO_URL)"
   else
-    fail "B03-AC-6: make -n $tgt with the default ISO does not fetch (no curl)"
+    fail "B03-AC-6: make -n $tgt with the default ISO does not fetch the ISO (no curl of ISO_URL)"
   fi
   mkn "$tmp/$tgt.lane" "$tgt" ISO_URL=https://example.invalid/lane.iso \
     ISO_SHA256=0000000000000000000000000000000000000000000000000000000000000001
   before "B03-AC-6: make -n $tgt with ISO_URL and ISO_SHA256 set fetches (curl) before $toolname" "$tmp/$tgt.lane" 'curl -fsSL' "$tool"
 done
+
+# B03-AC-6 / change 10 (2b): on a clean checkout (no output/) make -n test runs the package build, the rootfs build
+# and the ISO build, in that order, before the boot tests: the built ISO is a file target reached through the all
+# chain. Run in a temporary copy of the Makefile so that an existing output/ cannot hide a step.
+mkdir -p "$tmp/clean"
+cp "$ROOT/Makefile" "$tmp/clean/Makefile" 2>/dev/null
+(cd "$tmp/clean" && make -n test) >"$tmp/clean.out" 2>&1
+before "B03-AC-6: clean checkout, make -n test builds packages before the rootfs (build-packages.sh, build-rootfs.sh)" "$tmp/clean.out" "$SH_PKG" "$SH_RFS"
+before "B03-AC-6: clean checkout, make -n test builds the rootfs before the ISO (build-rootfs.sh, build-iso.sh)" "$tmp/clean.out" "$SH_RFS" "$SH_ISO"
+before "B03-AC-6: clean checkout, make -n test builds the ISO before the first boot test (build-iso.sh, boot-test.py)" "$tmp/clean.out" "$SH_ISO" 'boot-test\.py'
 
 # Change 10: the rc1 workflows pass the rc1 inputs explicitly (ISO_URL and ISO_SHA256, or ISO=) to the test step.
 # AC-1, -4, -5, -6 (build.yml parts) and AC-9 are parsed by one Python block; each case prints its own line.
@@ -521,6 +531,85 @@ def rc1_inputs(fn):
 
 case("B03-AC-6 (change 10): artifact-checks-rc1.yml passes the rc1 ISO inputs to test-artifact", rc1_inputs("artifact-checks-rc1.yml"))
 case("B03-AC-6 (change 10): sbom-gates-rc1.yml passes the rc1 ISO inputs to test-gates", rc1_inputs("sbom-gates-rc1.yml"))
+# ---------------- slice 2b ----------------
+def ac1_download_name():
+    b = need_build()
+    js = jobs_of(b)
+    ups = [str((s.get("with") or {}).get("name", "")) for s in steps_of(js["build"])
+           if str(s.get("uses", "")).startswith("actions/upload-artifact")
+           and ".iso" in str((s.get("with") or {}).get("path", ""))]
+    downs = [str((s.get("with") or {}).get("name", "")) for s in steps_of(js["attestation"])
+             if str(s.get("uses", "")).startswith("actions/download-artifact")]
+    if not ups:
+        return (False, "the build job uploads no ISO")
+    return (any(d and d in ups for d in downs), "ISO upload names %r, attestation download names %r" % (ups, downs))
+
+
+case("B03-AC-1: the attestation job downloads the artifact by the name the build job's ISO upload uses", ac1_download_name)
+
+
+def on_of(wf):
+    return wf.get("on", wf.get(True)) or {}
+
+
+def mech_paths():
+    push = (on_of(need_build()).get("push") or {})
+    want = ["configs/portage/world", "configs/portage/versions.lock", "configs/overlay/**", "scripts/**",
+            "rootfs/**", "Dockerfile", "Makefile"]
+    got = push.get("paths")
+    return (isinstance(got, list) and sorted(got) == sorted(want) and len(got) == len(want),
+            "on.push.paths is %r" % (got,))
+
+
+def mech_changes_job():
+    j = jobs_of(need_build()).get("changes") or {}
+    rt = run_text(j)
+    return (bool(re.search(r"(^|\s)make\s+changes\b", rt)), "the changes job runs: %r" % rt)
+
+
+def mech_no_filter_action():
+    need_build()
+    t = text(bpath)
+    return ("dorny/paths-filter" not in t, "build.yml names dorny/paths-filter")
+
+
+def mech_no_contains():
+    need_build()
+    t = text(bpath)
+    return ("contains(" not in t, "build.yml uses contains(")
+
+
+case("Standard mechanism: build.yml on.push.paths lists exactly the seven build inputs", mech_paths)
+case("Standard mechanism: the changes job runs make changes", mech_changes_job)
+case("Standard mechanism: build.yml does not use dorny/paths-filter", mech_no_filter_action)
+case("Standard mechanism: build.yml has no contains( expression", mech_no_contains)
+
+
+def pkg_write(perms):
+    return isinstance(perms, dict) and str(perms.get("packages", "")) == "write"
+
+
+def lp_workflow_level():
+    b = need_build()
+    p = b.get("permissions")
+    return (not pkg_write(p) and p != "write-all", "workflow-level permissions grant packages: write: %r" % (p,))
+
+
+def lp_only_build():
+    b = need_build()
+    js = jobs_of(b)
+    bad = [n for n, j in js.items() if n != "build" and (pkg_write(j.get("permissions")) or j.get("permissions") == "write-all")]
+    return (not bad, "jobs other than build granted packages: write: " + ", ".join(bad))
+
+
+def lp_build_has():
+    b = need_build()
+    return (pkg_write(jobs_of(b)["build"].get("permissions")), "the build job has no permissions: packages: write")
+
+
+case("B03 least privilege (change 6): no packages: write at workflow level", lp_workflow_level)
+case("B03 least privilege (change 6): no job other than build is granted packages: write", lp_only_build)
+case("B03 least privilege (change 6): the build job has packages: write (it pushes the package cache)", lp_build_has)
 print("PYDONE")
 PY
 cat "$tmp/py.out"
