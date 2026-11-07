@@ -532,16 +532,15 @@ TOTAL_FILES=$(find "${SYSROOT_DIR}" -type f | wc -l)
 echo "==> Sysroot: ${TOTAL_SIZE} across ${TOTAL_FILES} files → ${SYSROOT_DIR}"
 
 # Export the resolved (post-olddefconfig) kernel config that scripts/verify-
-# resolved-i2c-off.sh asserts against in CI (DCX-99). The config rides as
+# resolved-i2c-off.sh asserts against (DCX-99). The config rides as
 # *package content* (/usr/share/monolith-kernel/resolved-kernel.config.gz,
 # installed by the monolith-kernel ebuild's src_install), so it is populated
 # identically whether monolith-kernel was built from source this run or
-# restored from the binpkg cache — unlike the ebuild's own copy-back to
-# ${CONFIGS_DIR}/kernel.config, which is a no-op on a cache hit because
-# src_install never runs then. Re-deriving ${CONFIGS_DIR}/kernel.config from
-# the package artifact here, unconditionally and on every run, is what makes
+# restored from the binpkg cache. Re-deriving ${OUTPUT_DIR}/kernel.resolved.config
+# from the package artifact here, unconditionally and on every run, is what makes
 # the downstream assertion real on both the source and binpkg paths instead of
-# vacuously re-checking a stale file.
+# vacuously re-checking a stale file. Nothing under ${CONFIGS_DIR} is written:
+# the kernel savedconfig is an input, never an output.
 KERNEL_BUILD_MODE="unknown"
 if grep -qE '^>>> Emerging binary \([0-9]+ of [0-9]+\) sys-kernel/monolith-kernel-' "${LOGFILE}"; then
     KERNEL_BUILD_MODE="binpkg"
@@ -558,9 +557,14 @@ if [ ! -f "${RESOLVED_KERNEL_CONFIG_GZ}" ]; then
     echo "::error::Resolved kernel config artifact missing at ${RESOLVED_KERNEL_CONFIG_GZ} (build mode: ${KERNEL_BUILD_MODE}) — scripts/verify-resolved-i2c-off.sh cannot prove the CONFIG_I2C invariant this run"
     exit 1
 fi
-echo "==> Exporting resolved kernel config to ${CONFIGS_DIR}/kernel.config (build mode: ${KERNEL_BUILD_MODE})"
-if ! gunzip -c "${RESOLVED_KERNEL_CONFIG_GZ}" > "${CONFIGS_DIR}/kernel.config"; then
-    echo "::error::Failed to export resolved kernel config from ${RESOLVED_KERNEL_CONFIG_GZ} to ${CONFIGS_DIR}/kernel.config"
+RESOLVED_KERNEL_CONFIG="${OUTPUT_DIR}/kernel.resolved.config"
+echo "==> Exporting resolved kernel config to ${RESOLVED_KERNEL_CONFIG} (build mode: ${KERNEL_BUILD_MODE})"
+if ! gunzip -c "${RESOLVED_KERNEL_CONFIG_GZ}" > "${RESOLVED_KERNEL_CONFIG}"; then
+    echo "::error::Failed to export resolved kernel config from ${RESOLVED_KERNEL_CONFIG_GZ} to ${RESOLVED_KERNEL_CONFIG}"
+    exit 1
+fi
+if ! sh "${SCRIPTS_DIR}/verify-resolved-i2c-off.sh" "${RESOLVED_KERNEL_CONFIG}" "${KERNEL_BUILD_MODE}"; then
+    echo "::error::Resolved kernel config failed the CONFIG_I2C check (build mode: ${KERNEL_BUILD_MODE})"
     exit 1
 fi
 

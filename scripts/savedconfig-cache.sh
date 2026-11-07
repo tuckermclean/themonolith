@@ -6,8 +6,8 @@
 # hash savedconfig contents. So editing a savedconfig-governed package's config
 # (e.g. busybox's applet set) WITHOUT bumping its version silently reuses the old
 # binary, and the config change never takes effect. Packages that carry a real
-# version/revision bump (e.g. the kernel via -rN) are immune and need not appear
-# here.
+# version/revision bump are immune; the kernel is tracked here too, because an
+# edit to its savedconfig rebuilds it without a revbump.
 #
 # This tracks a SHA-256 of each savedconfig in a marker file stored next to the
 # package's binpkgs in the LOCAL binpkg store (PKGDIR, see scripts/binpkg-store.sh):
@@ -53,9 +53,11 @@ PKGDIR="${2:-${PKGDIR:-${REPO_ROOT}/output/packages}}"
 
 # Tracked packages: "category/package:relative-path-to-savedconfig"
 # Add a line here whenever a new savedconfig-governed, non-revbumped package is
-# introduced. (The kernel is intentionally absent — it uses a -rN revbump.)
+# introduced. The kernel is tracked too: a savedconfig edit purges its binpkg even
+# when the revbump is forgotten.
 TRACKED=(
     "sys-apps/busybox:configs/portage/savedconfig/sys-apps/busybox"
+    "sys-kernel/monolith-kernel:configs/portage/savedconfig/sys-kernel/monolith-kernel"
 )
 
 config_hash() {

@@ -79,4 +79,38 @@ if [ "$rc" -ne 2 ]; then
     fails=$((fails + 1))
 fi
 
+# --- B02-AC-5: editing the kernel savedconfig purges the cached kernel binpkg ---
+KATOM_DIR="sys-kernel/monolith-kernel"
+KCFG="$REPO_ROOT/configs/portage/savedconfig/sys-kernel/monolith-kernel"
+KGPKG="$PKGDIR/$KATOM_DIR/monolith-kernel-6.12.80-r9-1.gpkg.tar"
+KMARKER="$PKGDIR/$KATOM_DIR/.savedconfig.sha256"
+rm -rf "$PKGDIR"
+mkdir -p "$PKGDIR/$KATOM_DIR"
+: > "$KGPKG"
+printf '%s\n' "0000000000000000000000000000000000000000000000000000000000000000" > "$KMARKER"
+bash "$SCRIPT" check "$PKGDIR" >/dev/null 2>&1
+if [ -e "$KGPKG" ] || [ -e "$KMARKER" ]; then
+    echo "FAIL: B02-AC-5 kernel check with a stale marker should purge the cached kernel gpkg"
+    fails=$((fails + 1))
+fi
+rm -rf "$PKGDIR"
+mkdir -p "$PKGDIR/$KATOM_DIR"
+: > "$KGPKG"
+bash "$SCRIPT" mark "$PKGDIR" >/dev/null 2>&1
+if [ -f "$KCFG" ]; then
+    KWANT="$(sha256sum "$KCFG" | cut -c1-64)"
+else
+    KWANT="absent-kernel-savedconfig"
+fi
+KGOT="$(cat "$KMARKER" 2>/dev/null | tr -d '[:space:]')"
+if [ "$KGOT" != "$KWANT" ]; then
+    echo "FAIL: B02-AC-5 mark did not record the kernel savedconfig hash (got '${KGOT}', want '${KWANT}')"
+    fails=$((fails + 1))
+fi
+bash "$SCRIPT" check "$PKGDIR" >/dev/null 2>&1
+if [ ! -e "$KGPKG" ]; then
+    echo "FAIL: B02-AC-5 check purged a kernel gpkg whose marker hash matched"
+    fails=$((fails + 1))
+fi
+
 [ "$fails" -eq 0 ] && echo ALL PASS || { echo "$fails FAILED"; exit 1; }
