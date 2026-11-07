@@ -14,9 +14,10 @@
 # from the binpkg cache — there is no vacuous-pass mode where this file exists
 # but reflects a stale/unresolved config (DCX-99). scripts/build-packages.sh
 # exports that artifact to output/kernel.resolved.config after every kernel
-# build, source or binpkg, and hard-fails the build itself if the artifact is missing — so by the time
-# this script runs, a missing file here means build-packages.sh's own guard
-# was bypassed, not that the assertion should skip.
+# build, source or binpkg, and hard-fails the build itself if the artifact is
+# missing — so by the time this script runs, a missing file here means
+# build-packages.sh's own guard was bypassed, not that the assertion should
+# skip.
 #
 # Usage: verify-resolved-i2c-off.sh CONFIG [build-mode]
 #   CONFIG     path to the resolved config, plain text or gzip (.gz). Required.
