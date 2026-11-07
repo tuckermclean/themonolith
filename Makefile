@@ -47,8 +47,8 @@ ISO_SHA256 ?=
 EXPECTED_KERNEL ?= 6.12.80-i486-monolith
 BUILT_ISO := output/themonolith-$(BUILD_VERSION).iso
 DEFAULT_ISO := $(if $(ISO_URL),output/themonolith-0.1.0-rc1.iso,$(BUILT_ISO))
-# What an ISO left at its default needs first: the fetch in the rc1 lane, else the build.
-default_iso_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),fetch-iso,iso))
+# What an ISO left at its default needs first: the fetch in the rc1 lane, else the built ISO (the all chain, below).
+default_iso_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),fetch-iso,$(BUILT_ISO)))
 ISO ?= $(DEFAULT_ISO)
 # Where fetch-iso writes the verified ISO.
 ISO_OUT ?= $(DEFAULT_ISO)
@@ -353,7 +353,7 @@ test-gates: rootfs pull-image grype-db-update
 	flag=; [ $$rc1 = 1 ] && flag=--rc1; \
 	toolbox/run --network none -e GITHUB_STEP_SUMMARY -- sh scripts/gates-verdict.sh $$flag $(ATTEST_OUT) || exit 1; \
 	[ -f $(ATTEST_OUT)/bom.cdx.json ] || { echo "test-gates: attestation.sh wrote no $(ATTEST_OUT)/bom.cdx.json"; exit 1; }; \
-	if [ $$rc1 = 1 ]; then $(if $(ISO_URL),$(fetch_rc1_sbom) || exit 1;,[ -f $(RC1_SBOM) ] || { echo "test-gates: rc1's ISO needs $(RC1_SBOM); run make fetch-rc1-sbom"; exit 1; };) $(sbom_diff) || exit 1; \
+	if [ $$rc1 = 1 ]; then $(fetch_rc1_sbom) || exit 1; $(sbom_diff) || exit 1; \
 	else [ $$arc -eq 0 ] || exit 1; fi; \
 	echo "test-gates: PASS"
 
@@ -477,10 +477,15 @@ iso-stage:
 # Everything: packages, root filesystem, ISO.
 all: sync-portage build-packages build-rootfs iso
 
-# Writes build=true|false to $GITHUB_OUTPUT: whether this run builds (the full-ci label, the changed paths; scripts/changed-paths.sh).
-# It runs on the runner itself: it reads the event file and needs git and jq.
+# The built ISO as a prerequisite (the default ISO of the tests): the all chain, so that a clean checkout builds
+# the packages and the rootfs before the ISO. Its prerequisites are phony, so it is always rebuilt.
+$(BUILT_ISO): sync-portage build-packages build-rootfs iso
+
+# Writes build=true|false to $GITHUB_OUTPUT: whether this run builds (a pull request needs the full-ci label;
+# scripts/full-ci-label.sh). The branch-push path filter is the workflow's on.push.paths. It runs on the runner
+# itself: it reads the event file and needs jq, not git.
 changes:
-	sh scripts/changed-paths.sh
+	sh scripts/full-ci-label.sh
 
 # Interactive BusyBox menuconfig; saves the result to configs/portage/savedconfig/sys-apps/busybox
 menuconfig-busybox: pull-image ensure-volume

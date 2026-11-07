@@ -18,6 +18,15 @@ name: Build
 on:
   push:
     branches: [main]
+    # Only a change to a build input starts a push build (GitHub does not apply paths to tag pushes).
+    paths:
+      - configs/portage/world
+      - configs/portage/versions.lock
+      - configs/overlay/**
+      - scripts/**
+      - rootfs/**
+      - Dockerfile
+      - Makefile
     tags: ['v*.*.*']
   # Full build as a PR check, but ONLY when the PR carries the 'full-ci' label
   # (gated in the `changes` job below). This keeps the expensive Gentoo build
@@ -32,7 +41,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 # Cancel a superseded run for the SAME pull request when a new commit is pushed,
 # so rapid pushes to a 'full-ci'-labeled PR don't stack expensive builds. Non-PR
@@ -50,21 +58,17 @@ jobs:
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # On pull_request the (expensive) build chain runs only when the PR is labeled 'full-ci'; on a branch
-    # push, only when a path of the package build changed (scripts/changed-paths.sh). A false output skips
+    # On pull_request the (expensive) build chain runs only when the PR is labeled 'full-ci' (scripts/full-ci-label.sh);
+    # a branch push is filtered by on.push.paths. A false output skips
     # build, static-rebuild, boot-test and attestation through their `needs:`.
     outputs:
       build: ${{ steps.filter.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
 
       - id: filter
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
         run: make changes
 
   # Builds the packages, the root filesystem, the initramfs and the ISO from the pinned builder image and tree.
