@@ -5,7 +5,7 @@
 #   cd ~/gitrepos/themonolith-sched && tmux new -d -s sched .claude/scheduler/loop.sh
 #   touch ~/STOP                                         (exits at the next tick; a session keeps going)
 # Node worktrees go in ../themonolith-wt/<ID>. SCHED_TICK overrides the 600 s tick (tests).
-# Reads: ~/.config/noodlebot/token (GitHub App token for gh), ~/.config/claude-scheduler/oauth-token
+# Reads: ~/.config/noodlebot/token (GitHub App token for gh), ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, given to the session only). Writes: out/scheduler/status.log,
 # out/node/<ID>/session.jsonl, out/node/<ID>/FAILED.
 set -u -o pipefail
@@ -14,7 +14,7 @@ cd "$main" || exit 2
 repo=tuckermclean/themonolith
 here=.claude/scheduler
 wtroot=$(dirname "$main")/themonolith-wt
-oauth=$HOME/.config/claude-scheduler/oauth-token
+oauth=$HOME/.config/noodlebot/oauth-token
 log=out/scheduler/status.log
 mkdir -p out/scheduler
 declare -A starts
