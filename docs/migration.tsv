@@ -142,7 +142,7 @@ rootfs/usr/share/udhcpc/default.script	100755	3577203da4e25ca002a5cda30c8e75fb01
 scripts/agent-git-env.sh	100755	da2d5162cede289725f76fb398e232308b2f7ff7	-	drop	-	-
 scripts/attestation.sh	100755	ac0fcdffc362cb31e999a86a673b9e142469c737	S01	port+fix	scripts/attestation.sh	-
 scripts/binpkg-store.sh	100755	6564cb6b4d48c4242beee1a4cdb6368b07714059	B01	port+fix	scripts/binpkg-store.sh	P02
-scripts/boot-test.py	100755	283c29256ba121891ade6e3d469afe43ac72474e	O01	port+fix	scripts/boot-test.py	G01
+scripts/boot-test.py	100755	283c29256ba121891ade6e3d469afe43ac72474e	O01	port+fix	scripts/boot-test.py	B02 G01
 scripts/build-initrd.sh	100755	b23e9164b77db04e5208b59ace91797eb0b40c84	B03	port	scripts/build-initrd.sh	P02
 scripts/build-iso.sh	100755	faccf1d64a16b2fadd5ccde38f2c52f219e4d24a	B03	port	scripts/build-iso.sh	P02
 scripts/build-packages.sh	100755	5308e8c95e3633c4686f75473a6a462eddfcf481	B01	port+fix	scripts/build-packages.sh	B02 R03
@@ -188,7 +188,7 @@ scripts/tests/verify-rootfs-net-wiring.sh	100644	cb01a7730480d8346988a0dceff2a7d
 scripts/tests/verify-router-wiring.sh	100755	e08b4b69500eba58e28317038fcdb68d4c762b51	B03	port	scripts/tests/verify-router-wiring.sh	-
 scripts/update-build-pins.sh	100755	0a92c594dced0752a79d72a9074958d87ec3bac3	M01	port+fix	scripts/update-build-pins.sh	M02
 scripts/update-versions.sh	100755	3f5fa0a00045aca959613335634a1c36584d5963	B01	port+fix	scripts/update-versions.sh	M01
-scripts/verify-resolved-i2c-off.sh	100755	6cbfdebecb1df15130bd6f9ce477c8a086cced57	B02	port	scripts/verify-resolved-i2c-off.sh	-
+scripts/verify-resolved-i2c-off.sh	100755	6cbfdebecb1df15130bd6f9ce477c8a086cced57	B02	port+fix	scripts/verify-resolved-i2c-off.sh	-
 web/app/charts.js	100644	7d10127500932f715a7dddafab1f2a7a2673c91d	-	drop	-	-
 web/app/data.js	100644	7e4ae89dc77b97506ab0cc58a1a919ce5663368b	-	drop	-	-
 web/app/router.js	100644	262b8024d7231a27ff9ec7246bd4599b8aab51ab	-	drop	-	-
