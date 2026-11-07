@@ -66,7 +66,7 @@ jobs:
 
       - name: Upload the ISO
         if: inputs.iso-artifact == ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.name.outputs.artifact }}
           path: output/iso/boot-test.iso
@@ -115,7 +115,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-bios-${{ matrix.ram_mb }}m-${{ github.run_id }}
           path: |
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-uefi-${{ github.run_id }}
           path: |
@@ -175,7 +175,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-toram-${{ github.run_id }}
           path: |
@@ -206,7 +206,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-ahci-${{ github.run_id }}
           path: |
@@ -235,7 +235,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-nvme-${{ github.run_id }}
           path: |
@@ -264,7 +264,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-usb-${{ github.run_id }}
           path: |
@@ -293,7 +293,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-virtio-${{ github.run_id }}
           path: |
@@ -324,7 +324,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-nicless-${{ github.run_id }}
           path: |
@@ -355,7 +355,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-gui-${{ github.run_id }}
           path: |
@@ -366,7 +366,7 @@ jobs:
 
       - name: Upload framebuffer screendump
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-gui-screendump-${{ github.run_id }}
           path: output/gui-screendump.ppm
@@ -395,7 +395,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-stele-acid2-${{ github.run_id }}
           path: |
@@ -406,7 +406,7 @@ jobs:
 
       - name: Upload Acid2 screendump
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-stele-acid2-screendump-${{ github.run_id }}
           path: output/stele-acid2-screendump.ppm
@@ -436,7 +436,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-nic-${{ github.run_id }}
           path: |
@@ -467,7 +467,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-vga-${{ github.run_id }}
           path: |
@@ -499,7 +499,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-fbdev-modprobe-${{ github.run_id }}
           path: |
@@ -532,7 +532,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-nat-${{ github.run_id }}
           path: |
@@ -564,7 +564,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-clock-epoch-${{ github.run_id }}
           path: |
@@ -595,7 +595,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-clock-1996-${{ github.run_id }}
           path: |
@@ -627,7 +627,7 @@ jobs:
 
       - name: Upload serial console log and tool versions
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boot-test-persist-${{ github.run_id }}
           path: |
