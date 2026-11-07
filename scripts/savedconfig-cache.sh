@@ -6,8 +6,8 @@
 # hash savedconfig contents. So editing a savedconfig-governed package's config
 # (e.g. busybox's applet set) WITHOUT bumping its version silently reuses the old
 # binary, and the config change never takes effect. Packages that carry a real
-# version/revision bump (e.g. the kernel via -rN) are immune and need not appear
-# here.
+# version/revision bump are immune; the kernel is tracked here too, because an
+# edit to its savedconfig rebuilds it without a revbump.
 #
 # This tracks a SHA-256 of each savedconfig in a marker file stored next to the
 # package's binpkgs in the LOCAL binpkg store (PKGDIR, see scripts/binpkg-store.sh):
