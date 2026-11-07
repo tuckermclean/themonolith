@@ -433,7 +433,7 @@ check-updates: pull-image ensure-volume
 # The container is --rm, so the scratch source tree needs no cleanup.
 menuconfig-kernel: pull-image ensure-volume
 	@echo "==> Running kernel menuconfig"
-	$(BUILD_RUN_IT) -e TERM sh -c \
+	$(DOCKER) run --rm -it -e TERM $(BUILD_MOUNTS) $(PARALLEL_ENV) $(IMAGE_NAME) sh -c \
 	    'set -e; \
 	     KVER=$(KERNEL_VERSION); KVER=$${KVER%-r*}; \
 	     SAVED=/configs/portage/savedconfig/sys-kernel/monolith-kernel; \
@@ -446,8 +446,8 @@ menuconfig-kernel: pull-image ensure-volume
 	     cd "$$SRCDIR"; \
 	     patch -p1 < "$$PATCH"; \
 	     cp "$$SAVED" .config; \
-	     make ARCH=i386 olddefconfig; \
-	     make ARCH=i386 menuconfig && cp .config /output/kernel.config.new && echo "==> Config saved to output/kernel.config.new"'
+	     make ARCH=i386 CROSS_COMPILE=i486-linux-musl- olddefconfig; \
+	     make ARCH=i386 CROSS_COMPILE=i486-linux-musl- menuconfig && cp .config /output/kernel.config.new && echo "==> Config saved to output/kernel.config.new"'
 
 # Regenerates the monolith-kernel Manifest (run after changing the ebuild)
 regen-manifest: pull-image ensure-volume
