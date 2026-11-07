@@ -33,6 +33,7 @@ src_configure() {
 	local saved="${PORTAGE_CONFIGROOT%/}/etc/portage/savedconfig/${CATEGORY}/${PN}"
 	[[ -f ${saved} ]] || die "No kernel savedconfig at ${saved} — expected configs/portage/savedconfig/${CATEGORY}/${PN} in the checkout"
 	restore_config .config || die "Failed to restore the kernel savedconfig"
+	[[ -f .config ]] || die "restore_config left no .config (is USE=savedconfig set?)"
 	einfo "Loaded kernel config from ${saved}"
 	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig || die "olddefconfig failed"
 }
