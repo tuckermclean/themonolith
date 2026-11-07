@@ -53,7 +53,7 @@ The boot-critical `=y` members, and why each is built in:
 | Console | `CONFIG_SERIAL_8250=y` (+ `_CONSOLE`), `CONFIG_FB=y`, `CONFIG_FB_EFI=y` | A visible console on both serial (486/CI) and UEFI framebuffer |
 | Platform | `CONFIG_ACPI=y`, `CONFIG_EFI=y` | Power-off (ACPI S5, which lets `boot-test.py` terminate QEMU) and UEFI boot |
 | Module machinery | `CONFIG_MODULES=y`, `CONFIG_MODULE_UNLOAD=y` | Load Tier 1/2 at all, and let the 486 *unload* what it doesn't want |
-| 9p transport | `CONFIG_NET_9P=y`, `CONFIG_NET_9P_FD=y`, `CONFIG_NETFS_SUPPORT=y` | Undocumented in the predecessor and kept (the 9p filesystem, `CONFIG_9P_FS=y`, is built in beside them): the 9p transport core, its fd transport, and the netfs layer 9p is built on |
+| 9p transport | `CONFIG_NET_9P=y`, `CONFIG_NET_9P_FD=y`, `CONFIG_NETFS_SUPPORT=y` | The 9P protocol core, its transport over a file descriptor, and the netfs helper library that `CONFIG_9P_FS=y` needs; all built in, so they stay in Tier 0 |
 
 **Do not add drivers to Tier 0 to fix a specific machine's boot** unless that
 machine's boot *media* is unreachable without it (that's Tier 1's job — see
