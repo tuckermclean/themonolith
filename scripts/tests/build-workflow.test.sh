@@ -726,6 +726,163 @@ before "B03-AC-9: make -n all runs verify-kernel-modules before build-iso" "$tmp
 before "B03-AC-9: clean checkout, make -n test runs verify-kernel-modules after build-packages" "$tmp/clean.out" "$SH_PKG" "$SH_VKM"
 before "B03-AC-9: clean checkout, make -n test runs verify-kernel-modules before build-iso" "$tmp/clean.out" "$SH_VKM" "$SH_ISO"
 
+# --- slice 3: change 12 (INSTALL_MASK), change 13 (CVE gate report-only off tags), .DEFAULT_GOAL, run-* hint ---
+MC="$ROOT/configs/portage/make.conf"
+EXPF="$ROOT/configs/attestation/rc1-static-audit.expected"
+mask_lines=$(grep -c '^[[:space:]]*INSTALL_MASK=' "$MC" 2>/dev/null || true)
+if [ "${mask_lines:-0}" -eq 1 ]; then
+  pass "B03-AC-7 (change 12): make.conf has exactly one INSTALL_MASK= assignment"
+else
+  fail "B03-AC-7 (change 12): make.conf has exactly one INSTALL_MASK= assignment (found ${mask_lines:-0})"
+fi
+mask=$(grep '^[[:space:]]*INSTALL_MASK=' "$MC" 2>/dev/null | head -n 1 | sed 's/^[^=]*=//; s/^["'"'"']//; s/["'"'"'][[:space:]]*\(#.*\)*$//')
+want_mask="/usr/bin/event_rpcgen.py /usr/lib/xcb-proto /usr/share/gdb/auto-load /usr/share/gdb/system-gdbinit /usr/share/glib-2.0/gdb"
+if [ "$(printf '%s\n' $mask | sort)" = "$(printf '%s\n' $want_mask | sort)" ] && [ -n "$mask" ]; then
+  pass "B03-AC-7 (change 12): INSTALL_MASK is exactly the spec's five-entry list (no glob, no *.py)"
+else
+  fail "B03-AC-7 (change 12): INSTALL_MASK is exactly the spec's five-entry list (no glob, no *.py) (got '$mask')"
+fi
+cov_bad=
+npy=0
+if [ -n "$mask" ] && [ -f "$EXPF" ]; then
+  for p in $(sed -n 's/^FINDING python \([^ ]*\).*/\1/p' "$EXPF"); do
+    npy=$((npy + 1))
+    c=0
+    for e in $mask; do
+      case "/$p" in "$e"|"$e"/*) c=1 ;; esac
+    done
+    [ $c -eq 1 ] || cov_bad="$cov_bad $p"
+  done
+fi
+if [ -n "$mask" ] && [ "$npy" -eq 14 ] && [ -z "$cov_bad" ]; then
+  pass "B03-AC-7 (change 12): every one of the 14 'FINDING python' paths of rc1-static-audit.expected is covered by an INSTALL_MASK entry"
+else
+  fail "B03-AC-7 (change 12): every one of the 14 'FINDING python' paths of rc1-static-audit.expected is covered by an INSTALL_MASK entry (python paths=$npy, uncovered:${cov_bad:- none; or no mask})"
+fi
+
+# Change 13, Makefile: CVE_REPORT_ONLY=1 passes --cve-report-only to gates-verdict.sh and drops the arc -eq 0 requirement.
+: > "$tmp/dummy.iso"
+mkn "$tmp/tg.off" test-gates ISO="$tmp/dummy.iso"
+mkn "$tmp/tg.on" test-gates ISO="$tmp/dummy.iso" CVE_REPORT_ONLY=1
+if grep -q 'gates-verdict\.sh' "$tmp/tg.on" && grep -q -e '--cve-report-only' "$tmp/tg.on"; then
+  pass "B03-AC-7 (change 13): make -n test-gates CVE_REPORT_ONLY=1 passes --cve-report-only to gates-verdict.sh"
+else
+  fail "B03-AC-7 (change 13): make -n test-gates CVE_REPORT_ONLY=1 passes --cve-report-only to gates-verdict.sh"
+fi
+if grep -q 'gates-verdict\.sh' "$tmp/tg.off" && ! grep -q -e '--cve-report-only' "$tmp/tg.off"; then
+  pass "B03-AC-7 (change 13): make -n test-gates without CVE_REPORT_ONLY passes no --cve-report-only"
+else
+  fail "B03-AC-7 (change 13): make -n test-gates without CVE_REPORT_ONLY passes no --cve-report-only"
+fi
+if grep -q -e '-eq 0' "$tmp/tg.off" && grep -Eq 'arc -eq 0' "$tmp/tg.off"; then
+  pass "B03-AC-7 (change 13): without CVE_REPORT_ONLY the non-rc1 branch still requires attestation.sh's exit 0 (arc -eq 0)"
+else
+  fail "B03-AC-7 (change 13): without CVE_REPORT_ONLY the non-rc1 branch still requires attestation.sh's exit 0 (arc -eq 0)"
+fi
+if grep -q 'gates-verdict\.sh' "$tmp/tg.on" && grep -q -e '--cve-report-only' "$tmp/tg.on" && ! grep -Eq 'arc -eq 0' "$tmp/tg.on"; then
+  pass "B03-AC-7 (change 13): with CVE_REPORT_ONLY=1 the non-rc1 branch no longer requires arc -eq 0"
+else
+  fail "B03-AC-7 (change 13): with CVE_REPORT_ONLY=1 the non-rc1 branch no longer requires arc -eq 0"
+fi
+if grep -q -e '--rc1' "$tmp/tg.on" && grep -q -e '--rc1' "$tmp/tg.off" && grep -q 'sbom' "$tmp/tg.on" && grep -q 'sbom' "$tmp/tg.off"; then
+  pass "B03-AC-7 (change 13): the rc1 branch (--rc1, SBOM comparison) is present with and without the switch"
+else
+  fail "B03-AC-7 (change 13): the rc1 branch (--rc1, SBOM comparison) is present with and without the switch"
+fi
+
+# Change 13, build.yml: make test-gates steps set CVE_REPORT_ONLY=1 iff they run off tag pushes; one step per ref type.
+python3 -I - "$ROOT" >"$tmp/py3.out" 2>"$tmp/py3.err" <<'PY'
+import re, sys
+
+root = sys.argv[1]
+bpath = root + "/.github/workflows/build.yml"
+
+
+def out(ok, label, why=""):
+    print(("PASS: " if ok else "FAIL: ") + label + ("" if ok or not why else " (" + why + ")"))
+
+
+def case(label, fn):
+    try:
+        r = fn()
+    except Exception as e:
+        out(False, label, "%s: %s" % (type(e).__name__, e))
+        return
+    out(r[0], label, r[1])
+
+
+def gates_steps():
+    import yaml
+    with open(bpath) as f:
+        wf = yaml.safe_load(f) or {}
+    res = []
+    top = wf.get("env") or {}
+    for jn, j in (wf.get("jobs") or {}).items():
+        for s in j.get("steps") or []:
+            r = str(s.get("run", ""))
+            if re.search(r"\bmake\b[^\n]*\btest-gates\b", r):
+                env = {}
+                env.update(top)
+                env.update(j.get("env") or {})
+                env.update(s.get("env") or {})
+                flag = str(env.get("CVE_REPORT_ONLY", "")) == "1" or bool(re.search(r"\bCVE_REPORT_ONLY=1\b", r))
+                cond = str(s.get("if", ""))
+                if re.search(r"github\.ref_type\s*!=\s*'tag'", cond):
+                    kind = "off"
+                elif re.search(r"github\.ref_type\s*==\s*'tag'", cond):
+                    kind = "tag"
+                else:
+                    kind = "ungated"
+                res.append((jn, s.get("name", r), kind, flag))
+    return res
+
+
+def per_step():
+    st = gates_steps()
+    if not st:
+        return (False, "no make test-gates step in build.yml")
+    bad = []
+    for jn, nm, kind, flag in st:
+        if kind == "ungated":
+            bad.append("%s/%s has no ref_type if:" % (jn, nm))
+        elif (kind == "off") != flag:
+            bad.append("%s/%s: if: kind=%s, CVE_REPORT_ONLY set=%s" % (jn, nm, kind, flag))
+    return (not bad, "; ".join(bad))
+
+
+def both():
+    kinds = [k for _, _, k, _ in gates_steps()]
+    return ("off" in kinds and "tag" in kinds, "make test-gates steps by ref type: %r" % kinds)
+
+
+case("B03-AC-7 (change 13): every make test-gates step of build.yml sets CVE_REPORT_ONLY=1 iff its if: restricts it to non-tag events", per_step)
+case("B03-AC-7 (change 13): build.yml has a make test-gates step for non-tag events and one for tag pushes", both)
+print("PYDONE")
+PY
+cat "$tmp/py3.out"
+if ! grep -q '^PYDONE$' "$tmp/py3.out"; then
+  fail "slice 3 parsing block did not run to its end: $(head -n 3 "$tmp/py3.err" | tr '\n' ' ')"
+fi
+fails=$((fails + $(grep -c '^FAIL: ' "$tmp/py3.out")))
+
+# B03-AC-6: make with no target runs the test chain (.DEFAULT_GOAL := test).
+mkn "$tmp/default.out"
+if grep -q 'boot-test\.py' "$tmp/default.out" && grep -q 'scripts/tests/\*\.sh' "$tmp/default.out"; then
+  pass "B03-AC-6: make -n with no target runs the test chain (test-unit and test-boot recipes are listed)"
+else
+  fail "B03-AC-6: make -n with no target runs the test chain (test-unit and test-boot recipes are listed)"
+fi
+# B03-AC-6: the run-bios/run-uefi hint says make iso, not make fetch-iso.
+mkn "$tmp/hint.out" run-bios ISO="$tmp/nonexistent.iso"
+mkn "$tmp/hint2.out" run-uefi ISO="$tmp/nonexistent.iso"
+for h in "$tmp/hint.out" "$tmp/hint2.out"; do
+  if grep -q "Run 'make iso'" "$h" && ! grep -q "make fetch-iso" "$h"; then
+    pass "B03-AC-6: the $(basename "$h" .out) not-found hint says make iso, not make fetch-iso"
+  else
+    fail "B03-AC-6: the $(basename "$h" .out) not-found hint says make iso, not make fetch-iso"
+  fi
+done
+
 # --- end of cases ---
 echo
 if [ "$fails" -ne 0 ]; then

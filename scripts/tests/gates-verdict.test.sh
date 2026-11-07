@@ -117,5 +117,30 @@ if [ -f "$S" ] && grep -Eq 'raw matches: 4' "$TMP/stepm.md" && grep -q 'CVE-2099
     ok "S01-AC-9 GITHUB_STEP_SUMMARY carries 'raw matches: 4' with the gating findings"
 else fail "S01-AC-9 GITHUB_STEP_SUMMARY carries 'raw matches: 4' with the gating findings"; fi
 
+# --- slice 3 (S01 change 9, B03 change 13): --cve-report-only, the CVE gate reported not gating (not rc1) ---
+# licence and unowned decide and db.built must be set, as for --rc1; the verdict is not rc1's (overall is ignored too).
+mk c1 pass fail pass fail "$D" yes;  gv "$TMP/c1" --cve-report-only
+expect_rc0 "B03-AC-7 --cve-report-only: cve fail with licence+unowned pass and db.built set exits 0"
+if [ -f "$S" ] && echo "$OUT" | grep -Eq '^raw matches: [0-9]+$' && echo "$OUT" | grep 'CVE-2099-1111' | grep -q 'zlib' \
+   && echo "$OUT" | grep 'CVE-2099-2222' | grep -q 'openssl'; then
+    ok "B03-AC-7 --cve-report-only: still prints 'raw matches:' and the gating findings"
+else fail "B03-AC-7 --cve-report-only: still prints 'raw matches:' and the gating findings"; fi
+: > "$TMP/stepc.md"
+if [ -f "$S" ]; then GITHUB_STEP_SUMMARY="$TMP/stepc.md" sh "$S" --cve-report-only "$TMP/c1" >/dev/null 2>&1; fi
+if [ -f "$S" ] && grep -q 'raw matches:' "$TMP/stepc.md" && grep -q 'CVE-2099-1111' "$TMP/stepc.md" && grep -q 'CVE-2099-2222' "$TMP/stepc.md"; then
+    ok "B03-AC-7 --cve-report-only: GITHUB_STEP_SUMMARY still gets the findings"
+else fail "B03-AC-7 --cve-report-only: GITHUB_STEP_SUMMARY still gets the findings"; fi
+mk c2 pass pass pass pass "$D" yes;  gv "$TMP/c2" --cve-report-only; expect_rc0 "B03-AC-7 --cve-report-only: all pass exits 0"
+mk c3 pass fail fail fail "$D" yes;  gv "$TMP/c3" --cve-report-only; expect_nz  "B03-AC-7 --cve-report-only: unowned fail exits non-zero"
+mk c4 fail fail pass fail "$D" yes;  gv "$TMP/c4" --cve-report-only; expect_nz  "B03-AC-7 --cve-report-only: licence fail exits non-zero"
+mk c5 pass fail pass fail empty yes; gv "$TMP/c5" --cve-report-only; expect_nz  "B03-AC-7 --cve-report-only: empty db.built exits non-zero"
+mk c6 pass fail pass fail null yes;  gv "$TMP/c6" --cve-report-only; expect_nz  "B03-AC-7 --cve-report-only: null db.built exits non-zero"
+mk c7 pass fail pass fail "$D" no;   gv "$TMP/c7" --cve-report-only; expect_nz  "B03-AC-7 --cve-report-only: missing coverage report exits non-zero"
+gv "$TMP/c3" --cve-report-only
+if [ -f "$S" ] && ! echo "$OUT" | grep -q 'usage:' && echo "$OUT" | grep -q 'gates-verdict: FAIL'; then
+    ok "B03-AC-7 --cve-report-only: the non-zero exits are verdicts (unowned fail named), not a usage error"
+else fail "B03-AC-7 --cve-report-only: the non-zero exits are verdicts (unowned fail named), not a usage error"; fi
+gv "$TMP/c1"; expect_nz "B03-AC-7 without --cve-report-only a cve fail (overall fail) still exits non-zero"
+
 echo "gates-verdict: $fails failure(s)"
 [ "$fails" -eq 0 ]
