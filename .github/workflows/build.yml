@@ -197,6 +197,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     needs: changes
+    permissions:
+      contents: read
+      # read: make test-static-rebuild logs in to GHCR to pull the pinned portage tree (make sync-portage).
+      packages: read
     if: needs.changes.outputs.build == 'true'
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

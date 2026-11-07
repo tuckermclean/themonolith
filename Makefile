@@ -49,9 +49,9 @@ DEFAULT_ISO := $(if $(ISO_URL),output/themonolith-0.1.0-rc1.iso,$(BUILT_ISO))
 default_iso_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),fetch-iso,iso))
 ISO ?= $(DEFAULT_ISO)
 # make test builds the ISO it tests: in the default lane (no ISO_URL, ISO left at its default) the all chain
-# (packages, then rootfs; iso follows as the default ISO's prerequisite) runs before the first boot test.
+# (packages, their kernel-module check, then rootfs; iso follows as the default ISO's prerequisite) runs before the first boot test.
 # The rc1 lane builds nothing. Prerequisites run left to right, so this sits ahead of test-boot.
-test_build_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),,sync-portage build-packages build-rootfs))
+test_build_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),,sync-portage build-packages verify-kernel-modules build-rootfs))
 test: test-lint test-unit test-revbump test-overlay $(test_build_dep) test-boot test-artifact test-gates test-cve-canary test-static-rebuild
 
 # Where fetch-iso writes the verified ISO.
@@ -303,7 +303,7 @@ ATTEST_RUN = $(DOCKER) run --rm \
 	-v $(CURDIR)/output:/output -v $(CURDIR)/$(GRYPE_CACHE):/root/.cache/grype \
 	-e GITHUB_SERVER_URL -e GITHUB_REPOSITORY -e GITHUB_REF -e GITHUB_SHA -e GITHUB_RUN_ID -e BUILD_EPOCH \
 	$(IMAGE_NAME)
-ATTEST_ARGS = --sysroot /output/rootfs --iso /output/$(notdir $(ISO)) --build-tag $(BUILD_TAG) \
+ATTEST_ARGS = --sysroot /output/rootfs --iso /output/$(patsubst output/%,%,$(ISO)) --build-tag $(BUILD_TAG) \
 	--builder-digest $(BUILDER_DIGEST) \
 	--overrides /configs/attestation/cpe-overrides.yaml \
 	--policy /configs/attestation/license-policy.yaml \
@@ -478,8 +478,8 @@ iso-stage:
 	mkdir -p output/iso
 	cp '$(BUILT_ISO)' output/iso/boot-test.iso
 
-# Everything: packages, root filesystem, ISO.
-all: sync-portage build-packages build-rootfs iso
+# Everything: packages (and their kernel modules checked), root filesystem, ISO.
+all: sync-portage build-packages verify-kernel-modules build-rootfs iso
 
 # Writes build=true|false to $GITHUB_OUTPUT: whether this run builds (a pull request needs the full-ci label;
 # scripts/full-ci-label.sh). The branch-push path filter is the workflow's on.push.paths. It runs on the runner
