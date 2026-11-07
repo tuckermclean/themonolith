@@ -610,6 +610,78 @@ def lp_build_has():
 case("B03 least privilege (change 6): no packages: write at workflow level", lp_workflow_level)
 case("B03 least privilege (change 6): no job other than build is granted packages: write", lp_only_build)
 case("B03 least privilege (change 6): the build job has packages: write (it pushes the package cache)", lp_build_has)
+
+# ---------------- slice 2c ----------------
+def iso_of_steps(job, tgt):
+    res = []
+    top = (need_build().get("env") or {})
+    for s in steps_of(job):
+        r = str(s.get("run", ""))
+        if re.search(r"\bmake\b[^\n]*\b" + tgt + r"\b", r):
+            env = {}
+            env.update(top)
+            env.update(job.get("env") or {})
+            env.update(s.get("env") or {})
+            m = re.search(r"\bISO=(\S+)", r)
+            res.append(m.group(1) if m else env.get("ISO"))
+    return res
+
+
+def make_n(args):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MAKE")}
+    return subprocess.run(["make", "-n"] + args, cwd=root, env=env, capture_output=True, text=True).stdout
+
+
+def handed(tgt, args):
+    o = make_n([tgt] + args)
+    if tgt == "test-gates":
+        m = re.search(r"--iso /output/(\S+)", o)
+        return ("output/" + m.group(1)) if m else None
+    m = re.search(r'-indev "([^"]+)"', o)
+    return m.group(1) if m else None
+
+
+def same_iso(tgt):
+    def f():
+        j = jobs_of(need_build())["attestation"]
+        isos = iso_of_steps(j, tgt)
+        if not isos:
+            return (False, "the attestation job has no make %s step" % tgt)
+        bad = []
+        for iso in isos:
+            if not iso:
+                bad.append("step passes no ISO")
+                continue
+            h = handed(tgt, ["ISO=" + iso])
+            if h is None or os.path.normpath(h) != os.path.normpath(iso):
+                bad.append("passed %s, recipe hands %s" % (iso, h))
+        return (not bad, "; ".join(bad))
+    return f
+
+
+def same_default(tgt):
+    def f():
+        h = handed(tgt, [])
+        o = make_n(["test-artifact"])
+        m = re.search(r'-indev "([^"]+)"', o)
+        return (h is not None and m is not None and os.path.normpath(h) == os.path.normpath(m.group(1)),
+                "recipe hands %s, the built ISO is %s" % (h, m.group(1) if m else None))
+    return f
+
+
+case("B03-AC-5: the attestation job's make test-gates step hands the gates the ISO it passes (same file)", same_iso("test-gates"))
+case("B03-AC-5: the attestation job's make test-artifact step hands the artifact checks the ISO it passes (same file)", same_iso("test-artifact"))
+case("B03-AC-5: make test-gates in the default lane hands the gates the built ISO (same file as test-artifact)", same_default("test-gates"))
+
+
+def sr_read():
+    p = jobs_of(need_build())["static-rebuild"].get("permissions")
+    return (isinstance(p, dict) and str(p.get("packages", "")) == "read",
+            "static-rebuild permissions are %r (it logs in to ghcr.io with GITHUB_TOKEN)" % (p,))
+
+
+case("B03 least privilege (change 6/7): the static-rebuild job, which logs in to ghcr.io, has packages: read", sr_read)
+
 print("PYDONE")
 PY
 cat "$tmp/py.out"
@@ -628,6 +700,31 @@ if command -v actionlint >/dev/null 2>&1; then
     fail "B03-AC-1: actionlint passes on build.yml: $(head -n 3 "$tmp/al.out" | tr '\n' ' ')"
   fi
 fi
+
+# --- slice 2c: change 10 (owner Q2) the default lane runs no fetch-iso recipe; AC-9 verify-kernel-modules in the chain ---
+# fetch-iso's recipe is the only one with f="<...>.iso" (ISO_OUT); the rc1 SBOM fetch in test-gates uses another f.
+FETCH_MARK='f="[^"]*\.iso"; mkdir'
+for tgt in test-boot test-artifact test-gates; do
+  mkn "$tmp/nf.$tgt" "$tgt"
+  if [ -s "$tmp/nf.$tgt" ] && [ -z "$(firstline "$tmp/nf.$tgt" "$FETCH_MARK")" ]; then
+    pass "B03-AC-6 (change 10): make -n $tgt in the default lane prints no line of fetch-iso's recipe"
+  else
+    fail "B03-AC-6 (change 10): make -n $tgt in the default lane prints no line of fetch-iso's recipe"
+  fi
+done
+mkn "$tmp/nf.lane" test-boot ISO_URL=https://example.invalid/lane.iso \
+  ISO_SHA256=0000000000000000000000000000000000000000000000000000000000000001
+if [ -n "$(firstline "$tmp/nf.lane" "$FETCH_MARK")" ]; then
+  pass "B03-AC-6 (change 10): the fetch-iso marker is found in make -n test-boot with ISO_URL set (the no-fetch case is not vacuous)"
+else
+  fail "B03-AC-6 (change 10): the fetch-iso marker is found in make -n test-boot with ISO_URL set (the no-fetch case is not vacuous)"
+fi
+
+SH_VKM='scripts/verify-kernel-modules\.sh'
+before "B03-AC-9: make -n all runs verify-kernel-modules after build-packages" "$tmp/all.out" "$SH_PKG" "$SH_VKM"
+before "B03-AC-9: make -n all runs verify-kernel-modules before build-iso" "$tmp/all.out" "$SH_VKM" "$SH_ISO"
+before "B03-AC-9: clean checkout, make -n test runs verify-kernel-modules after build-packages" "$tmp/clean.out" "$SH_PKG" "$SH_VKM"
+before "B03-AC-9: clean checkout, make -n test runs verify-kernel-modules before build-iso" "$tmp/clean.out" "$SH_VKM" "$SH_ISO"
 
 # --- end of cases ---
 echo
