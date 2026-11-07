@@ -3,9 +3,9 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline
+.PHONY: toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox check-updates update-versions list-packages show-failed shell clean
 
-test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary
+test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -284,6 +284,7 @@ ATTEST_ARGS = --sysroot /output/rootfs --iso /output/$(notdir $(ISO)) --build-ta
 	--policy /configs/attestation/license-policy.yaml \
 	--cve-policy /configs/attestation/cve-policy.yaml \
 	--unowned-allowlist /configs/attestation/unowned-allowlist.yaml \
+	--bootstrap-exceptions /configs/attestation/bootstrap-exceptions.txt \
 	--output-dir /output/attestation
 
 # Downloads RC1_SBOM_URL to $(RC1_SBOM) and checks its sha256; a mismatch deletes it and fails.
@@ -335,6 +336,10 @@ test-gates: rootfs pull-image grype-db-update
 	else [ $$arc -eq 0 ] || exit 1; fi; \
 	echo "test-gates: PASS"
 
+# B01-AC-16: a revbump or package.use change rebuilds a cached static consumer, in the pinned builder, on the host.
+test-static-rebuild: pull-image sync-portage
+	DOCKER='$(DOCKER)' TREE_DIR='$(abspath $(TREE_DIR))' sh scripts/tests/static-rebuild.itest.sh
+
 # The scanner is alive: check-cves.sh on the canary SBOM (Heartbleed) must find something.
 test-cve-canary: pull-image grype-db-update
 	$(ATTEST_RUN) grype db status
@@ -346,3 +351,101 @@ test-cve-canary: pull-image grype-db-update
 		echo "::error::until this is fixed — do not merge/release until it's green again."; \
 		echo "::error::See docs/cve-gate.md for background and scripts/run-cve-canary.sh for the check."; \
 		exit 1; }
+
+# ---- B01: the binary package cache ----
+
+PKGDIR ?= output/packages
+# The cache tag inputs are the pins above; the CI ref policy (main pushes, tags do not pull) is in the script.
+CACHE_RUN = toolbox/run -e GITHUB_TOKEN -e GITHUB_ACTOR -e GITHUB_ACTIONS -e GITHUB_REF --
+CACHE_ENV = REGISTRY=$(REGISTRY) BUILDER_DIGEST=$(BUILDER_DIGEST) TREE_COMMIT=$(TREE_COMMIT) PKGDIR=$(PKGDIR)
+
+# Prints the cache tag.
+cache-tag:
+	@toolbox/run --network none -- env $(CACHE_ENV) bash scripts/binpkg-store.sh tag
+
+# Pulls the cache for the current tag into PKGDIR; a miss leaves it empty, any other failure stops here.
+cache-pull:
+	$(CACHE_RUN) sh -c 'set -eu; $(tree_login); $(CACHE_ENV) bash scripts/binpkg-store.sh pull; bash scripts/savedconfig-cache.sh check $(PKGDIR)'
+
+# Prunes superseded packages, packs PKGDIR and pushes it under the current tag.
+cache-push:
+	$(CACHE_RUN) sh -c 'set -eu; $(tree_login); bash scripts/savedconfig-cache.sh mark $(PKGDIR) && $(CACHE_ENV) bash scripts/binpkg-store.sh prune && $(CACHE_ENV) bash scripts/binpkg-store.sh pack && $(CACHE_ENV) bash scripts/binpkg-store.sh push'
+
+# ---- B01: the package build, in the builder image (I03) on the pinned tree (I02) ----
+
+# JOBS and LOAD_AVG reach the container; MONOLITH_USEPKG=n is a release build (every package from source,
+# PKGDIR empty at the start; see scripts/build-packages.sh).
+JOBS ?= $(shell nproc)
+LOAD_AVG ?= $(shell nproc)
+MONOLITH_USEPKG ?= y
+PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG) -e MONOLITH_USEPKG=$(MONOLITH_USEPKG)
+DISTFILES_DIR ?= output/distfiles
+PORTAGE_LOGS_DIR ?= output/portage-logs
+
+# configs is writable because build-packages.sh exports the resolved kernel config to configs/kernel.config.
+# The pinned tree replaces the predecessor's repos volume; distfiles and the other state are directories under output.
+BUILD_MOUNTS := -v $(CURDIR)/configs:/configs -v $(CURDIR)/scripts:/scripts:ro \
+	-v $(CURDIR)/output:/output -v $(abspath $(TREE_DIR)):/var/db/repos/gentoo \
+	-v $(abspath $(DISTFILES_DIR)):/var/cache/distfiles -v $(abspath $(PORTAGE_LOGS_DIR)):/var/log/portage
+BUILD_RUN = $(DOCKER) run --rm $(BUILD_MOUNTS) $(PARALLEL_ENV) $(IMAGE_NAME)
+BUILD_RUN_IT = $(DOCKER) run --rm -it $(BUILD_MOUNTS) $(PARALLEL_ENV) $(IMAGE_NAME)
+
+# Creates the output directories the build writes.
+ensure-dirs:
+	@mkdir -p output/packages output/logs output/sysroot $(DISTFILES_DIR) $(PORTAGE_LOGS_DIR)
+
+# The build state is directories, not named volumes; the pinned tree must be in TREE_DIR (make sync-portage).
+ensure-volume: ensure-dirs
+	@test -d '$(TREE_DIR)/profiles' || { echo "ensure-volume: no pinned tree in $(TREE_DIR); run make sync-portage"; exit 1; }
+
+# Cross-compiles every world package into PKGDIR and exports output/sysroot.
+build-packages: pull-image ensure-volume
+	@echo "==> Building packages ($(JOBS) parallel jobs)"
+	$(BUILD_RUN) /scripts/build-packages.sh
+
+# Resume build (skip already-built packages)
+build-packages-resume: pull-image ensure-volume
+	@echo "==> Resuming package build ($(JOBS) parallel jobs)"
+	$(BUILD_RUN) /scripts/build-packages.sh --resume
+
+# Install pre-built packages into the sysroot
+extract: pull-image ensure-volume
+	@echo "==> Installing packages from binpkgs"
+	$(BUILD_RUN) /scripts/extract-packages.sh
+
+# Interactive BusyBox menuconfig; saves the result to configs/portage/savedconfig/sys-apps/busybox
+menuconfig-busybox: pull-image ensure-volume
+	@echo "==> Running BusyBox menuconfig"
+	$(BUILD_RUN_IT) i486-linux-musl-emerge --config sys-apps/busybox
+
+# Package versions available now against the versions.lock pins
+check-updates: pull-image ensure-volume
+	@echo "==> Checking for package updates"
+	$(BUILD_RUN) /scripts/update-versions.sh check
+
+# Regenerates versions.lock from world against the pinned tree; an atom that does not resolve fails.
+update-versions: pull-image sync-portage ensure-volume
+	@echo "==> Updating versions.lock"
+	$(BUILD_RUN) /scripts/update-versions.sh update
+
+# List packages in world file
+list-packages:
+	@echo "==> Packages in world file:"
+	@grep -v '^#' configs/portage/world | grep -v '^$$' || true
+
+# Show failed packages from last build
+show-failed:
+	@echo "==> Failed packages:"
+	@cat output/.failed-packages 2>/dev/null || echo "(none or no build run yet)"
+	@echo ""
+	@echo "==> Logs available in: output/logs/"
+
+# Drop into container shell
+shell: pull-image ensure-volume
+	@echo "==> Dropping into container shell"
+	$(BUILD_RUN_IT) /bin/bash
+
+# Clean output directory only
+clean:
+	@echo "==> Cleaning output directory"
+	rm -rf output/*

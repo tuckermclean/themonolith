@@ -22,7 +22,10 @@ Exit codes:
 
 import argparse
 import fnmatch
+import hashlib
 import json
+import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,10 +45,21 @@ def load_yaml_simple(path: str) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def entry_path(entry) -> str:
+    """The glob of an allowlist entry: a plain string, or a mapping with a 'path' key."""
+    return entry.get("path", "") if isinstance(entry, dict) else str(entry)
+
+
 def load_allowlist(path: str) -> list:
-    """Load glob patterns from the allowlist YAML."""
+    """Load glob patterns from the allowlist YAML (plain strings or {path, source} mappings)."""
     data = load_yaml_simple(path)
-    return data.get("allowlist", [])
+    return [entry_path(e) for e in (data.get("allowlist") or [])]
+
+
+def load_allowlist_entries(path: str) -> tuple:
+    """Raw allowlist and modified: entries, for --provenance."""
+    data = load_yaml_simple(path)
+    return (data.get("allowlist") or []), (data.get("modified") or [])
 
 
 def get_file_path(file_entry: dict) -> str | None:
@@ -179,6 +193,196 @@ def is_allowlisted(path: str, patterns: list) -> bool:
     return False
 
 
+SOURCE_RE = re.compile(r"^(build-rootfs\.sh|portage|postinst:[^/\s:]+/[^\s:]+)$")
+
+
+def read_contents_records(sysroot: str) -> dict:
+    """
+    {path: [(cpv, kind, value)]} from {sysroot}/var/db/pkg/*/*/CONTENTS; value is the
+    recorded MD5 of an obj and the target of a sym. dir entries carry no value.
+    """
+    records = {}
+    pkg_db = Path(sysroot.rstrip("/")) / "var" / "db" / "pkg"
+    if not pkg_db.exists():
+        return records
+    for contents_file in sorted(pkg_db.glob("*/*/CONTENTS")):
+        cpv = f"{contents_file.parent.parent.name}/{contents_file.parent.name}"
+        with open(contents_file, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if line.startswith("obj "):
+                    m = re.match(r"^obj (.*) ([0-9a-f]{32}) \d+$", line)
+                    if m:
+                        records.setdefault(m.group(1), []).append((cpv, "obj", m.group(2)))
+                elif line.startswith("sym "):
+                    body = line[4:]
+                    i = body.find(" -> ")
+                    if i >= 0:
+                        target = re.sub(r" \d+$", "", body[i + 4:])
+                        records.setdefault(body[:i], []).append((cpv, "sym", target))
+                elif line.startswith("dir "):
+                    records.setdefault(line[4:].rstrip(), []).append((cpv, "dir", ""))
+    return records
+
+
+def read_bootstrap_exceptions(path: str) -> dict:
+    exceptions = {}
+    with open(path) as f:
+        for line in f:
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            m = re.match(r"^(/.*\S)\s+(\S+)$", line)   # the path is everything before the last space or tab
+            if not m:
+                print(f"[check-unowned] ERROR: bad bootstrap exception line: {line}", file=sys.stderr)
+                sys.exit(1)
+            exceptions[m.group(1)] = m.group(2)
+    return exceptions
+
+
+def read_built_cpvs(path: str) -> set:
+    built = set()
+    with open(path) as f:
+        header = f.readline().rstrip("\n").split("\t")
+        if header[:3] != ["path", "owner", "provenance"]:
+            print(f"[check-unowned] ERROR: {path} is not a source-audit report", file=sys.stderr)
+            sys.exit(1)
+        for line in f:
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) >= 3 and cols[2] == "built-this-run":
+                built.add(cols[1])
+    return built
+
+
+def file_md5(path: str) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def tree_paths(tree: str) -> set:
+    """Every path under the package tree, relative, no leading slash."""
+    found = set()
+    tree = tree.rstrip("/")
+    for dp, dn, fn in os.walk(tree):
+        for x in dn + fn:
+            found.add(os.path.relpath(os.path.join(dp, x), tree))
+    return found
+
+
+def provenance_check(disk_files, sysroot, allowlist, modified, exceptions, package_tree, built):
+    """
+    Classify every file on disk as package, modified, bootstrap or generated, and collect
+    the failures. built is the set of built-this-run cpvs, or None without --source-audit.
+    Returns (rows, failures, unowned).
+    """
+    failures = []
+    for e in list(allowlist) + list(modified):
+        if not isinstance(e, dict) or not e.get("path"):
+            failures.append(f"allowlist entry is not a mapping with a path: {e}")
+        elif not SOURCE_RE.match(str(e.get("source") or "")):
+            failures.append(f"allowlist entry without a valid source: {e['path']}")
+    allowlist = [e for e in allowlist if isinstance(e, dict) and e.get("path")]
+    modified = [e for e in modified if isinstance(e, dict) and e.get("path")]
+
+    records = read_contents_records(sysroot)
+    installed = sorted(
+        f"{p.parent.name}/{p.name}" for p in (Path(sysroot) / "var" / "db" / "pkg").glob("*/*") if p.is_dir()
+    )
+    tree = tree_paths(package_tree)
+    used_allow, used_mod, used_exc = set(), set(), set()
+    rows, unowned = [], []
+    unbuilt_reported = set()
+
+    def built_col(cpv):
+        if built is None:
+            return ""
+        if cpv in built:
+            return "built-this-run"
+        if cpv not in unbuilt_reported:
+            unbuilt_reported.add(cpv)
+            failures.append(f"{cpv} is owned in the rootfs but not built-this-run")
+        return "not-built-this-run"
+
+    def match_first(path, entries, used):
+        rel = path.lstrip("/")
+        hit = None
+        for i, e in enumerate(entries):
+            pat = e["path"]
+            if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(path, pat):
+                used.add(i)
+                hit = hit if hit is not None else e
+        return hit
+
+    for path in sorted(disk_files):
+        real = sysroot + path
+        recs = records.get(path)
+        e = match_first(path, allowlist, used_allow)   # an entry is stale only if it matches no file, owned or not
+        if recs is None and (path + ".bz2") in records:
+            # Installed as path.bz2, decompressed by build-packages.sh: the recorded MD5 is of the compressed bytes.
+            cpv = records[path + ".bz2"][0][0]
+            rows.append((path, "package", cpv, built_col(cpv)))
+            continue
+        if recs:
+            cpv, kind, value = recs[0]
+            mod = match_first(path, modified, used_mod)
+            if path in exceptions:
+                used_exc.add(path)
+                failures.append(f"{path}: a bootstrap exception, but owned by {cpv}")
+            if kind == "obj":
+                if os.path.islink(real) or not os.path.isfile(real):
+                    ok = False
+                else:
+                    ok = any(file_md5(real) == r[2] for r in recs if r[1] == "obj")
+            elif kind == "sym":
+                ok = os.path.islink(real) and any(os.readlink(real) == r[2] for r in recs if r[1] == "sym")
+            else:
+                ok = True
+            if mod is not None:
+                rows.append((path, "modified", str(mod.get("source") or ""), built_col(cpv)))
+            elif ok:
+                rows.append((path, "package", cpv, built_col(cpv)))
+            else:
+                what = "MD5" if kind == "obj" else "symlink target"
+                failures.append(f"{path}: {what} differs from CONTENTS of {cpv} and is not under modified:")
+            continue
+        if path in exceptions:
+            used_exc.add(path)
+            rows.append((path, "bootstrap", exceptions[path], "bootstrap" if built is not None else ""))
+            continue
+        if e is not None:
+            rows.append((path, "generated", str(e.get("source") or ""), "built-this-run" if built is not None else ""))
+        else:
+            unowned.append(path)
+
+    for i, e in enumerate(allowlist):
+        pat, src = e["path"], str(e.get("source") or "")
+        if i not in used_allow:
+            failures.append(f"stale allowlist entry (matches nothing in the rootfs): {pat}")
+        if src == "build-rootfs.sh":
+            for t in sorted(tree):
+                tp = os.path.join(package_tree, t)
+                if fnmatch.fnmatch(t, pat) and (os.path.islink(tp) or os.path.isfile(tp)):
+                    failures.append(f"{t}: a build-rootfs.sh entry, but the file also exists in {package_tree}")
+        elif src.startswith("postinst:"):
+            pkg = src[len("postinst:"):]
+            cpvs = [c for c in installed if re.match(re.escape(pkg) + r"-\d", c)]
+            if not cpvs:
+                failures.append(f"{pat}: postinst package {pkg} is not installed in the rootfs")
+            elif built is not None and not any(c in built for c in cpvs):
+                failures.append(f"{pat}: postinst package {pkg} is not built-this-run")
+            if not any(fnmatch.fnmatch(t, pat) for t in tree):
+                failures.append(f"{pat}: postinst path is missing from {package_tree}")
+    for i, e in enumerate(modified):
+        if i not in used_mod:
+            failures.append(f"stale modified: entry (matches no owned file in the rootfs): {e['path']}")
+    for p in sorted(set(exceptions) - used_exc):
+        failures.append(f"stale bootstrap exception (matches no file in the rootfs): {p}")
+    return rows, failures, unowned
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Audit filesystem files against Portage package ownership.",
@@ -199,7 +403,19 @@ Exit codes:
     parser.add_argument("--sysroot",    required=True, metavar="PATH", help="Sysroot prefix to strip from file paths")
     parser.add_argument("--output",     required=True, metavar="PATH", help="JSON report output path")
     parser.add_argument("--allowlist",  metavar="PATH", help="YAML file with glob patterns for known-unowned files")
+    parser.add_argument("--provenance", action="store_true",
+                        help="also check owned files' bytes and every allowlist entry's source")
+    parser.add_argument("--package-tree", metavar="DIR", help="output/sysroot (with --provenance)")
+    parser.add_argument("--source-audit", metavar="TSV", help="source-audit.sh report; release mode (with --provenance)")
+    parser.add_argument("--bootstrap-exceptions", metavar="FILE",
+                        help="toolchain files: '<abs path> <host cpv>' lines; allowed as unowned (also without --provenance)")
+    parser.add_argument("--provenance-report", metavar="TSV", help="write rootfs-provenance.tsv here")
     args = parser.parse_args()
+    if args.provenance and not args.package_tree:
+        parser.error("--provenance needs --package-tree")
+    for opt in ("source_audit", "provenance_report", "package_tree"):
+        if getattr(args, opt) and not args.provenance:
+            parser.error("--" + opt.replace("_", "-") + " needs --provenance")
 
     syft_path = Path(args.syft_json)
     if not syft_path.exists():
@@ -262,13 +478,39 @@ Exit codes:
     unowned_all = []
     allowlisted_count = 0
     owned_count = 0
+    prov_failures = []
+    bootstrap_count = 0
 
-    for path in sorted(disk_files):
-        if path in owned_paths:
+    if args.provenance:
+        entries, modified = load_allowlist_entries(args.allowlist) if args.allowlist else ([], [])
+        exceptions = read_bootstrap_exceptions(args.bootstrap_exceptions) if args.bootstrap_exceptions else {}
+        built = read_built_cpvs(args.source_audit) if args.source_audit else None
+        rows, prov_failures, unowned_all = provenance_check(
+            disk_files, sysroot, entries, modified, exceptions, args.package_tree, built
+        )
+        owned_count = sum(1 for r in rows if r[1] in ("package", "modified"))
+        allowlisted_count = sum(1 for r in rows if r[1] == "generated")
+        bootstrap_count = sum(1 for r in rows if r[1] == "bootstrap")
+        if args.provenance_report:
+            rp = Path(args.provenance_report)
+            rp.parent.mkdir(parents=True, exist_ok=True)
+            with open(rp, "w") as f:
+                f.write("path\tclass\towner\tbuilt-this-run\n")
+                for r in rows:
+                    f.write("\t".join(r) + "\n")
+
+    port_exceptions = {} if args.provenance or not args.bootstrap_exceptions else read_bootstrap_exceptions(args.bootstrap_exceptions)
+    for path in ([] if args.provenance else sorted(disk_files)):
+        if path in port_exceptions and (path in owned_paths or (path + ".bz2") in owned_paths):
+            prov_failures.append(f"{path}: a bootstrap exception, but owned in the rootfs")
+            owned_count += 1
+        elif path in port_exceptions:
+            allowlisted_count += 1
+        elif path in owned_paths:
             owned_count += 1
         elif (path + ".bz2") in owned_paths:
             # File was installed as path.bz2 by portage and decompressed during
-            # rootfs assembly (extract-packages.sh runs bunzip2 on man pages).
+            # rootfs assembly (build-packages.sh runs bunzip2 on man pages).
             # The portage CONTENTS entry uses the original .bz2 name.
             owned_count += 1
         elif is_allowlisted(path, allowlist):
@@ -291,6 +533,10 @@ Exit codes:
         },
         "unowned_files": unowned_all,
     }
+    if args.provenance:
+        report["summary"]["bootstrap"] = bootstrap_count
+    if args.provenance or prov_failures:
+        report["provenance_failures"] = prov_failures
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -301,8 +547,9 @@ Exit codes:
     color_pass = "\033[0;32m"
     color_fail = "\033[0;31m"
     reset = "\033[0m"
-    status = "PASS" if n_unowned == 0 else "FAIL"
-    color = color_pass if n_unowned == 0 else color_fail
+    n_bad = n_unowned + len(prov_failures)
+    status = "PASS" if n_bad == 0 else "FAIL"
+    color = color_pass if n_bad == 0 else color_fail
 
     print(
         f"\n[check-unowned] {color}{status}{reset}: "
@@ -314,8 +561,13 @@ Exit codes:
         for p in unowned_all:
             print(f"  {p}")
 
+    if prov_failures:
+        print("[check-unowned] Provenance failures:")
+        for p in prov_failures:
+            print(f"  {p}")
+
     print(f"[check-unowned] Report written to {args.output}")
-    sys.exit(1 if n_unowned > 0 else 0)
+    sys.exit(1 if n_bad > 0 else 0)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,3 @@
+package	reason
+games-roguelike/rl144	left out of world for MS1: it fetches Rust crates while it builds, so it cannot build in the offline release mode; R05 restores it before the first release (B01 change 11)
+www-client/stele	left out of world for MS1: it fetches Rust crates while it builds, so it cannot build in the offline release mode; R05 restores it before the first release (B01 change 11)

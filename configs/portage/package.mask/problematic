@@ -1,0 +1,89 @@
+# Mask problematic package versions
+#
+# Some versions may have issues with cross-compilation,
+# static linking, or musl compatibility.
+# Add them here to prevent emerge from selecting them.
+
+# Example:
+# Block specific broken versions
+# =net-misc/curl-8.0.0
+# =app-shells/bash-5.2_p15
+
+# Block entire version ranges
+# >=dev-lang/lua-5.5
+
+# man-db pulls virtual/tmpfiles → systemd-utils[tmpfiles] which has a hard
+# REQUIRED_USE on PYTHON_SINGLE_TARGET. Mask it so virtual/man resolves to
+# app-text/mandoc instead.
+sys-apps/man-db
+
+# fortune-mod CMake requires a pre-installed native 'strfile' binary in PATH.
+# Cross-compiling this is a circular build-tool dependency.
+# Re-enable by installing fortune-mod natively in the Dockerfile first.
+games-misc/fortune-mod
+
+# mc hard-requires e2fsprogs[tools], but e2fsprogs+tools fails to build statically
+# (tools link against libext2fs.so rather than libext2fs.a).
+app-misc/mc
+
+# pciutils: cross-linker includes crt1.o (exe startup) when building libpci.so;
+# build system incompatibility with the musl cross-compile toolchain.
+sys-apps/pciutils
+
+# zstd: meson + multilib-minimal eclass fails cross-compilation with same crt1.o error.
+# jq pulls bison → gettext → libxml2 which has the same meson/multilib failure.
+# Re-enable by providing a meson cross-file for i486-linux-musl.
+app-arch/zstd
+dev-libs/libxml2
+
+# libcaca: uses C++ exceptions with -fno-exceptions; toilet depends on libcaca.
+# Fixing requires per-package fexceptions override AND shared lib cross-compile fix.
+media-libs/libcaca
+app-misc/toilet
+
+# nethogs requires ncurses[cxx]; building ncurses with cxx breaks the ncurses build
+# entirely in the musl cross-compile context, cascading to ~20 dependents.
+net-analyzer/nethogs
+
+# usbutils → virtual/libudev → systemd-utils has an unconditional REQUIRED_USE on
+# python_single_target. Same root cause as nmap. Re-enable by adding Python to world.
+sys-apps/usbutils
+
+# nmap has an unconditional REQUIRED_USE on python_single_target even when all
+# Python features (ndiff, zenmap, nse) are disabled — pulls in full Python runtime.
+# Re-enable by adding dev-lang/python to world and setting python_single_target_python3_12
+# in package.use/nmap.
+net-analyzer/nmap
+
+# nethack: 5.0.0 needs USE=lua (REQUIRED_USE on lua_single_target_*, unset
+# in this build) and restructured util/Makefile build vars that this repo's
+# bashrc CC_FOR_BUILD cross-compile patch was not written for (see
+# .batteries/reports/nethack.md). world pins =games-roguelike/nethack-3.6.7-r1;
+# this mask is belt-and-suspenders in case that pin is ever loosened.
+>=games-roguelike/nethack-5.0.0
+
+# dev-python/docutils>=0.23 grew a HARD dependency on dev-python/pillow (a
+# 46 MB image library that in turn pulls dev-python/pybind11 -> dev-cpp/eigen).
+# docutils is dragged in as a HOST build tool (rst2man) by dev-libs/glib's
+# man-page generation — an UNCONDITIONAL BDEPEND with no USE gate, so it cannot
+# be turned off from our side. Older docutils (0.21.x) is pure Python with no
+# such dep, generates the exact same man pages, and keeps the whole Pillow/
+# pybind11/eigen Python stack (all unbuildable in this cross env — they demand a
+# host PYTHON_TARGET we don't provide) out of the graph entirely. Mask the 0.23+
+# line so the host resolves rst2man to plain docutils-0.21.x. This is the real
+# fix for the post-pin red build; the eigen mask below is now belt-and-suspenders.
+# NB: only bites once package.mask is mirrored host-side (build-packages.sh) —
+# docutils here is a BDEPEND, resolved against the HOST /etc/portage, not the
+# cross sysroot.
+>=dev-python/docutils-0.23
+
+# dev-cpp/eigen-9999 is a LIVE (git-HEAD) ebuild: its SRC_URI is upstream git,
+# which drifts between builds, so its versioned patch (eigen-5.0.1-cmake-
+# GNUInstallDirs.patch) fails to apply once upstream moves past it — the failure
+# that turned every full build red. It is not something we depend on directly;
+# it is pulled transitively as a HOST build-dep of glib's man-page generation
+# (dev-libs/glib -> dev-python/docutils -> dev-python/pillow -> dev-python/pybind11
+# -> dev-cpp/eigen). Mask the live ebuild so portage selects the STABLE
+# dev-cpp/eigen (header-only, builds trivially) instead — restoring a
+# reproducible, non-drifting build. A live ebuild has no place in a pinned build.
+>=dev-cpp/eigen-9999

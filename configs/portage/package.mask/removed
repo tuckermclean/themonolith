@@ -1,0 +1,10 @@
+# Removed things stay removed (doctrine D-no-readding-removed-things). The other members of that
+# list (man-db, nmap, usbutils, fortune-mod) are masked in problematic; gcc is masked for the
+# target only, in profile/package.mask.
+
+# w3m: dropped from the image.
+www-client/w3m
+
+# thttpd: dropped from the image. Gentoo removed it from the pinned tree; masked anyway so that it
+# cannot return with a tree bump.
+www-servers/thttpd
