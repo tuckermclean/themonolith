@@ -141,8 +141,12 @@ iso-artifact-name:
 
 # The job indices 1..COUNT of a boot-test-repeat matrix, as a JSON array (to $GITHUB_OUTPUT).
 repeat-matrix:
-	@case '$(COUNT)' in ''|*[!0-9]*|0) echo "count must be a positive integer"; exit 1;; esac; \
-	echo "index=[$$(seq -s, 1 '$(COUNT)')]" >> "$$GITHUB_OUTPUT"
+	@case "$$COUNT" in \
+	''|*[!0-9]*) echo "count must be a positive integer, got '$$COUNT'"; exit 1;; \
+	0*) echo "count must not be zero or have leading zeros, got '$$COUNT'"; exit 1;; \
+	esac; \
+	test "$$COUNT" -le 256 || { echo "count must be at most 256 (the Actions matrix limit), got '$$COUNT'"; exit 1; }; \
+	echo "index=[$$(seq -s, 1 "$$COUNT")]" >> "$$GITHUB_OUTPUT"
 
 # Manual boots (not tests): serial console, Ctrl+A X to exit.
 run-bios:

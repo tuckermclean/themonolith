@@ -877,6 +877,9 @@ def failure_evidence(child, cmd, files, timeout=30):
             parts.append(f"--- {label} (exit {code}) ---\n{out.strip()}")
         except (pexpect.TIMEOUT, pexpect.EOF) as exc:
             parts.append(f"--- {label}: {type(exc).__name__} after {timeout}s ---")
+            if isinstance(exc, pexpect.EOF):
+                parts.append("--- QEMU exited; the remaining evidence was skipped ---")
+                break
     return "\n".join(parts)
 
 
@@ -890,7 +893,7 @@ def run_check(child, name, cmd, validator, timeout=30, files=()):
     names `files` gets failure_evidence appended to its detail.
     """
     ok, detail = _run_check(child, name, cmd, validator, timeout)
-    if not ok and files:
+    if not ok and files and not detail.startswith("QEMU exited"):
         detail += "\n" + failure_evidence(child, cmd, files, timeout)
     return ok, detail
 
@@ -1074,7 +1077,7 @@ def smoke_perl_utf8(child):
                      "perl -Mutf8 -CS -e 'print uc(qq(\\x{e9}));'", exit_code_only())
 
 
-# /usr/bin/perl goes last: the sha256sum line must not contain "perl <guestbook.cgi path>".
+# The files the perl CGI checks read; failure_evidence checksums them.
 PERL_CGI_FILES = (
     "/usr/lib/cgi-bin/guestbook.cgi",
     "/usr/lib/perl5/5.42.0/CGI.pm",
