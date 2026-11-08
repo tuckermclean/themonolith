@@ -1,6 +1,6 @@
 """Check docs/graph.yaml against the node specs and SPEC.md.
 
-    python3 -I .claude/skills/node/check-spec.py [--write]
+    python3 -I scripts/check-spec.py [--write]
 
 Checks: deps and decisions resolve, no cycles, `track: critical` is exactly P01 and its ancestors,
 every node has a spec with the SPEC §9 headings, numbered criteria each with *Verify*,

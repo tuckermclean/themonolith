@@ -16,7 +16,7 @@ credential handling.
   lists every predecessor file with its blob, node, disposition and destination
   (`scripts/check-migration.py` checks it).
 - `toolbox/` is the test image, `toolbox/run` and the workflow runner `toolbox/ci`; `.claude/` holds the
-  `/node` skill, the role agents and the guard hook.
+  role agents and the guard hook; the `/noodlebot:node` skill lives in the bot's plugin (Building a node).
 - Nothing builds yet. `make test` runs every test; each node ports the code its tests need and adds
   its tests to it.
 
@@ -44,20 +44,45 @@ credential handling.
   <version>`. Read the version from the ISO with `xorriso -osirrox on -indev <iso> -extract /boot/vmlinuz
   /tmp/vmlinuz` and `file /tmp/vmlinuz`.
 - Package builds and the SBOM gates run in the builder image, with podman, pulled by digest.
-- `python3 -I .claude/skills/node/check-spec.py` checks the graph against the node specs; `--write`
+- `python3 -I scripts/check-spec.py` checks the graph against the node specs; `--write`
   regenerates the header rows.
 - `sh .claude/hooks/guard.test.sh` tests the guard hook; `sh toolbox/ci.test.sh` tests `toolbox/ci`.
 
 ## Building a node
 
-- Use `/node <ID>`. It writes a brief, has a fresh tester commit failing tests (RED), checks them, has a
-  fresh implementer make them pass (GREEN), gets an independent review, runs the criteria that need a build, an ISO or CI, and opens
-  a PR with the criterion → evidence table.
-- `make test` runs every test; its `test-*` targets run parts of it (SPEC §7). Tests come first. A
-  criterion verified by a build, a boot or a CI run is met only by a recorded run: a local log or a CI
-  URL.
-- Role agents may not edit the spec, `AGENTS.md`, `CLAUDE.md`, `.claude/` or `toolbox/`; the guard hook
-  blocks it. Spec changes go to the owner.
+Build a node with the n00dl3b0t's `/noodlebot:node <ID>` skill, from `~/gitrepos/noodlebot/plugin`
+(the scheduler's sessions load it; interactively, `claude --plugin-dir ~/gitrepos/noodlebot/plugin`).
+The skill is the process: brief, a fresh tester's failing tests (RED), a fresh implementer (GREEN),
+independent review, CI evidence, and a PR with the criterion → evidence table. This section is this
+repository's part of it.
+
+- **Authority:** `SPEC.md`, `docs/graph.yaml`, the node spec `nodes/<ID>-<name>.md`, then this file.
+- **Role agents:** `monolith-tester`, `monolith-implementer` and `monolith-reviewer` (`.claude/agents/`),
+  each held to its role by the guard hook. Role agents may not edit the spec, `AGENTS.md`,
+  `CLAUDE.md`, `.claude/` or `toolbox/`; the guard blocks it. Spec changes go to the owner.
+- **Spec checker:** `python3 -I scripts/check-spec.py` (PROBLEMS 0). **Decisions table:** SPEC §10.
+- **Extra precondition:** `toolbox/run -- toolbox-selfcheck` passes.
+- **Tests:** `make test` runs every test; its `test-*` targets run parts of it (SPEC §7), and
+  `make test-lint test-unit` is the quick gate. Tests and fixtures live in `scripts/tests/` and
+  `scripts/fixtures/` (the frozen paths). A red target has the form
+  `toolbox/run -- sh scripts/tests/<name>.test.sh`. A workflow change passes `toolbox/ci lint`.
+- **Porting rules** (SPEC §2.2, §11). Nodes port `tuckermclean/linux-live-iso-factory` at `b9f533b`
+  (the fetch is under Commands):
+  - The brief also lists the node's rows in `docs/capabilities.md` and `docs/migration.tsv`, and the
+    predecessor files it ports or touches as `path:line` at `b9f533b`.
+  - RED: every predecessor test the node spec ports is in the commit, and
+    `git diff b9f533b:<path> <red>:<path>` shows only the adjustments its **Tests** section lists.
+  - Baseline: `git worktree add <tmp> <red>`, `git -C <tmp> checkout b9f533b -- <the node's ported
+    implementation paths>`, run the red target there, then remove the worktree.
+  - GREEN: every ported file is the `b9f533b` blob plus the node's numbered changes
+    (`git diff b9f533b:<path> HEAD:<path>`); the commit that ports a file names each predecessor
+    path it lands; no source file gains a provenance comment. On the node's last slice,
+    `scripts/check-migration.py --node <ID>` passes; changing a ledger row is a spec change.
+- **CI evidence:** builds, boots and gates run in `build.yml` on the PR (add the `full-ci` label
+  where its gate needs it) or by `workflow_dispatch`. A criterion verified by a build, a boot or a CI
+  run is met only by a recorded CI run. Locally, try one boot mode with
+  `toolbox/run -- python3 scripts/boot-test.py --iso … --mode … --kernel-version …`; P02's two
+  from-source builds run only in CI.
 
 ## Traps
 
@@ -107,7 +132,9 @@ credential handling.
 - Write specs, README, plan and PR descriptions as the current state, with no revision history ("v0.3
   had…", "withdrawn"). Change notes go in commit messages and `docs/reviews/`.
 - Describe the project by what it is (`MYTH.md`), not as "a small Gentoo derivative".
-- Branches and PRs: SPEC §11.
+- Branches and PRs: SPEC §11. A small amendment to the node's own spec that keeps every
+  criterion's meaning (a clearer *Verify*, an added path) goes in the node PR under "Spec
+  amendments" (`/noodlebot:node` step 7); anything that adds, removes or weakens a criterion gets its own spec PR.
 
 ## Don't touch
 

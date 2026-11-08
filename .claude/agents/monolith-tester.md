@@ -1,6 +1,6 @@
 ---
 name: monolith-tester
-description: Tester role for one slice of a Monolith node. Turns the node's acceptance criteria into executable tests and produces one valid RED commit. Dispatched by the /node skill; never writes implementation.
+description: Tester role for one slice of a Monolith node. Turns the node's acceptance criteria into executable tests and produces one valid RED commit. Dispatched by the /noodlebot:node skill; never writes implementation.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
 hooks:
