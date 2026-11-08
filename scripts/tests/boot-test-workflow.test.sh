@@ -10,7 +10,7 @@ HERE=$(cd "$(dirname "$0")" && pwd -P)
 ROOT=$(cd "$HERE/../.." && pwd -P)
 WF="$ROOT/.github/workflows/boot-test.yml"
 BT="$ROOT/scripts/boot-test.py"
-MODES="bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist"
+MODES="bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist persist-init entry serial-net smoke"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/boot-test-workflow.XXXXXX") || exit 1
 trap 'rm -rf "$tmp"' EXIT INT TERM
 fails=0
@@ -99,7 +99,7 @@ for n, j in mode_jobs.items():
     m = [x.group(1) for x in m if x]
     chk(f"O01-AC-2 job {n} test step is make test-boot with MODE=<mode>", len(m) == 1 and m[0] in modes)
     covered.update(m)
-chk("O01-AC-2 the jobs cover all 17 modes", set(modes) <= covered)
+chk("O01-AC-2 the jobs cover all modes", set(modes) <= covered)
 if set(modes) - covered: print("  missing: " + " ".join(sorted(set(modes) - covered)))
 
 # O01-AC-3: bios keeps both RAM sizes
@@ -158,7 +158,7 @@ out=$(mk -nB test-boot)
 echo "$out" | grep -q 'toolbox/run' && echo "$out" | grep -q 'boot-test\.py' && pass "O01-AC-7 make -n test-boot runs boot-test.py through toolbox/run" || fail "O01-AC-7 make -n test-boot runs boot-test.py through toolbox/run"
 missing=""
 for m in $MODES; do echo "$out" | grep -qw -- "$m" || missing="$missing $m"; done
-[ -z "$missing" ] && pass "O01-AC-7 make -n test-boot names all 17 modes" || fail "O01-AC-7 make -n test-boot names all 17 modes (missing:$missing)"
+[ -z "$missing" ] && pass "O01-AC-7 make -n test-boot names all modes" || fail "O01-AC-7 make -n test-boot names all modes (missing:$missing)"
 sha_line=$(echo "$out" | grep -n 'sha256' | head -1 | cut -d: -f1)
 boot_line=$(echo "$out" | grep -n 'boot-test\.py' | head -1 | cut -d: -f1)
 if [ -n "$sha_line" ] && [ -n "$boot_line" ] && [ "$sha_line" -lt "$boot_line" ]; then pass "O01-AC-7 default ISO is sha256-checked before the first boot"; else fail "O01-AC-7 default ISO is sha256-checked before the first boot"; fi
