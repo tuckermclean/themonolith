@@ -533,18 +533,18 @@ Bullets: unverified third-party behaviour, open decisions (§10).
 
 These are owner decisions. A node that names one does not start until it is settled.
 
-| Id | Question | Default if unanswered |
+| Id | Question | Settled answer, or the default if unanswered |
 |---|---|---|
-| OD-1 | The advisory URL is baked into every disc from the first release on. It must be a dedicated name that can be repointed for decades. The service behind it (P03) can come later. `themonolith.org` belongs to a third party, so it is out. Where is the name hosted? | `https://monolith.technomantics.com/`, served by GitHub Pages (a custom domain needs no stored cloud key, SPEC §8) |
+| OD-1 | The advisory URL is baked into every disc from the first release on. It must be a dedicated name that can be repointed for decades. The service behind it (P03) can come later. `themonolith.org` belongs to a third party, so it is out. Where is the name hosted? | **Settled 2026-11-08: the default, `https://monolith.technomantics.com/` on GitHub Pages.** |
 | OD-2 | May a prerelease ship with a non-empty dynamic-binary allowlist? (rc1 needs no entry: the list starts empty.) | Yes for prereleases, each entry with an issue. The list is empty before the first non-prerelease (R03). |
 | OD-3 | First tree pin: rc1's tree, recovered from gentoo-mirror git, or a current tree? | rc1's tree; M01 bumps it after MS2 |
-| OD-4 | First release version from this repository. | `v0.2.0-rc1` |
+| OD-4 | First release version from this repository. | **Settled 2026-11-08: the default, `v0.2.0-rc1`.** |
 | OD-5 | Does a CVE in the builder image block a release? | Report-only; the owner reviews it at release |
-| OD-6 | Bump PRs (M01) need a credential other than `GITHUB_TOKEN` so their checks run. Fine-grained PAT or GitHub App? | GitHub App |
-| OD-7 | Hyper-V: provide manual evidence on real Hyper-V, or drop the README claim? | A dated manual evidence file |
+| OD-6 | Bump PRs (M01) need a credential other than `GITHUB_TOKEN` so their checks run. Fine-grained PAT or GitHub App? | **Settled 2026-11-08: neither. The n00dl3b0t GitHub App opens bump PRs from the noodlebot scheduler, outside Actions, so no credential is stored in the repository. M01 follows this (its spec is amended before it starts).** |
+| OD-7 | Hyper-V: provide manual evidence on real Hyper-V, or drop the README claim? | **Settled 2026-11-08: the default, a dated manual evidence file from a real Hyper-V boot.** |
 | OD-8 | Keep the undocumented Tier-0 `NET_9P`, `NET_9P_FD` and `NETFS_SUPPORT` symbols? | Keep them, documented |
 | OD-9 | If the CVE gate blocks the first release on rc1's 2026-08 tree: waive with an expiry, or bump the tree first? | Waive with a 30-day expiry; M01 follows |
-| OD-10 | The distribution's share of the CD, once content projects claim space. | The whole 74-minute CD-R (681,984,000 bytes) until set |
+| OD-10 | The distribution's share of the CD, once content projects claim space. | **Settled 2026-11-08: the default, the whole 74-minute CD-R (681,984,000 bytes).** |
 
 **Tracked, outside MS1.** These stay open on purpose. None is a gate for MS1, and none adds a node.
 The two hardware rows are future work after the first release, not part of this migration.
