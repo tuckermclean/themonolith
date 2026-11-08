@@ -762,6 +762,256 @@ echo "$py_out"
 n_py_fail=$(echo "$py_out" | grep -c '^FAIL' || true)
 fails=$((fails + n_py_fail))
 if [ "$py_rc" -ne 0 ]; then fail "P02 slice 2 python harness exited $py_rc"; fi
+# ================= slice 3: P02-AC-6 static support (changes 3-6) =================
+# These cases support P02-AC-6 (whose verdict is the dispatch run's compare log); each names the change.
+# Interfaces chosen for slice 3:
+#   Change 3  configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r10.ebuild exports
+#             KBUILD_BUILD_TIMESTAMP=@${SOURCE_DATE_EPOCH}, KBUILD_BUILD_USER=monolith, KBUILD_BUILD_HOST=monolith,
+#             KBUILD_BUILD_VERSION=1; configs/portage/versions.lock pins sys-kernel/monolith-kernel:6.12.80-r10:0.
+#             The r9 ebuild stays: frozen kernel-ebuild.test.sh (B02-AC-1) reads the r9 path.
+#   Change 4  scripts/build-initrd.sh: the archive step is the lines that begin with `find . ` (clamp, then
+#             sort | cpio | gzip), run with the working directory = INITRD_DIR and INITRD_IMAGE, SOURCE_DATE_EPOCH
+#             in the environment; `touch -h -d @${SOURCE_DATE_EPOCH}` on every entry, `cpio --reproducible`.
+#   Change 5  static greps of scripts/build-iso.sh and scripts/build-rootfs.sh (non-comment lines only).
+#   Change 6  sh scripts/normalize-vdb.sh <vdb-dir>   (POSIX sh; SOURCE_DATE_EPOCH from the environment, an error
+#             naming SOURCE_DATE_EPOCH when unset; rewrites only the given directory, a rootfs copy of
+#             var/db/pkg, in place) called by scripts/build-rootfs.sh after the VDB is copied in and before the
+#             mtime clamp and mksquashfs. It uses bzip2 -9 (the toolbox has no bzip2: this test puts a python
+#             bz2-backed bzip2/bzcat/bunzip2 on PATH; libbz2 level 9 is the same output as bzip2 -9).
+#             Per package dir <cat>/<pn-pv>/: BUILD_TIME := SOURCE_DATE_EPOCH; COUNTER := 1..N in sorted
+#             cpv order (LC_ALL=C sort of category/pn-pv); environment.bz2 loses `declare ... NAME=` lines for
+#             the volatile variables EPOCHREALTIME EPOCHSECONDS SRANDOM RANDOM BASHPID and is recompressed with
+#             bzip2 -9; in CONTENTS the trailing mtime of every `obj` and `sym` line := SOURCE_DATE_EPOCH.
+#             All other files and lines are untouched.
+#   Every build script of changes 4-6 exits non-zero naming SOURCE_DATE_EPOCH when it is unset, before any
+#   other work, and has no ${SOURCE_DATE_EPOCH:-...} fallback.
+SDE=1786489256
+nc() { grep -v '^[[:space:]]*#' "$1" 2>/dev/null; }
+fline() { nc_n=$(grep -n -E -e "$2" "$1" 2>/dev/null | grep -v -E '^[0-9]+:[[:space:]]*#' | head -n 1 | cut -d: -f1); echo "${nc_n:-}"; }
+lline() { grep -n -E -e "$2" "$1" 2>/dev/null | grep -v -E '^[0-9]+:[[:space:]]*#' | tail -n 1 | cut -d: -f1; }
+s3check() { d=$1; shift; if "$@" 2>/dev/null; then pass "$d"; else fail "$d"; fi; }
+
+# ---- change 3: kernel r10 ----
+K10="$ROOT/configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r10.ebuild"
+if [ -f "$K10" ]; then pass "P02-AC-6 change 3: monolith-kernel-6.12.80-r10.ebuild exists"; else fail "P02-AC-6 change 3: monolith-kernel-6.12.80-r10.ebuild exists"; fi
+s3check "P02-AC-6 change 3: r10 exports KBUILD_BUILD_TIMESTAMP=@\${SOURCE_DATE_EPOCH}" \
+	grep -Eq 'KBUILD_BUILD_TIMESTAMP="?@\$\{SOURCE_DATE_EPOCH\}"?' "$K10"
+s3check "P02-AC-6 change 3: r10 exports KBUILD_BUILD_USER=monolith" grep -Eq '^[[:space:]]*export[[:space:]]+KBUILD_BUILD_USER="?monolith"?([[:space:]]|$)' "$K10"
+s3check "P02-AC-6 change 3: r10 exports KBUILD_BUILD_HOST=monolith" grep -Eq '^[[:space:]]*export[[:space:]]+KBUILD_BUILD_HOST="?monolith"?([[:space:]]|$)' "$K10"
+s3check "P02-AC-6 change 3: r10 exports KBUILD_BUILD_VERSION=1" grep -Eq '^[[:space:]]*export[[:space:]]+KBUILD_BUILD_VERSION="?1"?([[:space:]]|$)' "$K10"
+s3check "P02-AC-6 change 3: r10 timestamp is an export" grep -Eq '^[[:space:]]*export[[:space:]]+KBUILD_BUILD_TIMESTAMP=' "$K10"
+if [ -f "$K10" ] && ! grep -Eq 'SOURCE_DATE_EPOCH:[-=]' "$K10"; then pass "P02-AC-6 change 3: r10 has no SOURCE_DATE_EPOCH fallback"; else fail "P02-AC-6 change 3: r10 has no SOURCE_DATE_EPOCH fallback (or no r10)"; fi
+s3check "P02-AC-6 change 3: r10 still inherits savedconfig" grep -Eq '^[[:space:]]*inherit[[:space:]].*\bsavedconfig\b' "$K10"
+s3check "P02-AC-6 change 3: versions.lock pins sys-kernel/monolith-kernel:6.12.80-r10:0" \
+	grep -Fxq 'sys-kernel/monolith-kernel:6.12.80-r10:0' "$ROOT/configs/portage/versions.lock"
+n=$(grep -c '^sys-kernel/monolith-kernel:' "$ROOT/configs/portage/versions.lock")
+if [ "$n" -eq 1 ]; then pass "P02-AC-6 change 3: versions.lock has exactly one kernel line"; else fail "P02-AC-6 change 3: versions.lock has exactly one kernel line (got $n)"; fi
+
+# ---- change 4: initrd ----
+BI="$ROOT/scripts/build-initrd.sh"
+s3check "P02-AC-6 change 4: initrd clamp is touch -h -d @\${SOURCE_DATE_EPOCH} on every entry" \
+	sh -c "grep -v '^[[:space:]]*#' '$BI' | grep -Eq 'touch -h -d \"?@\\\$\\{SOURCE_DATE_EPOCH\\}\"?'"
+if nc "$BI" | grep -E '^find \. ' | grep -q -e '-not -type l'; then fail "P02-AC-6 change 4: initrd clamp no longer skips symlinks"; else pass "P02-AC-6 change 4: initrd clamp no longer skips symlinks"; fi
+s3check "P02-AC-6 change 4: initrd cpio uses --reproducible" sh -c "grep -v '^[[:space:]]*#' '$BI' | grep -Eq 'cpio .*--reproducible'"
+
+# behavioural: run the script's own `find . ` lines on a fixture tree holding a symlink
+mkfix() { # mkfix <dir> <extra-pre-files>
+	mkdir -p "$1/bin" "$1/etc" "$1/dev"
+	echo busy >"$1/bin/busybox"; ln -s busybox "$1/bin/sh"; ln -s /nonexistent "$1/etc/dangling"
+	echo x >"$1/etc/passwd"
+	touch -h -d @1700000000 "$1/bin/busybox" "$1/bin/sh" "$1/etc/dangling" "$1/etc/passwd" "$1/bin" "$1/etc" "$1/dev" "$1"
+}
+run_archive() { # run_archive <treedir> <out.gz>
+	nc "$BI" | grep -E '^find \. ' >"$TMP/archive-lines.sh"
+	if [ ! -s "$TMP/archive-lines.sh" ]; then return 1; fi
+	(cd "$1" && env SOURCE_DATE_EPOCH="$SDE" INITRD_IMAGE="$2" sh "$TMP/archive-lines.sh") >"$TMP/archive.log" 2>&1
+}
+mkfix "$TMP/ird1"
+mkdir -p "$TMP/ird2-pre"; echo pad >"$TMP/ird2-pre/pad"; echo pad2 >"$TMP/ird2-pre/pad2"
+mkfix "$TMP/ird2"
+if run_archive "$TMP/ird1" "$TMP/ird1.gz"; then
+	odd=$(cd "$TMP/ird1" && find . -printf '%Ts\n' | sort -u | tr '\n' ' ')
+	if [ "$odd" = "$SDE " ]; then pass "P02-AC-6 change 4: every initrd entry incl. symlinks has mtime SOURCE_DATE_EPOCH"; else fail "P02-AC-6 change 4: every initrd entry incl. symlinks has mtime SOURCE_DATE_EPOCH (mtimes: $odd)"; fi
+else
+	fail "P02-AC-6 change 4: the initrd archive step runs on a fixture tree ($(head -c 200 "$TMP/archive.log" 2>/dev/null))"
+	fail "P02-AC-6 change 4: every initrd entry incl. symlinks has mtime SOURCE_DATE_EPOCH (archive step did not run)"
+fi
+if run_archive "$TMP/ird2" "$TMP/ird2.gz" && cmp -s "$TMP/ird1.gz" "$TMP/ird2.gz"; then
+	pass "P02-AC-6 change 4: the archive is byte-identical for trees that differ only in inode numbers"
+else
+	fail "P02-AC-6 change 4: the archive is byte-identical for trees that differ only in inode numbers"
+fi
+
+# ---- change 5: ISO, ESP, grub memdisk, squashfs ----
+BIS="$ROOT/scripts/build-iso.sh"
+s3check "P02-AC-6 change 5: xorriso -volume_date all_file_dates =\${SOURCE_DATE_EPOCH}" \
+	sh -c "grep -v '^[[:space:]]*#' '$BIS' | grep -Eq -e '-volume_date[[:space:]]+all_file_dates[[:space:]]+\"?=\\\$\\{SOURCE_DATE_EPOCH\\}\"?'"
+s3check "P02-AC-6 change 5: xorriso -volume_date uuid is derived (a \$ expression), not a literal" \
+	sh -c "grep -v '^[[:space:]]*#' '$BIS' | grep -Eq -e '-volume_date[[:space:]]+uuid[[:space:]]+\"?\\\$'"
+s3check "P02-AC-6 change 5: the uuid is derived from SOURCE_DATE_EPOCH in xorriso's 16-digit form" \
+	sh -c "grep -v '^[[:space:]]*#' '$BIS' | grep -E 'date ' | grep 'SOURCE_DATE_EPOCH' | grep -Eq '%Y%m%d%H%M%S'"
+s3check "P02-AC-6 change 5: the volume id is fixed (no variable)" \
+	sh -c "grep -v '^[[:space:]]*#' '$BIS' | grep -Eq -e '(^|[[:space:]])(-V|-volid)[[:space:]]+\"[A-Z0-9_]+\"'"
+s3check "P02-AC-6 change 5: the ESP is made with mkfs.vfat --invariant" \
+	sh -c "grep -v '^[[:space:]]*#' '$BIS' | grep -E 'mkfs.vfat' | grep -Eq -e '--invariant'"
+s3check "P02-AC-6 change 5: mkfs.vfat has a fixed volume id (-i <8 hex digits>)" \
+	sh -c "grep -v '^[[:space:]]*#' '$BIS' | grep -E 'mkfs.vfat' | grep -Eq -e '-i[[:space:]]+\"?[0-9A-Fa-f]{8}\"?([[:space:]]|\$)'"
+gm=$(fline "$BIS" 'grub-mkstandalone'); mc=$(fline "$BIS" '^[[:space:]]*mcopy ')
+tg=$(fline "$BIS" 'touch .*SOURCE_DATE_EPOCH.*GRUB_CFG')
+if [ -n "$gm" ] && [ -n "$tg" ] && [ "$tg" -lt "$gm" ]; then pass "P02-AC-6 change 5: the grub memdisk input is clamped to SOURCE_DATE_EPOCH before grub-mkstandalone"; else fail "P02-AC-6 change 5: the grub memdisk input is clamped to SOURCE_DATE_EPOCH before grub-mkstandalone (touch line '${tg:-none}', grub-mkstandalone line '${gm:-none}')"; fi
+te=$(fline "$BIS" 'touch .*SOURCE_DATE_EPOCH.*(BOOTX64|ISO_DIR)')
+if [ -n "$mc" ] && [ -n "$te" ] && [ "$te" -lt "$mc" ]; then pass "P02-AC-6 change 5: the EFI binary mtime is clamped before mcopy"; else fail "P02-AC-6 change 5: the EFI binary mtime is clamped before mcopy (touch line '${te:-none}', mcopy line '${mc:-none}')"; fi
+s3check "P02-AC-6 change 5: mcopy preserves the (clamped) mtime with -m" \
+	sh -c "grep -v '^[[:space:]]*#' '$BIS' | grep -E '^[[:space:]]*mcopy ' | grep -Eq -e 'mcopy( -[a-zA-Z]+)* -[a-zA-Z]*m'"
+
+BR="$ROOT/scripts/build-rootfs.sh"
+ms=$(fline "$BR" '^[[:space:]]*mksquashfs ')
+nv=$(lline "$BR" 'normalize-vdb\.sh')
+cl=$(lline "$BR" 'touch -h .*SOURCE_DATE_EPOCH')
+if [ -n "$ms" ] && [ -n "$cl" ] && [ "$cl" -lt "$ms" ]; then pass "P02-AC-6 change 5: build-rootfs.sh clamps rootfs mtimes (touch -h ... SOURCE_DATE_EPOCH) before mksquashfs"; else fail "P02-AC-6 change 5: build-rootfs.sh clamps rootfs mtimes (touch -h ... SOURCE_DATE_EPOCH) before mksquashfs (clamp '${cl:-none}', mksquashfs '${ms:-none}')"; fi
+if [ -n "$cl" ] && nc "$BR" | grep -E 'touch -h .*SOURCE_DATE_EPOCH' | grep -q 'ROOTFS_DIR'; then pass "P02-AC-6 change 5: the clamp covers \$ROOTFS_DIR"; else fail "P02-AC-6 change 5: the clamp covers \$ROOTFS_DIR"; fi
+msl=$(awk '/^[[:space:]]*mksquashfs /{f=1} f{print} f&&!/\\$/{exit}' "$BR")
+if [ -n "$msl" ] && ! echo "$msl" | grep -q -e '-all-time'; then pass "P02-AC-6 change 5: mksquashfs keeps its own SOURCE_DATE_EPOCH handling (no -all-time)"; else fail "P02-AC-6 change 5: mksquashfs keeps its own SOURCE_DATE_EPOCH handling (no -all-time)"; fi
+
+# ---- change 6: shipped VDB normalisation ----
+NV="$ROOT/scripts/normalize-vdb.sh"
+if [ -n "$nv" ] && [ -n "$ms" ] && [ "$nv" -lt "$ms" ]; then pass "P02-AC-6 change 6: build-rootfs.sh calls normalize-vdb.sh before mksquashfs"; else fail "P02-AC-6 change 6: build-rootfs.sh calls normalize-vdb.sh before mksquashfs (call '${nv:-none}', mksquashfs '${ms:-none}')"; fi
+if [ -n "$nv" ] && [ -n "$cl" ] && [ "$nv" -lt "$cl" ]; then pass "P02-AC-6 change 6: the VDB is normalised before the mtime clamp"; else fail "P02-AC-6 change 6: the VDB is normalised before the mtime clamp (call '${nv:-none}', clamp '${cl:-none}')"; fi
+s3check "P02-AC-6 change 6: normalize-vdb.sh uses bzip2 -9" sh -c "grep -v '^[[:space:]]*#' '$NV' | grep -Eq 'bzip2 .*-9|bzip2 -9'"
+
+mkdir -p "$TMP/s3stubs"
+cat >"$TMP/s3stubs/bzpy.py" <<'PYEOF'
+import sys, bz2, os
+prog = os.path.basename(sys.argv[0])
+dec = prog in ("bzcat", "bunzip2")
+cout = prog == "bzcat"
+files = []
+keep = False
+for a in sys.argv[1:]:
+    if a.startswith("-") and len(a) > 1 and not a.startswith("--"):
+        for c in a[1:]:
+            if c == "d": dec = True
+            elif c == "c": cout = True
+            elif c == "k": keep = True
+    elif a == "--decompress": dec = True
+    elif a == "--stdout": cout = True
+    elif not a.startswith("--"):
+        files.append(a)
+def conv(b):
+    return bz2.decompress(b) if dec else bz2.compress(b, 9)
+if not files:
+    sys.stdout.buffer.write(conv(sys.stdin.buffer.read())); sys.exit(0)
+for f in files:
+    data = conv(open(f, "rb").read())
+    if cout:
+        sys.stdout.buffer.write(data)
+    else:
+        o = f[:-4] if dec and f.endswith(".bz2") else (f if dec else f + ".bz2")
+        open(o, "wb").write(data)
+        if not keep and o != f: os.unlink(f)
+PYEOF
+# one python file per tool name so argv[0]'s basename selects the mode
+for t in bzip2 bzcat bunzip2; do cp "$TMP/s3stubs/bzpy.py" "$TMP/s3stubs/$t.py"; printf '#!/bin/sh\nexec python3 -I "%s/%s.py" "$@"\n' "$TMP/s3stubs" "$t" >"$TMP/s3stubs/$t"; chmod +x "$TMP/s3stubs/$t"; done
+sed -i 's/^prog = .*/prog = os.path.basename(sys.argv[0])[:-3]/' "$TMP/s3stubs/bzip2.py" "$TMP/s3stubs/bzcat.py" "$TMP/s3stubs/bunzip2.py"
+
+# fixture VDB: variant 1 and 2 differ in BUILD_TIME, COUNTER, volatile env lines, CONTENTS mtimes, bz2 level, creation order
+bzc() { python3 -I -c 'import sys,bz2;sys.stdout.buffer.write(bz2.compress(sys.stdin.buffer.read(),int(sys.argv[1])))' "$1"; }
+mkvdb() { # mkvdb <dir> <variant 1|2>
+	d=$1; v=$2
+	if [ "$v" = 1 ]; then pk="app-misc/foo-1.0 dev-libs/baz-3 sys-apps/bar-2.1-r1"; lvl=9; else pk="sys-apps/bar-2.1-r1 dev-libs/baz-3 app-misc/foo-1.0"; lvl=1; fi
+	i=0
+	for p in $pk; do
+		i=$((i + 1)); mkdir -p "$d/$p"
+		case $p in app-misc/foo-1.0) c1=5; c2=31 ;; dev-libs/baz-3) c1=9; c2=7 ;; sys-apps/bar-2.1-r1) c1=2; c2=19 ;; esac
+		if [ "$v" = 1 ]; then cnt=$c1; bt=170000000$i; mt=170100000$i; else cnt=$c2; bt=171000000$i; mt=172200000$i; fi
+		echo "$bt" >"$d/$p/BUILD_TIME"; echo "$cnt" >"$d/$p/COUNTER"
+		echo "i486-linux-musl" >"$d/$p/CHOST"; echo "ssl ipv6" >"$d/$p/USE"; printf '8\n' >"$d/$p/EAPI"
+		{
+			echo "dir /usr"; echo "dir /usr/bin"
+			echo "obj /usr/bin/${p##*/} d41d8cd98f00b204e9800998ecf8427e $mt"
+			echo "sym /usr/bin/${p##*/}-link -> ${p##*/} $mt"
+		} >"$d/$p/CONTENTS"
+		{
+			echo 'declare -x CHOST="i486-linux-musl"'
+			echo "declare -- EPOCHREALTIME=\"$bt.$i\""
+			echo 'declare -x PN="'"${p##*/}"'"'
+			echo "declare -r EPOCHSECONDS=\"$bt\""
+			echo "declare -i BASHPID=\"$((cnt * 1000 + i))\""
+			echo "declare -- SRANDOM=\"$((cnt * 77777))\""
+			echo "declare -i RANDOM=\"$((cnt * 311))\""
+			echo 'src_install ()'; echo '{'; echo '    emake DESTDIR="${D}" install'; echo '}'
+			echo 'declare -x ARCH="x86"'
+		} | bzc "$lvl" >"$d/$p/environment.bz2"
+	done
+}
+expect_env() { # expect_env <pn> : the non-volatile lines in original order
+	echo 'declare -x CHOST="i486-linux-musl"'; echo 'declare -x PN="'"$1"'"'
+	echo 'src_install ()'; echo '{'; echo '    emake DESTDIR="${D}" install'; echo '}'; echo 'declare -x ARCH="x86"'
+}
+treesum() { (cd "$1" && { find . | LC_ALL=C sort; find . -type f | LC_ALL=C sort | xargs sha256sum; } | sha256sum | cut -d' ' -f1); }
+
+run_nv() { # run_nv <dir> ; rc/out
+	out=$(env PATH="$TMP/s3stubs:$PATH" SOURCE_DATE_EPOCH="$SDE" sh "$NV" "$1" 2>&1); rc=$?
+}
+mkvdb "$TMP/vdb1" 1; mkvdb "$TMP/vdb2" 2
+mkvdb "$TMP/builder-vdb" 1; builder_before=$(treesum "$TMP/builder-vdb")
+cp -a "$TMP/vdb1" "$TMP/rootfs-copy1"; cp -a "$TMP/vdb2" "$TMP/rootfs-copy2"; cp -a "$TMP/builder-vdb" "$TMP/rootfs-copy3"
+if [ -f "$NV" ]; then
+	run_nv "$TMP/rootfs-copy1"; rc1=$rc
+	run_nv "$TMP/rootfs-copy2"; rc2=$rc
+	run_nv "$TMP/rootfs-copy3"
+else
+	rc1=127; rc2=127; echo "no $NV" >"$TMP/nv.err"
+fi
+if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ]; then pass "P02-AC-6 change 6: normalize-vdb.sh <vdb-dir> exits 0 on the fixture VDBs"; else fail "P02-AC-6 change 6: normalize-vdb.sh <vdb-dir> exits 0 on the fixture VDBs (rc=$rc1/$rc2)"; fi
+if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$(treesum "$TMP/rootfs-copy1")" = "$(treesum "$TMP/rootfs-copy2")" ]; then pass "P02-AC-6 change 6: two VDBs differing in BUILD_TIME, COUNTER, order, volatile env lines and CONTENTS mtimes normalise to identical trees"; else fail "P02-AC-6 change 6: two VDBs differing in BUILD_TIME, COUNTER, order, volatile env lines and CONTENTS mtimes normalise to identical trees"; fi
+bad=""
+for p in app-misc/foo-1.0 dev-libs/baz-3 sys-apps/bar-2.1-r1; do
+	[ "$(cat "$TMP/rootfs-copy1/$p/BUILD_TIME" 2>/dev/null)" = "$SDE" ] || bad="$bad $p"
+done
+if [ -z "$bad" ] && [ "$rc1" -eq 0 ]; then pass "P02-AC-6 change 6: BUILD_TIME is SOURCE_DATE_EPOCH in every package"; else fail "P02-AC-6 change 6: BUILD_TIME is SOURCE_DATE_EPOCH in every package (wrong:${bad:- all})"; fi
+cs=$(for p in app-misc/foo-1.0 dev-libs/baz-3 sys-apps/bar-2.1-r1; do cat "$TMP/rootfs-copy1/$p/COUNTER" 2>/dev/null; done | tr '\n' ' ')
+if [ "$rc1" -eq 0 ] && [ "$cs" = "1 2 3 " ]; then pass "P02-AC-6 change 6: COUNTER is renumbered 1..N in sorted cpv order"; else fail "P02-AC-6 change 6: COUNTER is renumbered 1..N in sorted cpv order (got: $cs)"; fi
+envok=1
+for p in app-misc/foo-1.0 dev-libs/baz-3 sys-apps/bar-2.1-r1; do
+	expect_env "${p##*/}" >"$TMP/envwant"
+	PATH="$TMP/s3stubs:$PATH" bzcat "$TMP/rootfs-copy1/$p/environment.bz2" >"$TMP/envgot" 2>/dev/null
+	cmp -s "$TMP/envwant" "$TMP/envgot" || envok=0
+done
+if [ "$rc1" -eq 0 ] && [ "$envok" -eq 1 ]; then pass "P02-AC-6 change 6: environment.bz2 loses exactly the volatile declare lines (EPOCHREALTIME EPOCHSECONDS SRANDOM RANDOM BASHPID)"; else fail "P02-AC-6 change 6: environment.bz2 loses exactly the volatile declare lines (EPOCHREALTIME EPOCHSECONDS SRANDOM RANDOM BASHPID)"; fi
+expect_env foo-1.0 | bzc 9 >"$TMP/envwant.bz2"
+if [ "$rc1" -eq 0 ] && cmp -s "$TMP/envwant.bz2" "$TMP/rootfs-copy1/app-misc/foo-1.0/environment.bz2"; then pass "P02-AC-6 change 6: environment.bz2 is recompressed with bzip2 -9 (byte-exact)"; else fail "P02-AC-6 change 6: environment.bz2 is recompressed with bzip2 -9 (byte-exact)"; fi
+printf 'dir /usr\ndir /usr/bin\nobj /usr/bin/foo-1.0 d41d8cd98f00b204e9800998ecf8427e %s\nsym /usr/bin/foo-1.0-link -> foo-1.0 %s\n' "$SDE" "$SDE" >"$TMP/contwant"
+if [ "$rc1" -eq 0 ] && cmp -s "$TMP/contwant" "$TMP/rootfs-copy1/app-misc/foo-1.0/CONTENTS"; then pass "P02-AC-6 change 6: CONTENTS obj/sym mtimes are SOURCE_DATE_EPOCH, dir lines and the rest untouched"; else fail "P02-AC-6 change 6: CONTENTS obj/sym mtimes are SOURCE_DATE_EPOCH, dir lines and the rest untouched"; fi
+if [ "$rc1" -eq 0 ] && [ "$(cat "$TMP/rootfs-copy1/dev-libs/baz-3/USE")" = "ssl ipv6" ] && [ "$(cat "$TMP/rootfs-copy1/dev-libs/baz-3/CHOST")" = "i486-linux-musl" ]; then pass "P02-AC-6 change 6: other VDB files are untouched"; else fail "P02-AC-6 change 6: other VDB files are untouched"; fi
+t1=$(treesum "$TMP/rootfs-copy1")
+run_nv "$TMP/rootfs-copy1"
+if [ "$rc" -eq 0 ] && [ "$(treesum "$TMP/rootfs-copy1")" = "$t1" ]; then pass "P02-AC-6 change 6: normalising again is byte-stable"; else fail "P02-AC-6 change 6: normalising again is byte-stable"; fi
+if [ "$(treesum "$TMP/builder-vdb")" = "$builder_before" ] && [ "$rc1" -eq 0 ]; then pass "P02-AC-6 change 6: the builder's own VDB is not touched (only the given copy)"; else fail "P02-AC-6 change 6: the builder's own VDB is not touched (only the given copy)"; fi
+out=$(env -u SOURCE_DATE_EPOCH PATH="$TMP/s3stubs:$PATH" sh "$NV" "$TMP/rootfs-copy3" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && echo "$out" | grep -q SOURCE_DATE_EPOCH; then pass "P02-AC-6 change 6: normalize-vdb.sh fails naming SOURCE_DATE_EPOCH when it is unset"; else fail "P02-AC-6 change 6: normalize-vdb.sh fails naming SOURCE_DATE_EPOCH when it is unset (rc=$rc)"; fi
+out=$(env PATH="$TMP/s3stubs:$PATH" SOURCE_DATE_EPOCH="$SDE" sh "$NV" "$TMP/no-such-vdb" 2>&1); rc=$?
+if [ -f "$NV" ] && [ "$rc" -ne 0 ]; then pass "P02-AC-6 change 6: a missing VDB directory is an error"; else fail "P02-AC-6 change 6: a missing VDB directory is an error"; fi
+
+# ---- changes 4-6: no build script falls back when SOURCE_DATE_EPOCH is unset ----
+# build-initrd.sh is run (INITRD_DIR/OUTPUT_DIR are overridable). build-iso.sh and build-rootfs.sh hard-code
+# /tmp/iso and /rootfs-build and rm -rf them, so they are checked statically: a check of SOURCE_DATE_EPOCH
+# (`:?`, or `[ -z "${SOURCE_DATE_EPOCH...` / `-n`) that comes before the first top-level command that does work.
+for s in build-initrd.sh build-iso.sh build-rootfs.sh normalize-vdb.sh; do
+	f="$ROOT/scripts/$s"
+	if [ -f "$f" ] && ! nc "$f" | grep -Eq 'SOURCE_DATE_EPOCH:[-=]'; then pass "P02-AC-6 $s has no \${SOURCE_DATE_EPOCH:-...} fallback"; else fail "P02-AC-6 $s has no \${SOURCE_DATE_EPOCH:-...} fallback (or does not exist)"; fi
+done
+mkdir -p "$TMP/unset-out" "$TMP/unset-initrd"
+if [ -f "$BI" ]; then
+	out=$(cd "$TMP" && env -u SOURCE_DATE_EPOCH BUILD_VERSION=t OUTPUT_DIR="$TMP/unset-out" INITRD_DIR="$TMP/unset-initrd" bash "$BI" 2>&1 </dev/null); rc=$?
+	if [ "$rc" -ne 0 ] && echo "$out" | grep -q SOURCE_DATE_EPOCH; then pass "P02-AC-6 build-initrd.sh fails naming SOURCE_DATE_EPOCH when it is unset"; else fail "P02-AC-6 build-initrd.sh fails naming SOURCE_DATE_EPOCH when it is unset (rc=$rc: $(echo "$out" | head -c 100))"; fi
+fi
+for s in build-iso.sh build-rootfs.sh; do
+	f="$ROOT/scripts/$s"
+	ck=$(fline "$f" 'SOURCE_DATE_EPOCH:\?|-z[[:space:]]+"?\$\{SOURCE_DATE_EPOCH|-n[[:space:]]+"?\$\{SOURCE_DATE_EPOCH')
+	first=$(fline "$f" '^(rm|mkdir|mktemp|dd|cd|cp|rsync|xorriso|grub-mkstandalone|mksquashfs|python3|log_info|create_[a-z_]+|install_[a-z_]+|main)([[:space:]]|$)')
+	if [ -n "$ck" ] && [ -n "$first" ] && [ "$ck" -lt "$first" ]; then pass "P02-AC-6 $s checks SOURCE_DATE_EPOCH before any work"; else fail "P02-AC-6 $s checks SOURCE_DATE_EPOCH before any work (check line '${ck:-none}', first work line '${first:-none}')"; fi
+done
 # ================= slice cases end: add later slices' cases above this line =================
 
 [ "$fails" -eq 0 ]
