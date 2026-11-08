@@ -729,7 +729,7 @@ def build_persist_cmd(args):
 # Boot-loader navigation
 # ---------------------------------------------------------------------------
 
-def select_isolinux_label(child, label_line, prompt_timeout=90):
+def select_isolinux_label(child, label_line, prompt_timeout=90, pace=0):
     """
     Wait for ISOLINUX's `boot:` prompt (visible over serial thanks to
     SeaBIOS's -nographic VGA-text-to-serial mirroring, which covers the
@@ -738,6 +738,9 @@ def select_isolinux_label(child, label_line, prompt_timeout=90):
     `label_line` may be "serial" or "serial toram" — SYSLINUX appends any
     text after the label name to that label's own APPEND line, which is how
     we exercise `toram` even though isolinux.cfg has no `toram` LABEL.
+
+    `pace` (seconds) sends the line one character at a time: ISOLINUX polls the
+    emulated UART slowly under TCG and drops the tail of a long line sent at once.
     """
     try:
         child.expect_exact(ISOLINUX_PROMPT, timeout=prompt_timeout)
@@ -747,7 +750,13 @@ def select_isolinux_label(child, label_line, prompt_timeout=90):
             f"WARNING: did not see ISOLINUX '{ISOLINUX_PROMPT}' prompt within "
             f"{prompt_timeout}s — sending label blindly as a fallback"
         )
-    child.sendline(label_line)
+    if pace:
+        for ch in label_line:
+            child.send(ch)
+            time.sleep(pace)
+        child.send("\r")
+    else:
+        child.sendline(label_line)
 
 
 def select_grub_serial_entry(child):
@@ -2302,6 +2311,287 @@ def run_persist(child, args):
     return ok1 and ok2
 
 
+# ---------------------------------------------------------------------------
+# persist-init: the three-boot life of a blank disk (host sfdisk, in-guest
+# `monolith-persist init`, persist, unclean kill, persist again, no disk)
+# ---------------------------------------------------------------------------
+
+PERSIST_INIT_CMD = "monolith-persist init --yes /dev/vda1 --swap 16"
+PERSIST_FALLBACK_WARNING = "no MONOLITH_PERSIST partition found"
+
+
+def make_blank_partitioned_disk(path, size_mb=PERSIST_DISK_SIZE_MB):
+    """
+    A blank raw disk with one Linux partition (a DOS label, partition 1 spanning
+    the disk) made host-side with sfdisk: what a user has before the first
+    `monolith-persist init`. The partition holds no filesystem.
+    """
+    sfdisk = require_binary("sfdisk")
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "wb") as f:
+        f.truncate(size_mb * 1024 * 1024)
+    log(f"Partitioning persist-init scratch disk: {path} ({size_mb}M, one Linux partition)")
+    subprocess.run([sfdisk, "-q", path], input="label: dos\n,,L\n", text=True, check=True)
+
+
+def build_persist_init_cmd(args):
+    make_blank_partitioned_disk(args.persist_disk)
+    return _persist_qemu_argv(args)
+
+
+def _persist_init_argv_without_disk(args):
+    argv = _persist_qemu_argv(args)
+    i = argv.index("-drive")
+    return argv[:i] + argv[i + 4:]
+
+
+def _spawn_boot(args, argv, suffix):
+    child = pexpect.spawn(
+        argv[0], argv[1:], timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace"
+    )
+    if args.log_file:
+        child.logfile = open(args.log_file + suffix, "w", encoding="utf-8", errors="replace")
+    return child
+
+
+def _close_boot(child, args):
+    if child.isalive():
+        try:
+            child.close(force=True)
+        except Exception:
+            pass
+    if args.log_file and getattr(child, "logfile", None):
+        try:
+            child.logfile.close()
+        except Exception:
+            pass
+
+
+def _boot_to_shell(child, args, label_line, note):
+    select_isolinux_label(child, label_line)
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, f"initramfs /init started ({note})")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, f"squashfs+overlay mounted ({note})")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, f"pivot_root complete ({note})")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, f"sysvinit rcS started ({note})")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, f"sysvinit rcS completed ({note})")
+    wait_for_shell(child)
+
+
+def run_persist_init(child, args):
+    """
+    Boot 1 (`child`, label serial, no persist): the disk is a blank partition
+    /dev/vda1; `monolith-persist init --yes /dev/vda1 --swap 16` makes it the
+    MONOLITH_PERSIST ext4 filesystem with a 16 MB swapfile; clean poweroff.
+    Boot 2 (label serial persist): /overlay is ext4 on /dev/vda1, a marker is
+    written there, `swapon /overlay/swapfile` works, then QEMU is SIGKILLed.
+    Boot 3 (same disk): the marker survived. Boot 4 (no disk): init prints its
+    fallback warning and /overlay is tmpfs.
+    """
+    results = []
+    _boot_to_shell(child, args, "serial", "boot 1")
+    results.append(("boot 1: monolith-persist init succeeds on the blank partition",
+                    *run_check(child, "persist init", PERSIST_INIT_CMD + " && echo INIT_DONE",
+                               contains("INIT_DONE"), timeout=180)))
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    if not ok:
+        return False
+
+    marker = f"MONOLITH_PERSIST_INIT_{uuid.uuid4().hex[:8]}"
+    results = []
+    child2 = _spawn_boot(args, _persist_qemu_argv(args), ".boot2")
+    try:
+        _boot_to_shell(child2, args, "serial persist", "boot 2")
+        results.append(("boot 2: /overlay is ext4 on /dev/vda1",
+                        *run_check(child2, "overlay device",
+                                   '_d=; _t=; while read -r _a _m _f _r; do [ "$_m" = /overlay ] && { _d=$_a; _t=$_f; }; done '
+                                   '< /proc/mounts; echo "overlay_dev=$_d overlay_fstype=$_t"',
+                                   regex_matches(r"overlay_dev=/dev/vda1 overlay_fstype=ext4"))))
+        results.append(("boot 2: a marker is written to /overlay",
+                        *run_check(child2, "write marker",
+                                   f"echo {marker} > /overlay/g01-marker && sync && echo WROTE_{marker}",
+                                   contains(f"WROTE_{marker}"))))
+        results.append(("boot 2: swapon /overlay/swapfile succeeds",
+                        *run_check(child2, "swapon", "swapon /overlay/swapfile && cat /proc/swaps",
+                                   contains("/overlay/swapfile"), timeout=60)))
+        ok = report_results(results)
+        log("persist-init: killing QEMU uncleanly (SIGKILL, no poweroff)")
+    finally:
+        _close_boot(child2, args)
+    if not ok:
+        return False
+
+    results = []
+    child3 = _spawn_boot(args, _persist_qemu_argv(args), ".boot3")
+    try:
+        _boot_to_shell(child3, args, "serial persist", "boot 3")
+        results.append(("boot 3: the marker survived the unclean kill",
+                        *run_check(child3, "read marker", "cat /overlay/g01-marker",
+                                   contains(marker))))
+        ok = report_results(results)
+        poweroff_and_wait(child3)
+    finally:
+        _close_boot(child3, args)
+    if not ok:
+        return False
+
+    results = []
+    child4 = _spawn_boot(args, _persist_init_argv_without_disk(args), ".boot4")
+    try:
+        select_isolinux_label(child4, "serial persist")
+        expect_milestone(child4, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started (boot 4)")
+        expect_milestone(child4, PERSIST_FALLBACK_WARNING, args.boot_timeout,
+                         "persist fallback warning (boot 4, no disk)")
+        expect_milestone(child4, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed (boot 4)")
+        wait_for_shell(child4)
+        results.append(("boot 4: without the disk /overlay is tmpfs",
+                        *run_check(child4, "overlay fstype (no disk)", OVERLAY_FSTYPE_CMD,
+                                   contains("overlay_fstype=tmpfs"))))
+        ok = report_results(results)
+        poweroff_and_wait(child4)
+    finally:
+        _close_boot(child4, args)
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# entry: every ISOLINUX label and every GRUB menu entry boots to a shell with
+# its own parameters in /proc/cmdline
+# ---------------------------------------------------------------------------
+
+ENTRY_SERIAL_ARG = "console=ttyS0,115200n8"
+
+# Parameters each ISOLINUX label's APPEND line passes besides initrd= (scripts/build-iso.sh isolinux.cfg).
+ENTRY_ISOLINUX = {
+    "linux": [],
+    "fb": ["quiet", "vga=791"],
+    "fb800": ["quiet", "vga=788"],
+    "fb640": ["quiet", "vga=785"],
+    "vga": ["vga=ask"],
+    "serial": [ENTRY_SERIAL_ARG],
+    "debug": ["debug"],
+    "persist": ["persist"],
+    "rescue": ["rescue"],
+}
+
+# GRUB menu entries by index (scripts/build-iso.sh grub.cfg) with the parameters their linux line passes.
+ENTRY_GRUB = [
+    [],
+    ["video=efifb"],
+    [ENTRY_SERIAL_ARG],
+    ["debug"],
+    ["rescue"],
+    ["toram"],
+    ["persist"],
+]
+
+
+def build_entry_cmd(args):
+    if args.loader == "grub":
+        return build_uefi_cmd(args)
+    return build_bios_cmd(args)
+
+
+def _entry_check_cmdline(child, wanted):
+    def _v(exit_code, output):
+        m = re.search(r"[\r\n]CMDLINE=([^\r\n]*)", output)
+        if exit_code != 0 or not m:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        have = m.group(1).split()
+        missing = [w for w in wanted if w not in have]
+        if missing:
+            return False, f"/proc/cmdline lacks {missing}: {m.group(1)!r}"
+        return True, f"/proc/cmdline: {m.group(1)}"
+    return run_check(child, "/proc/cmdline", 'echo "CMDLINE=$(cat /proc/cmdline)"', _v)
+
+
+def _entry_boot_milestones(child, args, params):
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    if "rescue" in params:
+        # init hands the console to a rescue shell instead of running /sbin/init.
+        return
+    if "toram" in params:
+        expect_milestone(child, MILESTONE_TORAM_EJECTABLE, args.boot_timeout,
+                         "squashfs copied to RAM (toram engaged)")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+
+
+def _select_grub_entry(child, index, add_serial):
+    """
+    Wait for the GRUB menu on serial, move down `index` entries from the default
+    (entry 0) and boot it. An entry with no serial console is edited first:
+    `e`, down two lines to the linux line, its end, the console argument, Ctrl-X to boot.
+    """
+    down = "\x1b[B"
+    try:
+        child.expect_exact("(serial)", timeout=180)
+        log(f"GRUB menu visible on serial; selecting entry {index}")
+    except (pexpect.TIMEOUT, pexpect.EOF):
+        log("WARNING: GRUB menu not observed on serial within 180s; navigating blind")
+    time.sleep(0.5)
+    if index:
+        child.send(down * index)
+        time.sleep(0.5)
+    if not add_serial:
+        child.send("\r")
+        return
+    child.send("e")
+    time.sleep(1.5)
+    # The editor opens on the setparams line; a blank line follows it, then the linux command.
+    child.send(down * 2)
+    time.sleep(0.5)
+    child.send("\x05")  # Ctrl-E: end of the linux line
+    time.sleep(0.5)
+    child.send(" " + ENTRY_SERIAL_ARG)
+    time.sleep(0.5)
+    child.send("\x18")  # Ctrl-X: boot the edited entry
+
+
+def run_entry(child, args):
+    if args.loader == "grub":
+        if args.index is None:
+            raise BootTestError("--mode entry --loader grub needs --index")
+        params = ENTRY_GRUB[args.index]
+        name = f"GRUB entry {args.index}"
+        add_serial = ENTRY_SERIAL_ARG not in params
+        _select_grub_entry(child, args.index, add_serial)
+    elif args.loader == "isolinux":
+        if args.label is None:
+            raise BootTestError("--mode entry --loader isolinux needs --label")
+        params = ENTRY_ISOLINUX[args.label]
+        name = f"ISOLINUX label {args.label}"
+        add_serial = ENTRY_SERIAL_ARG not in params
+        select_isolinux_label(child, args.label + (" " + ENTRY_SERIAL_ARG if add_serial else ""), pace=0.1)
+        if "vga=ask" in params:
+            try:
+                child.expect_exact("SPACE", timeout=90)
+                log("vga=ask prompt seen, sending SPACE")
+                child.send(" ")
+            except (pexpect.TIMEOUT, pexpect.EOF):
+                log("WARNING: no vga=ask prompt seen; the kernel continues after its own timeout")
+    else:
+        raise BootTestError("--mode entry needs --loader isolinux|grub")
+
+    _entry_boot_milestones(child, args, params)
+    wait_for_shell(child)
+    wanted = list(params) + ([ENTRY_SERIAL_ARG] if add_serial else [])
+    results = [(f"{name}: /proc/cmdline holds {' '.join(wanted) or '(nothing extra)'}",
+                *_entry_check_cmdline(child, wanted))]
+    ok = report_results(results)
+    if "toram" in params:
+        eject_ok, eject_detail = eject_cd_and_verify(child, args.cdrom_monitor_id)
+        log(f"  [{'PASS' if eject_ok else 'FAIL'}] media ejected, system survives (toram) - {eject_detail}")
+        ok = ok and eject_ok
+    if "rescue" in params:
+        # No sysvinit runs in the rescue shell, so there is nothing to power off: QEMU is killed.
+        return ok
+    poweroff_and_wait(child)
+    return ok
+
+
 MODE_BUILDERS = {
     "bios": build_bios_cmd,
     "uefi": build_uefi_cmd,
@@ -2320,6 +2610,8 @@ MODE_BUILDERS = {
     "clock-epoch": build_clock_epoch_cmd,
     "clock-1996": build_clock_1996_cmd,
     "persist": build_persist_cmd,
+    "persist-init": build_persist_init_cmd,
+    "entry": build_entry_cmd,
 }
 
 MODE_RUNNERS = {
@@ -2340,6 +2632,8 @@ MODE_RUNNERS = {
     "clock-epoch": run_clock_epoch,
     "clock-1996": run_clock_1996,
     "persist": run_persist,
+    "persist-init": run_persist_init,
+    "entry": run_entry,
 }
 
 MODE_DEFAULT_RAM = {
@@ -2360,6 +2654,8 @@ MODE_DEFAULT_RAM = {
     "clock-epoch": 64,  # same bios/pc machine as "bios", no extra RAM pressure
     "clock-1996": 64,
     "persist": 128,  # BIOS/pc + one extra virtio-blk-pci disk; no networking needed
+    "persist-init": 128,  # as persist; mkfs.ext4 and the swapfile run in the guest
+    "entry": 512,  # the toram entry copies the squashfs into RAM; the others share the setting
 }
 
 
@@ -2416,6 +2712,12 @@ def parse_args():
              "Created fresh (truncated + mkfs.ext4 -L MONOLITH_PERSIST) by build_persist_cmd "
              "before boot 1; both boots in run_persist attach this same file.",
     )
+    p.add_argument("--loader", choices=["isolinux", "grub"], default=None,
+                   help="Boot loader whose entry --mode entry boots (isolinux: BIOS, grub: UEFI)")
+    p.add_argument("--label", choices=sorted(ENTRY_ISOLINUX), default=None,
+                   help="ISOLINUX label for --mode entry --loader isolinux")
+    p.add_argument("--index", type=int, choices=range(len(ENTRY_GRUB)), default=None,
+                   help="GRUB menu entry index (0-based) for --mode entry --loader grub")
     return p.parse_args()
 
 
