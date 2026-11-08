@@ -54,6 +54,7 @@ check_source_log() {
 # Parse arguments
 RESUME=0
 VERBOSE=0
+FETCHONLY=0
 while [[ $# -gt 0 ]]; do
     case $1 in
         --check-source-log)
@@ -72,9 +73,13 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=1
             shift
             ;;
+        --fetchonly)
+            FETCHONLY=1
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--resume] [--verbose] | --check-source-log <logfile>"
+            echo "Usage: $0 [--resume] [--verbose] [--fetchonly] | --check-source-log <logfile>"
             exit 1
             ;;
     esac
@@ -319,6 +324,14 @@ fi
 
 # Combined log for the parallel build
 LOGFILE="${LOGS_DIR}/emerge-parallel.log"
+
+# --fetchonly: download the distfiles of the same dependency graph and build nothing (the reproducibility
+# gate's fetch job; the offline builds then run with fetching disabled).
+if [ ${FETCHONLY} -eq 1 ]; then
+    echo "==> Fetching the distfiles of ${#ATOMS[@]} atoms"
+    unset BUILD_DIR
+    exec ${EMERGE_CMD} --fetchonly "${USEPKG_FLAGS[@]}" "${EXTRA_FLAGS[@]}" "${ATOMS[@]}"
+fi
 
 if [ $VERBOSE -eq 1 ]; then
     echo "  Running: ${EMERGE_CMD} --jobs=${JOBS} --load-average=${LOAD_AVG} --keep-going --buildpkg ${USEPKG_FLAGS[*]} ${EXTRA_FLAGS[*]} ${ATOMS[*]}"

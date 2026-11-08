@@ -34,7 +34,18 @@ on:
   # it on subsequent pushes to an already-labeled PR.
   pull_request:
     types: [opened, reopened, synchronize, labeled]
+  # gate: run the reproducibility gate (fetch, two offline builds, compare) as a tag run does, without publishing.
+  # drop-distfile: remove that one distfile from the archive before the builds (the offline build must then fail on it).
   workflow_dispatch:
+    inputs:
+      gate:
+        description: "Run the reproducibility gate path (the tag pipeline without publishing)"
+        type: boolean
+        default: false
+      drop-distfile:
+        description: "Gate path: name of one distfile to remove before the builds (the builds must fail on it)"
+        type: string
+        default: ""
   schedule:
     - cron: '0 3 * * 1'
 
@@ -62,6 +73,7 @@ jobs:
     # build, static-rebuild, boot-test and attestation through their `needs:`.
     outputs:
       build: ${{ steps.filter.outputs.build }}
+      gate: ${{ steps.route.outputs.gate }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -70,16 +82,24 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: make changes
 
-  # Builds the packages, the root filesystem, the initramfs and the ISO from the pinned builder image and tree.
+      # A tag, or a dispatch with the gate input, takes the gate path (fetch, build-a, build-b, compare); every
+      # other run keeps the build job.
+      - id: route
+        env:
+          GATE: ${{ inputs.gate }}
+        run: make gate-route
+
+  # Builds the packages, the root filesystem, the initramfs and the ISO from the pinned builder image and tree
+  # (iteration builds: binary packages allowed). A tag or a gate dispatch runs fetch, build-a, build-b and compare instead.
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     needs: changes
     permissions:
       contents: read
-      # write: this job pushes the binary package cache to GHCR (make cache-push).
+      # write: this job pushes the binary package cache to GHCR.
       packages: write
-    if: needs.changes.outputs.build == 'true'
+    if: needs.changes.outputs.build == 'true' && github.ref_type != 'tag' && needs.changes.outputs.gate != 'true'
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_ACTOR: ${{ github.actor }}
@@ -191,6 +211,194 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # The reproducibility gate (P02). fetch is the only job with a network for the build inputs: it downloads the
+  # distfiles once and records every pin in release-inputs.json. build-a and build-b run on separate runners, each
+  # needing only fetch, and take nothing but the source commit, release-inputs.json and the distfiles archive.
+  # Nothing is published before compare, the boot modes, the artifact checks and the gates have passed.
+  fetch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    needs: changes
+    permissions:
+      contents: read
+      packages: read
+    if: needs.changes.outputs.gate == 'true'
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch the distfiles and write release-inputs.json
+        run: make repro-fetch
+
+      - name: Upload release-inputs.json
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-inputs-${{ github.run_id }}
+          path: output/release-inputs.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload the distfiles archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: distfiles-${{ github.run_id }}
+          path: output/distfiles.tar
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+
+  # Build A: offline (--network none), from the recorded pins only. The ISO of build A is the one the boot
+  # modes, the artifact checks and the gates run on.
+  build-a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    needs: fetch
+    permissions:
+      contents: read
+      packages: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download release-inputs.json
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-inputs-${{ github.run_id }}
+          path: output
+
+      - name: Download the distfiles archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: distfiles-${{ github.run_id }}
+          path: output
+
+      - name: Build offline
+        env:
+          DROP_DISTFILE: ${{ inputs.drop-distfile }}
+        run: make repro-build-a
+
+      - name: Upload the ISO
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: iso-${{ github.run_id }}
+          path: output/repro-a/iso/boot-test.iso
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload the squashfs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: squashfs-${{ github.run_id }}
+          path: output/repro-a/themonolith-*.squashfs
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload the sysroot
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sysroot-${{ github.run_id }}
+          path: output/repro-a/sysroot.tar
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload package build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-build-logs-a-${{ github.run_id }}
+          path: output/repro-a/logs/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # Build B: offline (--network none), from the recorded pins only. The ISO of build A is the one the boot
+  # modes, the artifact checks and the gates run on.
+  build-b:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    needs: fetch
+    permissions:
+      contents: read
+      packages: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download release-inputs.json
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-inputs-${{ github.run_id }}
+          path: output
+
+      - name: Download the distfiles archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: distfiles-${{ github.run_id }}
+          path: output
+
+      - name: Build offline
+        env:
+          DROP_DISTFILE: ${{ inputs.drop-distfile }}
+        run: make repro-build-b
+
+      - name: Upload the ISO
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repro-b-iso-${{ github.run_id }}
+          path: output/repro-b/iso/boot-test.iso
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload package build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-build-logs-b-${{ github.run_id }}
+          path: output/repro-b/logs/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # The gate: the two ISOs must have the same SHA-256. There is no list of accepted differences.
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: [build-a, build-b]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download build A's ISO
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: iso-${{ github.run_id }}
+          path: output/repro-a/iso
+
+      - name: Download build B's ISO
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: repro-b-iso-${{ github.run_id }}
+          path: output/repro-b/iso
+
+      - name: Compare the ISOs
+        run: make compare
+
+      - name: Upload the diffoscope report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: diffoscope-${{ github.run_id }}
+          path: output/diffoscope.html
+          retention-days: 14
+          if-no-files-found: warn
+
   # B01-AC-16: a revbump or package.use change rebuilds a cached static consumer, in the pinned builder.
   static-rebuild:
     runs-on: ubuntu-24.04
@@ -214,7 +422,8 @@ jobs:
   # .github/workflows/boot-test.yml and scripts/boot-test.py. The ISO comes from the artifact of this run,
   # so a re-run whose artifact is gone fails at download-artifact.
   boot-test:
-    needs: build
+    needs: [build, build-a]
+    if: always() && needs.build.result == 'success' || always() && needs.build-a.result == 'success'
     uses: ./.github/workflows/boot-test.yml
     with:
       iso-artifact: iso-${{ github.run_id }}
@@ -225,7 +434,9 @@ jobs:
   attestation:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    needs: [build, static-rebuild, boot-test]
+    needs: [build, build-a, compare, static-rebuild, boot-test]
+    # The iteration path needs its build; the gate path needs compare, which needs both builds.
+    if: always() && needs.build.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success' || always() && needs.compare.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success'
     permissions:
       contents: read
       packages: read

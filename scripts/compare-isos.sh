@@ -22,6 +22,10 @@ fi
 
 echo "compare-isos: the ISOs differ" >&2
 if command -v diffoscope >/dev/null 2>&1; then
-	diffoscope "$1" "$2" || true
+	if [ -n "${DIFFOSCOPE_HTML:-}" ]; then
+		diffoscope --text - --html "$DIFFOSCOPE_HTML" "$1" "$2" || true
+	else
+		diffoscope "$1" "$2" || true
+	fi
 fi
 exit 1
