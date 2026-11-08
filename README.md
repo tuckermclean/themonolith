@@ -22,7 +22,7 @@ Licensed under the [MIT License](LICENSE).
 |---|---|
 | [`SPEC.md`](SPEC.md) | The authority: product and constraints, principles, doctrines, architecture, the standard-mechanism table (§5), pins, oracle, release, open decisions |
 | [`docs/first-release.md`](docs/first-release.md) | The plan: a working ISO for iteration first, then the first release; surviving assets, owner actions, order of work, measured timings |
-| [`docs/graph.yaml`](docs/graph.yaml) | 22 nodes, their dependencies and three milestones |
+| [`docs/graph.yaml`](docs/graph.yaml) | 23 nodes, their dependencies and three milestones |
 | [`nodes/`](nodes/) | One spec per node, each with its acceptance criteria |
 | [`AGENTS.md`](AGENTS.md), [`CLAUDE.md`](CLAUDE.md) | Working notes for agents: layout, constraints, spec editing, what not to touch |
 | [`docs/study/`](docs/study/) | The frozen study of the predecessor at `b9f533b`: inventory, recipes, oracle, doctrines and traps |

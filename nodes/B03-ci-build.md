@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | B01, B02, R01, O01, O02, S01 | G01, P02, R03, R05 | MS1 | M |
+| critical | B01, B02, R01, O01, O02, S01 | G01, O03, P02, R03, R05 | MS1 | M |
 
 **Owns:** `.github/workflows/build.yml`, `scripts/tests/build-workflow.test.sh`, the three ported tests, and the `INSTALL_MASK` line of `configs/portage/make.conf` (change 12; the rest of the file is B01's).
 **Ports from linux-live-iso-factory@b9f533b:** first the tests `scripts/tests/pcf-fontname.test.sh`, `verify-rootfs-net-wiring.sh` and `verify-router-wiring.sh`; then `.github/workflows/build.yml` (jobs `changes`, `build-image`, `build`, `boot-test`, `attestation`), `scripts/build-rootfs.sh`, `scripts/build-initrd.sh`, `scripts/build-iso.sh` and what they read: `scripts/pcf-fontname.py`, `rootfs/init`, `rootfs/usr/share/udhcpc/default.script`, `configs/initrd-modules.txt`, `configs/bootbg.png`, `configs/themonolith.ans`; the `Makefile` targets `build-rootfs`, `iso`, `all`, `attestation`. The three scripts are carried byte for byte except change 8.

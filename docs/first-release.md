@@ -133,17 +133,18 @@ MS1 comes first. Twelve nodes lead to it, and the longest chain has six:
 F01 ─▶ I01 ─▶ I02 ─▶ B01 ─▶ B02 ─▶ B03          MS1: working ISO for iteration
 ```
 
-Then three nodes run side by side after MS1, and R02 beside them; all are mandatory before the first
+Then four nodes run side by side after MS1, and R02 beside them; all are mandatory before the first
 release:
 
 ```text
 B03 ─▶ P02 (two builds, equal SHA-256) ──────────┐
 B03 ─▶ R05 (rl144 and stele, offline) ───────────┤
 B03 ─▶ G01 (persistence, boot entries, smoke) ───┼─▶ P01   MS2: first release
+B03 ─▶ O03 (the uefi failure of #46) ────────────┤
 R04 ─▶ R02 (pkgcheck over the overlay) ──────────┘
 ```
 
-Seventeen nodes are on the critical path to MS2. P02 is the gate and P01 attests and publishes.
+Eighteen nodes are on the critical path to MS2. P02 is the gate and P01 attests and publishes.
 
 Once F01 lands, the rest run beside that chain:
 
@@ -152,7 +153,7 @@ Once F01 lands, the rest run beside that chain:
 | Inputs | I01, then I02 and I03 | GHCR, gentoo-mirror | B01 |
 | Recipes | R04 (revbump check), R01 (`monolith-base` with its tests, advisory URL) | their own tests | B01 |
 | Kernel | B02 (kernel savedconfig and bugs), after B01 ports the kernel as it is | B01's build | B03 |
-| After MS1 | P02 (reproducibility gate), R05 (Rust crates as distfiles), G01 (README promises: persistence, boot entries, smoke) | MS1's build | P01 |
+| After MS1 | P02 (reproducibility gate), R05 (Rust crates as distfiles), G01 (README promises: persistence, boot entries, smoke), O03 (the intermittent `uefi` failure, #46) | MS1's build | P01 |
 | Overlay QA | R02 (`pkgcheck`, after I02 and R04) | the pinned tree | P01 |
 | Oracle | O01 (17 modes), O02 (artifact checks) | the rc1 ISO and squashfs | B03 |
 | Supply chain | S01 (SBOM and gates; must reproduce rc1's SBOM) | rc1's rootfs and SBOM | B03 |
