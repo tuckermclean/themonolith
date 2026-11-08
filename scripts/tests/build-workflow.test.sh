@@ -554,11 +554,36 @@ def on_of(wf):
 
 def mech_paths():
     push = (on_of(need_build()).get("push") or {})
-    want = ["configs/portage/world", "configs/portage/versions.lock", "configs/overlay/**", "scripts/**",
+    want = ["configs/portage/**", "configs/overlay/**", "scripts/**",
             "rootfs/**", "Dockerfile", "Makefile"]
     got = push.get("paths")
     return (isinstance(got, list) and sorted(got) == sorted(want) and len(got) == len(want),
             "on.push.paths is %r" % (got,))
+
+
+def glob_re(g):
+    out = ""
+    i = 0
+    while i < len(g):
+        if g.startswith("**", i):
+            out += ".*"
+            i += 2
+        elif g[i] == "*":
+            out += "[^/]*"
+            i += 1
+        else:
+            out += re.escape(g[i])
+            i += 1
+    return re.compile("^" + out + "$")
+
+
+def mech_cache_tag_paths():
+    got = (on_of(need_build()).get("push") or {}).get("paths")
+    if not isinstance(got, list):
+        return (False, "on.push.paths is %r" % (got,))
+    miss = [f for f in ("configs/portage/make.conf", "configs/portage/package.use")
+            if not any(glob_re(str(g)).match(f) for g in got)]
+    return (not miss, "on.push.paths %r does not match: %s" % (got, ", ".join(miss)))
 
 
 def mech_changes_job():
@@ -579,7 +604,8 @@ def mech_no_contains():
     return ("contains(" not in t, "build.yml uses contains(")
 
 
-case("Standard mechanism: build.yml on.push.paths lists exactly the seven build inputs", mech_paths)
+case("Standard mechanism: build.yml on.push.paths lists exactly the six build inputs", mech_paths)
+case("Standard mechanism: on.push.paths cover configs/portage/make.conf and package.use (supports B03-AC-7, cache-tag inputs start a main build)", mech_cache_tag_paths)
 case("Standard mechanism: the changes job runs make changes", mech_changes_job)
 case("Standard mechanism: build.yml does not use dorny/paths-filter", mech_no_filter_action)
 case("Standard mechanism: build.yml has no contains( expression", mech_no_contains)
