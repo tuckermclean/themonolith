@@ -482,19 +482,6 @@ rsync -a \
     --exclude='/lib/libssp_nonshared.a' \
     "${SYSROOT}/" "${SYSROOT_DIR}/"
 
-# Fix the musl dynamic linker. The crossdev sysroot installs it as a symlink
-# pointing to an absolute crossdev path (/usr/i486-linux-musl/usr/lib/libc.so)
-# which is dangling on the live system. Replace with the actual binary.
-echo "==> Installing musl dynamic linker..."
-MUSL_LIBC="${SYSROOT}/usr/lib/libc.so"
-if [ -f "${MUSL_LIBC}" ]; then
-    rm -f "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
-    cp "${MUSL_LIBC}" "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
-else
-    echo "WARNING: musl libc not found at ${MUSL_LIBC}"
-    echo "  Dynamically-linked binaries will fail to execute at runtime!"
-fi
-
 # Decompress bzip2-compressed man pages.
 # Gentoo installs man pages as .bz2; mandoc is built without libbz2 support.
 echo "==> Decompressing bzip2 man pages..."
