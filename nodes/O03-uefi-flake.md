@@ -5,6 +5,7 @@
 | critical | B03 | P01 | — | M |
 
 **Owns:** `docs/evidence/uefi-flake.md` (the diagnosis record and the boot tally), the failure evidence of change 1 in `scripts/boot-test.py` (O01 owns the rest of the file), the runner CPU lines `make test-boot` adds to `output/tool-versions.txt` (change 2), `.github/workflows/boot-test-repeat.yml` (change 3), `scripts/tests/boot-test-evidence.test.sh`, and the fix the diagnosis record names (change 4).
+**Resolves:** #46
 **Ports from linux-live-iso-factory@b9f533b:** none (the predecessor's harness records no evidence of a failing check beyond its output, and it never saw this failure).
 **Study refs:** issue #46; D-state-and-no-hidden-stderr; T-boot-test-wrong-cause-clock; T-perl-cross-static-musl; O01-AC-1 (launch-retry rule).
 
