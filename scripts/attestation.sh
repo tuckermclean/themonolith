@@ -65,6 +65,7 @@ POLICY_FILE="/configs/attestation/license-policy.yaml"
 CVE_POLICY_FILE="/configs/attestation/cve-policy.yaml"
 UNOWNED_ALLOWLIST_FILE="/configs/attestation/unowned-allowlist.yaml"
 BOOTSTRAP_EXCEPTIONS_FILE=""
+PACKAGE_TREE=""
 INCLUDE_BUILDER=1
 BUILDER_DIGEST=""
 
@@ -98,6 +99,7 @@ Optional:
                        Fallback: config/license-policy.yaml (relative to cwd)
   --cve-policy PATH    CVE gate policy YAML [default: /configs/attestation/cve-policy.yaml]
                        Fallback: config/cve-policy.yaml (relative to cwd)
+  --package-tree DIR   output/sysroot of the build: the unowned gate also runs --provenance against it
   --include-builder    Pillar 5: attest the builder image (SBOM + CVE scan of dir:/)
   --builder-digest ID  Builder image digest to record (make passes BUILDER_DIGEST)
   --help               Show this help
@@ -116,6 +118,7 @@ while [[ $# -gt 0 ]]; do
         --cve-policy)         CVE_POLICY_FILE="$2";        shift 2 ;;
         --unowned-allowlist)  UNOWNED_ALLOWLIST_FILE="$2"; shift 2 ;;
         --bootstrap-exceptions) BOOTSTRAP_EXCEPTIONS_FILE="$2"; shift 2 ;;
+        --package-tree)       PACKAGE_TREE="$2";           shift 2 ;;
         --include-builder)    INCLUDE_BUILDER=1;           shift ;;
         --builder-digest)     BUILDER_DIGEST="$2";         shift 2 ;;
         --help)         usage; exit 0 ;;
@@ -437,6 +440,7 @@ if [[ -f "${SYFT_JSON_FILE}" ]]; then
     )
     UNOWNED_ARGS+=(--allowlist "${UNOWNED_ALLOWLIST_FILE}")
     [[ -z "${BOOTSTRAP_EXCEPTIONS_FILE}" ]] || UNOWNED_ARGS+=(--bootstrap-exceptions "${BOOTSTRAP_EXCEPTIONS_FILE}")
+    [[ -z "${PACKAGE_TREE}" ]] || UNOWNED_ARGS+=(--provenance --package-tree "${PACKAGE_TREE}")
     python3 "${UNOWNED_SCRIPT}" "${UNOWNED_ARGS[@]}" || UNOWNED_RC=$?
 else
     fail "Syft native JSON not found at ${SYFT_JSON_FILE} — unowned files check cannot run"

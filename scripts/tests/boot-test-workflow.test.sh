@@ -162,7 +162,7 @@ for m in $MODES; do echo "$out" | grep -qw -- "$m" || missing="$missing $m"; don
 sha_line=$(echo "$out" | grep -n 'sha256' | head -1 | cut -d: -f1)
 boot_line=$(echo "$out" | grep -n 'boot-test\.py' | head -1 | cut -d: -f1)
 if [ -n "$sha_line" ] && [ -n "$boot_line" ] && [ "$sha_line" -lt "$boot_line" ]; then pass "O01-AC-7 default ISO is sha256-checked before the first boot"; else fail "O01-AC-7 default ISO is sha256-checked before the first boot"; fi
-echo "$out" | grep -q 'a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a' && pass "O01-AC-7 default sha256 is rc1's" || fail "O01-AC-7 default sha256 is rc1's"
+echo "$out" | grep -q 'a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a' && pass "O01-AC-7 the rc1 digest stays in the vga XFAIL recipe" || fail "O01-AC-7 the rc1 digest stays in the vga XFAIL recipe"
 out=$(mk -nB test-boot MODE=bios)
 others=""
 for m in uefi toram ahci nvme virtio nicless stele-acid2 fbdev-modprobe clock-epoch clock-1996 persist; do echo "$out" | grep -qw -- "$m" && others="$others $m"; done

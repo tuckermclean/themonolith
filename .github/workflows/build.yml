@@ -1,0 +1,287 @@
+name: Build
+
+# NOTE on tag pushes: this workflow triggers DIRECTLY on `push: tags:
+# ['v*.*.*']` and produces the release build + SLSA attestation itself. It
+# MUST be the OIDC entry point for a release: GitHub's attestation store binds
+# the Sigstore certificate to the *entry* workflow, so when this build ran as a
+# `workflow_call` reusable library under release.yml, `actions/attest` failed
+# to persist with "Invalid Argument - values do not match: build.yml !=
+# release.yml" (the cert's SAN was build.yml, but the persist API validated the
+# caller, release.yml). Signing only succeeds when the workflow that runs the
+# job is also the workflow that triggered it — i.e. build.yml on its own tag.
+#
+# There is still exactly ONE build per release and ONE definition of
+# build+attest (this file). release.yml no longer calls this workflow; it fires
+# AFTER this build completes, via `workflow_run`, and does publish-only work
+# (download the already-attested ISO, verify the digest chain, cut the
+# GitHub Release). See release.yml's header and docs/releasing.md.
+on:
+  push:
+    branches: [main]
+    # Only a change to a build input starts a push build (GitHub does not apply paths to tag pushes).
+    paths:
+      - configs/portage/**
+      - configs/overlay/**
+      - scripts/**
+      - rootfs/**
+      - Dockerfile
+      - Makefile
+    tags: ['v*.*.*']
+  # Full build as a PR check, but ONLY when the PR carries the 'full-ci' label
+  # (gated in the `changes` job below). This keeps the expensive Gentoo build
+  # off every push while still letting a maintainer demand end-to-end proof on
+  # a PR. `labeled` fires the run when the label is added; `synchronize` re-runs
+  # it on subsequent pushes to an already-labeled PR.
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+
+# Cancel a superseded run for the SAME pull request when a new commit is pushed,
+# so rapid pushes to a 'full-ci'-labeled PR don't stack expensive builds. Non-PR
+# events (push to main, tag pushes, schedule, and workflow_dispatch) get a
+# unique per-run group, so they never cancel one another.
+concurrency:
+  group: >-
+    build-${{ github.event_name == 'pull_request'
+      && format('pr-{0}', github.event.pull_request.number)
+      || github.run_id }}
+  cancel-in-progress: true
+
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # On pull_request the (expensive) build chain runs only when the PR is labeled 'full-ci' (scripts/full-ci-label.sh);
+    # a branch push is filtered by on.push.paths. A false output skips
+    # build, static-rebuild, boot-test and attestation through their `needs:`.
+    outputs:
+      build: ${{ steps.filter.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: make changes
+
+  # Builds the packages, the root filesystem, the initramfs and the ISO from the pinned builder image and tree.
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    needs: changes
+    permissions:
+      contents: read
+      # write: this job pushes the binary package cache to GHCR (make cache-push).
+      packages: write
+    if: needs.changes.outputs.build == 'true'
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set build version
+        run: make build-version
+
+      # The builder is pulled by its digest (Makefile BUILDER_DIGEST); its manifest is kept with the run.
+      - name: Pull the builder image
+        run: make pull-image
+
+      - name: Record the builder image
+        run: make builder-manifest
+
+      - name: Upload the builder manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: builder-manifest-${{ github.run_id }}
+          path: output/builder-manifest.txt
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Sync the pinned portage tree
+        run: make sync-portage
+
+      # Tag builds are clean-room: the ref policy of the store skips the pull on a tag, and MONOLITH_USEPKG=n
+      # builds every package from source, so no cached binary package can enter the ISO.
+      - name: Pull the binary package cache
+        run: make cache-pull
+
+      - name: Build packages (from the cache)
+        if: github.ref_type != 'tag'
+        env:
+          JOBS: 2
+          LOAD_AVG: 2
+          MONOLITH_USEPKG: 'y'
+        run: make build-packages
+
+      - name: Build packages (from source)
+        if: github.ref_type == 'tag'
+        env:
+          JOBS: 2
+          LOAD_AVG: 2
+          MONOLITH_USEPKG: 'n'
+        run: make build-packages
+
+      # scripts/build-packages.sh copies each failed package's build.log to output/logs.
+      - name: Upload package build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-build-logs-${{ github.run_id }}
+          path: output/logs/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Check the kernel modules in the sysroot
+        run: make verify-kernel-modules
+
+      # Best-effort: the cache is an accelerator, so a failed push does not fail a good build.
+      - name: Take ownership of the binary packages
+        if: always()
+        continue-on-error: true
+        run: make take-packages
+
+      - name: Save the binary package cache
+        if: always()
+        continue-on-error: true
+        run: make cache-push
+
+      - name: Pack the sysroot
+        run: make sysroot-pack
+
+      - name: Build the root filesystem and the initramfs
+        run: make build-rootfs
+
+      - name: Build the ISO
+        run: make iso
+
+      - name: Copy the ISO to the name of its artifact
+        run: make iso-stage
+
+      - name: Upload the squashfs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: squashfs-${{ github.run_id }}
+          path: output/themonolith-${{ env.BUILD_VERSION }}.squashfs
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload the ISO
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: iso-${{ github.run_id }}
+          path: output/iso/boot-test.iso
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload the sysroot
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sysroot-${{ github.run_id }}
+          path: output/sysroot.tar
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  # B01-AC-16: a revbump or package.use change rebuilds a cached static consumer, in the pinned builder.
+  static-rebuild:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs: changes
+    permissions:
+      contents: read
+      # read: make test-static-rebuild logs in to GHCR to pull the pinned portage tree (make sync-portage).
+      packages: read
+    if: needs.changes.outputs.build == 'true'
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test the static rebuild
+        run: make test-static-rebuild
+
+  # Boots the ISO of this run in every mode but stele-acid2 (Stele is out of world until R05); see
+  # .github/workflows/boot-test.yml and scripts/boot-test.py. The ISO comes from the artifact of this run,
+  # so a re-run whose artifact is gone fails at download-artifact.
+  boot-test:
+    needs: build
+    uses: ./.github/workflows/boot-test.yml
+    with:
+      iso-artifact: iso-${{ github.run_id }}
+      modes: bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui clock-epoch clock-1996 persist
+
+  # The O02 artifact checks and the S01 gates on the same ISO. The signing step (P01) and any publishing step
+  # are added to this job, after these, and need the same jobs.
+  attestation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs: [build, static-rebuild, boot-test]
+    permissions:
+      contents: read
+      packages: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set build version
+        run: make build-version
+
+      - name: Download the ISO
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: iso-${{ github.run_id }}
+          path: output/iso
+
+      - name: Download the sysroot
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sysroot-${{ github.run_id }}
+          path: output
+
+      - name: Unpack the sysroot
+        run: make sysroot-unpack
+
+      - name: Test the artifact checks on the ISO
+        env:
+          ISO: output/iso/boot-test.iso
+        run: make test-artifact
+
+      - name: Test the gates on the ISO (CVE verdict reported, not gating)
+        if: github.ref_type != 'tag'
+        env:
+          ISO: output/iso/boot-test.iso
+          BUILD_TAG: ${{ env.BUILD_VERSION }}
+          PACKAGE_TREE: output/sysroot
+          CVE_REPORT_ONLY: "1"
+        run: make test-gates
+
+      - name: Test the gates on the ISO
+        if: github.ref_type == 'tag'
+        env:
+          ISO: output/iso/boot-test.iso
+          BUILD_TAG: ${{ env.BUILD_VERSION }}
+          PACKAGE_TREE: output/sysroot
+        run: make test-gates
+
+      - name: Upload the attestation reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: attestation-${{ github.run_id }}
+          path: |
+            output/attestation/
+            output/reports/static-audit.txt
+          retention-days: 14
+          if-no-files-found: warn

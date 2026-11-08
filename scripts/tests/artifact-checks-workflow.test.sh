@@ -31,8 +31,14 @@ ck "O02-AC-8 (review 1, ruling 11) exported ROOTFS_DIR=/rootfs-build and OUTPUT_
 	sh -c 'grep -q "static-audit\\.sh" "$1" && ! grep -Eq "(^|[^A-Za-z0-9_.-])/(rootfs-build|output)([^A-Za-z0-9_-]|\$)" "$1"' _ "$tmp/env.out"
 ck "O02-AC-8 test-artifact runs static-audit.sh through toolbox/run" grep -Eq 'toolbox/run.*static-audit\.sh' "$tmp/def.out"
 ck "O02-AC-8 test-artifact extracts the squashfs of the ISO" grep -Eq 'rootfs\.squashfs|unsquashfs' "$tmp/def.out"
-ck "O02-AC-8 test-artifact with the default ISO runs fetch-iso first (curl/sha256 recipe precedes the audit)" \
-	sh -c 'awk "/curl -fsSL/ {c=NR} /static-audit\\.sh/ && !a {a=NR} END {exit !(c && a && c < a)}" "$1"' _ "$tmp/def.out"
+# B03 change 10 (owner-approved replacement of the case that stood here): the default ISO is the one `make iso` builds;
+# setting ISO_URL and ISO_SHA256 is the rc1 lane, which fetches.
+ck "B03-AC-6 O02-AC-8 test-artifact with the default ISO runs make iso's recipe (build-iso.sh) before the audit" \
+	sh -c 'awk "/build-iso\\.sh/ && !b {b=NR} /static-audit\\.sh/ && !a {a=NR} END {exit !(b && a && b < a)}" "$1"' _ "$tmp/def.out"
+(cd "$ROOT" && make -n test-artifact ISO_URL=https://example.invalid/lane.iso \
+	ISO_SHA256=0000000000000000000000000000000000000000000000000000000000000001) >"$tmp/lane.out" 2>&1
+ck "B03-AC-6 O02-AC-8 test-artifact with ISO_URL and ISO_SHA256 set runs the curl and sha256 fetch before the audit" \
+	sh -c 'awk "/curl -fsSL/ && /sha256sum/ && /0000000000000000000000000000000000000000000000000000000000000001/ && !c {c=NR} /static-audit\\.sh/ && !a {a=NR} END {exit !(c && a && c < a)}" "$1"' _ "$tmp/lane.out"
 ck "O02-AC-8 test-artifact with an explicit ISO does not fetch" sh -c '! grep -q "curl -fsSL" "$1" && grep -q "static-audit\\.sh" "$1"' _ "$tmp/own.out"
 ck "O02-AC-8 recipe computes the ISO sha256 and compares it with RC1_SHA256 ($RC1)" \
 	sh -c 'grep -q sha256sum "$1" && grep -q "$2" "$1"' _ "$tmp/def.out" "$RC1"

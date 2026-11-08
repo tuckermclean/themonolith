@@ -1,5 +1,5 @@
 #!/bin/sh
-# gates-verdict.sh [--rc1] <attestation-dir>
+# gates-verdict.sh [--rc1 | --cve-report-only] <attestation-dir>
 #
 # Reads the attestation summary and the CVE coverage report that attestation.sh wrote and decides
 # whether the gates passed.
@@ -7,16 +7,19 @@
 #   with --rc1:    exit 0 iff the licence and unowned gates passed and the coverage report records a
 #                  non-empty db.built; the CVE gate's own verdict is reported, not gating (rc1's tree
 #                  carries CVEs the owner waives after this run lists them).
-# Both modes print the raw grype match count ("raw matches: N") and the CVE gating findings (CVE id, component, severity) and, when GITHUB_STEP_SUMMARY
+#   with --cve-report-only: the same as --rc1 (licence, unowned and db.built decide; the CVE verdict is
+#                  reported, not gating) and, in this mode only, sbom_check "fail" is a failure ("sbom gate: fail");
+#                  a summary without sbom_check passes. CI uses it off tag builds; a tag build runs without it.
+# All modes print the raw grype match count ("raw matches: N") and the CVE gating findings (CVE id, component, severity) and, when GITHUB_STEP_SUMMARY
 # is set, append them to that file as a Markdown table.
 # A missing or unparseable attestation-summary.json, or a missing cve-report-coverage.json, exits 1
 # and names the file.
 set -u
 
 rc1=0
-if [ "${1:-}" = "--rc1" ]; then rc1=1; shift; fi
+case "${1:-}" in --rc1) rc1=1; shift ;; --cve-report-only) rc1=2; shift ;; esac
 if [ $# -ne 1 ]; then
-    echo "usage: gates-verdict.sh [--rc1] <attestation-dir>" >&2
+    echo "usage: gates-verdict.sh [--rc1 | --cve-report-only] <attestation-dir>" >&2
     exit 2
 fi
 dir=$1
@@ -28,7 +31,8 @@ cov="$dir/cve-report-coverage.json"
 python3 -I - "$sum" "$cov" "$rc1" "${GITHUB_STEP_SUMMARY:-}" <<'PY'
 import json, sys
 
-sum_path, cov_path, rc1, step = sys.argv[1], sys.argv[2], sys.argv[3] == "1", sys.argv[4]
+sum_path, cov_path, rc1, step = sys.argv[1], sys.argv[2], sys.argv[3] != "0", sys.argv[4]
+cve_only = sys.argv[3] == "2"
 
 def load(path):
     try:
@@ -77,6 +81,8 @@ if rc1:
         bad.append("unowned gate: %s" % summary.get("unowned_check"))
     if not built:
         bad.append("%s has no db.built" % cov_path)
+    if cve_only and summary.get("sbom_check") == "fail":
+        bad.append("sbom gate: fail")
 else:
     bad = [] if summary.get("overall") == "pass" else ["overall: %s" % summary.get("overall")]
 for b in bad:

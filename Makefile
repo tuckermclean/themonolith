@@ -3,9 +3,9 @@ SHELL_EXTRA ?=
 # SPEC principle 3: the one place the image registry is named.
 REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
-.PHONY: toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
+.DEFAULT_GOAL := test
 
-test: test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -25,15 +25,37 @@ BASE ?= $(shell git merge-base HEAD $$(git rev-parse --verify -q origin/main >/d
 test-revbump:
 	toolbox/run --network none -- sh -c 'echo "==> Revision bump check ($(BASE)..HEAD)"; git rev-parse --verify -q "$(BASE)^{commit}" >/dev/null || { echo "test-revbump: BASE \"$(BASE)\" is not a commit"; exit 1; }; s=$$(mktemp); if [ -n "$$(git ls-tree "$(BASE)" -- scripts/check-revbump.sh)" ]; then git show "$(BASE):scripts/check-revbump.sh" >"$$s" || { rm -f "$$s"; exit 1; }; else echo "note: $(BASE) has no scripts/check-revbump.sh; using the working-tree copy"; cp scripts/check-revbump.sh "$$s" || { rm -f "$$s"; exit 1; }; fi; sh "$$s" "$(BASE)" HEAD; rc=$$?; rm -f "$$s"; exit $$rc'
 
+# ---- B03: the build version ----
+
+# BUILD_EPOCH is the version label until M01. CI builds are BUILD_EPOCH-<short sha>, a tag build is the tag without its v.
+# Every job of one run computes the same value; BUILD_VERSION= overrides it.
+BUILD_EPOCH := $(shell grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
+BUILD_VERSION ?= $(if $(filter refs/tags/v%,$(GITHUB_REF)),$(patsubst refs/tags/v%,%,$(GITHUB_REF)),$(if $(GITHUB_SHA),$(BUILD_EPOCH)-$(shell printf %.7s '$(GITHUB_SHA)'),$(BUILD_EPOCH)))
+VERSION_ENV := -e BUILD_VERSION=$(BUILD_VERSION)
+
+# Writes BUILD_VERSION to $GITHUB_ENV, for the later steps of a job.
+build-version:
+	@echo "BUILD_VERSION=$(BUILD_VERSION)" >> "$${GITHUB_ENV:-/dev/stdout}"
+
 # ---- O01: boot tests (the 17 modes of scripts/boot-test.py) and manual boots ----
 
-# Until B03 builds an ISO, the default ISO is v0.1.0-rc1's, fetched by URL and checked against its sha256.
-ISO_URL ?= https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
+# The default ISO is the one `make iso` builds. Setting ISO_URL and ISO_SHA256 (or ISO=) is the rc1 lane:
+# the ISO at ISO_URL is fetched and checked against its sha256 first.
+ISO_URL ?=
 RC1_SHA256 ?= a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
-ISO_SHA256 ?= $(RC1_SHA256)
+ISO_SHA256 ?=
 EXPECTED_KERNEL ?= 6.12.80-i486-monolith
-DEFAULT_ISO := output/themonolith-0.1.0-rc1.iso
+BUILT_ISO := output/themonolith-$(BUILD_VERSION).iso
+DEFAULT_ISO := $(if $(ISO_URL),output/themonolith-0.1.0-rc1.iso,$(BUILT_ISO))
+# What an ISO left at its default needs first: the fetch in the rc1 lane, else `make iso`.
+default_iso_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),fetch-iso,iso))
 ISO ?= $(DEFAULT_ISO)
+# make test builds the ISO it tests: in the default lane (no ISO_URL, ISO left at its default) the all chain
+# (packages, their kernel-module check, then rootfs; iso follows as the default ISO's prerequisite) runs before the first boot test.
+# The rc1 lane builds nothing. Prerequisites run left to right, so this sits ahead of test-boot.
+test_build_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),,sync-portage build-packages verify-kernel-modules build-rootfs))
+test: test-lint test-unit test-revbump test-overlay $(test_build_dep) test-boot test-artifact test-gates test-cve-canary test-static-rebuild
+
 # Where fetch-iso writes the verified ISO.
 ISO_OUT ?= $(DEFAULT_ISO)
 ISO_ARTIFACT ?=
@@ -94,8 +116,8 @@ boot_runs = \
 vga_xfail = $(if $(filter vga,$(BOOT_WANT)),if [ "$$(cat output/boot-iso.sha256)" = '$(RC1_SHA256)' ]; then if grep -qx vga output/boot-failed; then grep -vx vga output/boot-failed > output/boot-failed.new || true; mv output/boot-failed.new output/boot-failed; echo 'XFAIL: vga (rc1 predates the legacy fbdev Tier-2 drivers; no cirrusfb on the disc)'; else echo 'vga passed but is expected to fail on rc1: stale expectation' >&2; echo vga >> output/boot-failed; fi; fi,:)
 
 # Boots ISO in the selected modes, keeping going past a failed boot and then listing the failed modes, with QEMU under TCG (-cpu 486, no KVM), in the toolbox. When ISO is left
-# at its default, that ISO is fetched and checked first. Records the QEMU and OVMF versions.
-test-boot: $(if $(filter $(ISO),$(DEFAULT_ISO)),fetch-iso)
+# at its default, that ISO is built first (make iso), or in the rc1 lane (ISO_URL set) fetched and checked. Records the QEMU and OVMF versions.
+test-boot: $(default_iso_dep)
 	@echo "==> Boot tests: $(if $(BOOT_WANT),$(BOOT_WANT),none of the requested modes)"
 	mkdir -p output
 	rm -f output/boot-failed
@@ -117,14 +139,14 @@ iso-artifact-name:
 
 # Manual boots (not tests): serial console, Ctrl+A X to exit.
 run-bios:
-	@test -f '$(ISO)' || { echo "Error: $(ISO) not found. Run 'make fetch-iso' or pass ISO=<path>."; exit 1; }
+	@test -f '$(ISO)' || { echo "Error: $(ISO) not found. Run 'make iso' or pass ISO=<path>."; exit 1; }
 	@echo "==> Booting $(ISO) in QEMU via BIOS (Ctrl+A X to exit)"
 	qemu-system-i386 -cdrom '$(ISO)' -m 64M -cpu 486 -nographic -serial mon:stdio
 
 # OVMF is 64-bit firmware; GRUB hands off to the 32-bit kernel via EFI Handover.
 # 512M minimum: UEFI firmware and the GRUB EFI heap need well over 64MB.
 run-uefi:
-	@test -f '$(ISO)' || { echo "Error: $(ISO) not found. Run 'make fetch-iso' or pass ISO=<path>."; exit 1; }
+	@test -f '$(ISO)' || { echo "Error: $(ISO) not found. Run 'make iso' or pass ISO=<path>."; exit 1; }
 	@test -n '$(OVMF_CODE)' || { echo "Error: OVMF firmware not found. Install ovmf/edk2-ovmf, or set OVMF_CODE=/path/to/OVMF_CODE.fd"; exit 1; }
 	@echo "==> Booting $(ISO) in QEMU via UEFI (OVMF: $(OVMF_CODE)), Ctrl+A X to exit"
 	qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) -cdrom '$(ISO)' -m 512M -nographic -serial mon:stdio
@@ -137,7 +159,7 @@ ARTIFACT_ALLOWLIST := configs/attestation/dynamic-allowlist.txt
 ARTIFACT_EXPECTED := configs/attestation/rc1-static-audit.expected
 
 # Extracts /rootfs.squashfs of ISO into ARTIFACT_ROOTFS (xorriso, then unsquashfs without xattrs; both run unprivileged in the toolbox).
-rootfs: $(if $(filter $(ISO),$(DEFAULT_ISO)),fetch-iso)
+rootfs: $(default_iso_dep)
 	toolbox/run --network none -- sh -c 'set -eu; rm -rf "$(ARTIFACT_ROOTFS)" "$(ARTIFACT_OUT)/rootfs.squashfs"; mkdir -p "$(ARTIFACT_OUT)"; xorriso -osirrox on -indev "$(ISO)" -extract /rootfs.squashfs "$(ARTIFACT_OUT)/rootfs.squashfs"; unsquashfs -no-xattrs -d "$(ARTIFACT_ROOTFS)" "$(ARTIFACT_OUT)/rootfs.squashfs" > /dev/null'
 
 # Audits the rootfs of ISO for dynamic binaries, foreign machines, plugins, Python and the freetype chain. For rc1's ISO
@@ -271,6 +293,8 @@ RC1_SBOM := output/rc1-bom.cdx.json
 SBOM_DIFF_LIST := configs/attestation/rc1-sbom-diff.txt
 GRYPE_CACHE := output/grype-cache
 ATTEST_OUT := output/attestation
+# The build's sysroot (output/sysroot): when set, the unowned gate also checks the rootfs provenance against it (B01 change 12).
+PACKAGE_TREE ?=
 # The tag the SBOM records: ISO's file name without themonolith- and .iso.
 BUILD_TAG ?= $(patsubst themonolith-%.iso,%,$(notdir $(ISO)))
 
@@ -281,14 +305,14 @@ ATTEST_RUN = $(DOCKER) run --rm \
 	-v $(CURDIR)/output:/output -v $(CURDIR)/$(GRYPE_CACHE):/root/.cache/grype \
 	-e GITHUB_SERVER_URL -e GITHUB_REPOSITORY -e GITHUB_REF -e GITHUB_SHA -e GITHUB_RUN_ID -e BUILD_EPOCH \
 	$(IMAGE_NAME)
-ATTEST_ARGS = --sysroot /output/rootfs --iso /output/$(notdir $(ISO)) --build-tag $(BUILD_TAG) \
+ATTEST_ARGS = --sysroot /output/rootfs --iso /output/$(patsubst output/%,%,$(ISO)) --build-tag $(BUILD_TAG) \
 	--builder-digest $(BUILDER_DIGEST) \
 	--overrides /configs/attestation/cpe-overrides.yaml \
 	--policy /configs/attestation/license-policy.yaml \
 	--cve-policy /configs/attestation/cve-policy.yaml \
 	--unowned-allowlist /configs/attestation/unowned-allowlist.yaml \
 	--bootstrap-exceptions /configs/attestation/bootstrap-exceptions.txt \
-	--output-dir /output/attestation
+	--output-dir /output/attestation $(if $(PACKAGE_TREE),--package-tree /$(PACKAGE_TREE))
 
 # Downloads RC1_SBOM_URL to $(RC1_SBOM) and checks its sha256; a mismatch deletes it and fails.
 fetch_rc1_sbom = toolbox/run -- sh -c 'set -eu; f="$(RC1_SBOM)"; mkdir -p "$$(dirname "$$f")"; if [ -f "$$f" ] && echo "$(RC1_SBOM_SHA256)  $$f" | sha256sum -c --quiet -; then echo "==> $$f matches sha256 $(RC1_SBOM_SHA256)"; exit 0; fi; curl -fsSL --retry 3 -o "$$f.part" "$(RC1_SBOM_URL)"; echo "$(RC1_SBOM_SHA256)  $$f.part" | sha256sum -c - || { rm -f "$$f.part" "$$f"; echo "sha256 mismatch for $(RC1_SBOM_URL)"; exit 1; }; mv "$$f.part" "$$f"'
@@ -325,6 +349,8 @@ attest-builder: rootfs pull-image grype-db-update
 # The gates on the rootfs of ISO. Any ISO: attestation.sh must exit 0. rc1's ISO (its sha256 is RC1_SHA256): the licence and
 # unowned gates must pass and the CVE coverage report must record db.built; the CVE gating findings are printed (and added to
 # $GITHUB_STEP_SUMMARY), not gating; then the SBOM must equal rc1's outside SBOM_DIFF_LIST.
+# CVE_REPORT_ONLY=1 (CI sets it off tag builds): on any other ISO the CVE verdict is reported, not gating, like rc1's
+# (gates-verdict.sh --cve-report-only), and attestation.sh's own exit status is not demanded. A tag build leaves it unset.
 test-gates: rootfs pull-image grype-db-update
 	rm -rf $(ATTEST_OUT)
 	mkdir -p $(ATTEST_OUT)
@@ -332,11 +358,11 @@ test-gates: rootfs pull-image grype-db-update
 	@rc1=0; [ "$$(cat output/gates-iso.sha256)" = '$(RC1_SHA256)' ] && rc1=1; \
 	$(ATTEST_RUN) /scripts/attestation.sh $(ATTEST_ARGS); arc=$$?; \
 	echo "==> attestation.sh exited $$arc"; \
-	flag=; [ $$rc1 = 1 ] && flag=--rc1; \
+	flag=; [ $$rc1 = 1 ] && flag=--rc1;$(if $(filter 1,$(CVE_REPORT_ONLY)), [ $$rc1 = 1 ] || flag=--cve-report-only;) \
 	toolbox/run --network none -e GITHUB_STEP_SUMMARY -- sh scripts/gates-verdict.sh $$flag $(ATTEST_OUT) || exit 1; \
 	[ -f $(ATTEST_OUT)/bom.cdx.json ] || { echo "test-gates: attestation.sh wrote no $(ATTEST_OUT)/bom.cdx.json"; exit 1; }; \
 	if [ $$rc1 = 1 ]; then $(fetch_rc1_sbom) || exit 1; $(sbom_diff) || exit 1; \
-	else [ $$arc -eq 0 ] || exit 1; fi; \
+	else $(if $(filter 1,$(CVE_REPORT_ONLY)),:,[ $$arc -eq 0 ] || exit 1); fi; \
 	echo "test-gates: PASS"
 
 # B01-AC-16: a revbump or package.use change rebuilds a cached static consumer, in the pinned builder, on the host.
@@ -416,6 +442,54 @@ build-packages-resume: pull-image ensure-volume
 extract: pull-image ensure-volume
 	@echo "==> Installing packages from binpkgs"
 	$(BUILD_RUN) /scripts/extract-packages.sh
+
+# ---- B03: the root filesystem, the initramfs and the ISO ----
+
+ROOTFS_RUN = $(DOCKER) run --rm -v $(CURDIR)/configs:/configs:ro -v $(CURDIR)/scripts:/scripts:ro \
+	-v $(CURDIR)/rootfs:/rootfs:ro -v $(CURDIR)/output:/work/output -e OUTPUT_DIR=/work/output $(VERSION_ENV) $(IMAGE_NAME)
+
+# Asserts the kernel modules the tier docs promise are in the sysroot of the package build.
+verify-kernel-modules:
+	toolbox/run --network none -- sh scripts/verify-kernel-modules.sh output/sysroot
+
+# The package build runs as root in the builder image: hand output/packages to the runner before cache-push writes to it.
+take-packages:
+	$(DOCKER) run --rm -v $(CURDIR)/output:/output $(IMAGE_NAME) chown -R $(shell id -u):$(shell id -g) /output/packages
+
+# output/sysroot as one tar (output/sysroot.tar), for the job that checks the rootfs provenance; an artifact would lose its symlinks.
+sysroot-pack:
+	$(DOCKER) run --rm -v $(CURDIR)/output:/output $(IMAGE_NAME) sh -c 'tar -C /output/sysroot -cf /output/sysroot.tar . && chmod a+r /output/sysroot.tar'
+
+# The reverse, into output/sysroot.
+sysroot-unpack:
+	mkdir -p output/sysroot
+	toolbox/run --network none -- tar --no-same-owner -C output/sysroot -xf output/sysroot.tar
+
+# Builds the squashfs and the initramfs from output/sysroot (make build-packages first).
+build-rootfs: pull-image ensure-dirs
+	@echo "==> Building root filesystem"
+	$(ROOTFS_RUN) /scripts/build-rootfs.sh
+	@echo "==> Building initramfs"
+	$(ROOTFS_RUN) /scripts/build-initrd.sh
+
+# Assembles the bootable ISO, output/themonolith-$(BUILD_VERSION).iso, from the squashfs, the initramfs and the kernel.
+iso: pull-image ensure-dirs
+	@echo "==> Creating bootable ISO"
+	$(ROOTFS_RUN) /scripts/build-iso.sh
+
+# Copies the built ISO to output/iso/boot-test.iso, the name the reusable boot-test workflow downloads.
+iso-stage:
+	mkdir -p output/iso
+	cp '$(BUILT_ISO)' output/iso/boot-test.iso
+
+# Everything: packages (and their kernel modules checked), root filesystem, ISO.
+all: sync-portage build-packages verify-kernel-modules build-rootfs iso
+
+# Writes build=true|false to $GITHUB_OUTPUT: whether this run builds (a pull request needs the full-ci label;
+# scripts/full-ci-label.sh). The branch-push path filter is the workflow's on.push.paths. It runs on the runner
+# itself: it reads the event file and needs jq, not git.
+changes:
+	sh scripts/full-ci-label.sh
 
 # Interactive BusyBox menuconfig; saves the result to configs/portage/savedconfig/sys-apps/busybox
 menuconfig-busybox: pull-image ensure-volume
