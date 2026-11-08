@@ -525,13 +525,15 @@ repro-build:
 	$(TREE_RUN) sh -c 'set -eu; $(tree_login); REGISTRY=$(REGISTRY) TREE_REF=$(TREE_REF) TREE_COMMIT=$(call ri,TREE_COMMIT) TREE_DIGEST=$(call ri,TREE_DIGEST) TREE_DIR=$(R_OUT)/repos/gentoo sh scripts/sync-portage.sh'
 	toolbox/run --network none -- sh scripts/unpack-distfiles.sh '$(DISTFILES_ARCHIVE)' '$(call ri,DISTFILES_DIGEST)' '$(R_OUT)/distfiles' "$$DROP_DISTFILE"
 	toolbox/run --network none -- sh scripts/check-distfiles.sh '$(R_OUT)/distfiles'
+	$(if $(CI),rm -f '$(DISTFILES_ARCHIVE)')
 	$(R_RUN) $(R_MOUNTS) -e JOBS=$(R_JOBS) -e LOAD_AVG=$(R_JOBS) -e MONOLITH_USEPKG=n -e FETCHCOMMAND=/bin/false -e RESUMECOMMAND=/bin/false $(R_IMAGE) /scripts/build-packages.sh
 	$(R_RUN) $(R_ROOTFS_MOUNTS) $(R_IMAGE) /scripts/build-rootfs.sh
 	$(R_RUN) $(R_ROOTFS_MOUNTS) $(R_IMAGE) /scripts/build-initrd.sh
 	$(R_RUN) $(R_ROOTFS_MOUNTS) $(R_IMAGE) /scripts/build-iso.sh
 	$(R_RUN) -v $(CURDIR)/$(R_OUT):/output $(R_IMAGE) sh -c 'tar -C /output/sysroot -cf /output/sysroot.tar . && chown -R $(R_OWN) /output'
 	toolbox/run --network none -- sh scripts/verify-kernel-modules.sh '$(R_OUT)/sysroot'
-	cp '$(R_OUT)/themonolith-$(call ri,VERSION).iso' '$(R_OUT)/iso/boot-test.iso'
+	mv '$(R_OUT)/themonolith-$(call ri,VERSION).iso' '$(R_OUT)/iso/boot-test.iso'
+	df -h .
 
 # The gate on one machine: fetch, two offline builds, compare.
 test-repro: repro-fetch repro-build-a repro-build-b compare

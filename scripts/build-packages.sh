@@ -330,6 +330,16 @@ LOGFILE="${LOGS_DIR}/emerge-parallel.log"
 if [ ${FETCHONLY} -eq 1 ]; then
     echo "==> Fetching the distfiles of ${#ATOMS[@]} atoms"
     unset BUILD_DIR
+    # A live (9999) ebuild has no distfile: the fetch would archive nothing for it and the offline build would fail.
+    # Resolve the graph first (the same atoms and flags, host and target side) and stop on any live package.
+    PRETEND_OUT="${LOGS_DIR}/emerge-pretend.txt"
+    if ! ${EMERGE_CMD} --pretend --color=n "${USEPKG_FLAGS[@]}" "${EXTRA_FLAGS[@]}" "${ATOMS[@]}" > "${PRETEND_OUT}" 2>&1; then
+        cat "${PRETEND_OUT}"
+        echo "ERROR: the dependency resolution failed"
+        exit 1
+    fi
+    cat "${PRETEND_OUT}"
+    sh "${SCRIPTS_DIR}/check-no-live.sh" "${PRETEND_OUT}" || exit 1
     exec ${EMERGE_CMD} --fetchonly "${USEPKG_FLAGS[@]}" "${EXTRA_FLAGS[@]}" "${ATOMS[@]}"
 fi
 

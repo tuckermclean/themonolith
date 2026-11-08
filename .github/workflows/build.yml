@@ -127,8 +127,7 @@ jobs:
       - name: Sync the pinned portage tree
         run: make sync-portage
 
-      # Tag builds are clean-room: the ref policy of the store skips the pull on a tag, and MONOLITH_USEPKG=n
-      # builds every package from source, so no cached binary package can enter the ISO.
+      # Iteration builds only (a tag or a gate dispatch takes the fetch, build-a, build-b path, which uses no cache).
       - name: Pull the binary package cache
         run: make cache-pull
 
