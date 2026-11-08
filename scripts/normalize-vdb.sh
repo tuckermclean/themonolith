@@ -3,7 +3,8 @@
 # the packages were built. Rewrites <vdb-dir> in place.
 #   BUILD_TIME   := SOURCE_DATE_EPOCH (Portage records the wall clock)
 #   COUNTER      := 1..N in LC_ALL=C order of category/pn-pv
-#   environment.bz2 loses the declare lines of variables that change every run, then bzip2 -9
+#   environment.bz2 loses the declare lines of variables that change every run or between builders (time, random,
+#   JOBS, LOAD_AVG, MAKEOPTS, the compression command, the host name), then bzip2 -9
 #   CONTENTS     the trailing mtime of every obj and sym line := SOURCE_DATE_EPOCH
 set -eu
 
@@ -25,7 +26,7 @@ while read -r cpv; do
 	if [ -f "$p/COUNTER" ]; then echo "$n" >"$p/COUNTER"; fi
 	if [ -f "$p/environment.bz2" ]; then
 		bzip2 -dc "$p/environment.bz2" >"$tmp/env"
-		grep -v -E '^declare [^=]* (EPOCHREALTIME|EPOCHSECONDS|SRANDOM|RANDOM|BASHPID)=' "$tmp/env" >"$tmp/env.n" || [ $? -eq 1 ]
+		grep -v -E '^declare [^=]* (EPOCHREALTIME|EPOCHSECONDS|SRANDOM|RANDOM|BASHPID|JOBS|LOAD_AVG|MAKEOPTS|PORTAGE_COMPRESSION_COMMAND|HOSTNAME|HOST|PORTAGE_NICENESS)=' "$tmp/env" >"$tmp/env.n" || [ $? -eq 1 ]
 		bzip2 -9 -c "$tmp/env.n" >"$tmp/env.bz2"
 		cat "$tmp/env.bz2" >"$p/environment.bz2"
 	fi

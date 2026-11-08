@@ -15,6 +15,9 @@
 
 set -e
 
+umask 022
+export TZ=UTC LC_ALL=C
+
 [ -n "${SOURCE_DATE_EPOCH}" ] || { echo "build-iso.sh: SOURCE_DATE_EPOCH is not set" >&2; exit 1; }
 
 # Configuration
