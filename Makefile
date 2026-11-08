@@ -464,6 +464,7 @@ ISO_A ?= output/repro-a/iso/boot-test.iso
 ISO_B ?= output/repro-b/iso/boot-test.iso
 # One distfile name removed from the unpacked archive before the build (the AC-4 run); the build must fail on it.
 DROP_DISTFILE ?=
+export DROP_DISTFILE
 REPRO_HOST_a := monolith-build-a
 REPRO_HOST_b := monolith-build-b
 REPRO_JOBS_a := 2
@@ -474,10 +475,18 @@ ri = $(if $(wildcard $(RELEASE_INPUTS)),$(shell jq -r '.$(1) // empty' '$(RELEAS
 RI_FIELDS := VERSION SOURCE_COMMIT TREE_COMMIT TREE_DIGEST BUILDER_DIGEST DISTFILES_DIGEST SOURCE_DATE_EPOCH
 
 # The release dependency graph's distfiles, fetched with the network the builder is given here.
-repro-fetch: pull-image sync-portage ensure-volume grype-db-update
-	$(DOCKER) run --rm -v $(abspath $(DISTFILES_DIR)):/d -v $(abspath $(PKGDIR)):/p $(IMAGE_NAME) find /d /p -mindepth 1 -delete
-	$(DOCKER) run --rm $(BUILD_MOUNTS) -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG) -e MONOLITH_USEPKG=n $(IMAGE_NAME) /scripts/build-packages.sh --fetchonly
-	toolbox/run --network none -- sh scripts/fetch-distfiles.sh '$(DISTFILES_DIR)' '$(DISTFILES_ARCHIVE)' '$(SOURCE_DATE_EPOCH)'
+F_OUT := output/repro-fetch
+F_MOUNTS := -v $(CURDIR)/configs:/configs -v $(CURDIR)/scripts:/scripts:ro \
+	-v $(CURDIR)/$(F_OUT):/output -v $(abspath $(TREE_DIR)):/var/db/repos/gentoo \
+	-v $(CURDIR)/$(F_OUT)/distfiles:/var/cache/distfiles -v $(CURDIR)/$(F_OUT)/portage-logs:/var/log/portage
+
+# The fetch keeps to $(F_OUT), so it leaves the iteration state (output/packages, output/distfiles, the built and failed lists) alone.
+repro-fetch: pull-image builder-manifest sync-portage grype-db-update
+	mkdir -p $(F_OUT)
+	$(DOCKER) run --rm -v $(CURDIR)/$(F_OUT):/d $(IMAGE_NAME) find /d -mindepth 1 -delete
+	mkdir -p $(F_OUT)/distfiles $(F_OUT)/portage-logs $(F_OUT)/packages $(F_OUT)/logs $(F_OUT)/sysroot
+	$(DOCKER) run --rm $(F_MOUNTS) -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG) -e MONOLITH_USEPKG=n $(IMAGE_NAME) /scripts/build-packages.sh --fetchonly
+	toolbox/run --network none -- sh scripts/fetch-distfiles.sh '$(F_OUT)/distfiles' '$(DISTFILES_ARCHIVE)' '$(SOURCE_DATE_EPOCH)'
 	$(ATTEST_RUN) sh /scripts/builder-versions.sh > '$(REPRO_VERSIONS)'
 	mkdir -p '$(dir $(RELEASE_INPUTS))'
 	toolbox/run --network none -- env VERSION='$(BUILD_VERSION)' SOURCE_COMMIT="$$(git rev-parse HEAD)" TREE_COMMIT='$(TREE_COMMIT)' TREE_DIGEST='$(TREE_DIGEST)' BUILDER_DIGEST='$(BUILDER_DIGEST)' SOURCE_DATE_EPOCH='$(SOURCE_DATE_EPOCH)' sh scripts/repro-inputs.sh '$(RELEASE_INPUTS)' '$(DISTFILES_ARCHIVE)' '$(REPRO_VERSIONS)'
@@ -510,17 +519,18 @@ repro-build:
 	test "$$(git rev-parse HEAD)" = '$(call ri,SOURCE_COMMIT)' || { echo "repro-build: the checkout is not the recorded source commit $(call ri,SOURCE_COMMIT)"; exit 1; }
 	$(if $(call ri,BUILDER_DIGEST),$(DOCKER) pull $(REGISTRY)/builder@$(call ri,BUILDER_DIGEST))
 	$(if $(call ri,BUILDER_DIGEST),$(DOCKER) tag $(REGISTRY)/builder@$(call ri,BUILDER_DIGEST) $(R_IMAGE))
-	mkdir -p output
+	mkdir -p $(R_OUT)
 	$(DOCKER) run --rm -v $(CURDIR)/output:/output $(R_IMAGE) find /output/repro-$(SLOT) -mindepth 1 -delete
 	mkdir -p $(R_OUT)/packages $(R_OUT)/logs $(R_OUT)/sysroot $(R_OUT)/distfiles $(R_OUT)/portage-logs $(R_OUT)/repos/gentoo $(R_OUT)/iso
 	$(TREE_RUN) sh -c 'set -eu; $(tree_login); REGISTRY=$(REGISTRY) TREE_REF=$(TREE_REF) TREE_COMMIT=$(call ri,TREE_COMMIT) TREE_DIGEST=$(call ri,TREE_DIGEST) TREE_DIR=$(R_OUT)/repos/gentoo sh scripts/sync-portage.sh'
-	toolbox/run --network none -- sh scripts/unpack-distfiles.sh '$(DISTFILES_ARCHIVE)' '$(call ri,DISTFILES_DIGEST)' '$(R_OUT)/distfiles' '$(DROP_DISTFILE)'
+	toolbox/run --network none -- sh scripts/unpack-distfiles.sh '$(DISTFILES_ARCHIVE)' '$(call ri,DISTFILES_DIGEST)' '$(R_OUT)/distfiles' "$$DROP_DISTFILE"
 	toolbox/run --network none -- sh scripts/check-distfiles.sh '$(R_OUT)/distfiles'
 	$(R_RUN) $(R_MOUNTS) -e JOBS=$(R_JOBS) -e LOAD_AVG=$(R_JOBS) -e MONOLITH_USEPKG=n -e FETCHCOMMAND=/bin/false -e RESUMECOMMAND=/bin/false $(R_IMAGE) /scripts/build-packages.sh
 	$(R_RUN) $(R_ROOTFS_MOUNTS) $(R_IMAGE) /scripts/build-rootfs.sh
 	$(R_RUN) $(R_ROOTFS_MOUNTS) $(R_IMAGE) /scripts/build-initrd.sh
 	$(R_RUN) $(R_ROOTFS_MOUNTS) $(R_IMAGE) /scripts/build-iso.sh
 	$(R_RUN) -v $(CURDIR)/$(R_OUT):/output $(R_IMAGE) sh -c 'tar -C /output/sysroot -cf /output/sysroot.tar . && chown -R $(R_OWN) /output'
+	toolbox/run --network none -- sh scripts/verify-kernel-modules.sh '$(R_OUT)/sysroot'
 	cp '$(R_OUT)/themonolith-$(call ri,VERSION).iso' '$(R_OUT)/iso/boot-test.iso'
 
 # The gate on one machine: fetch, two offline builds, compare.

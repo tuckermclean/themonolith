@@ -140,14 +140,6 @@ jobs:
           MONOLITH_USEPKG: 'y'
         run: make build-packages
 
-      - name: Build packages (from source)
-        if: github.ref_type == 'tag'
-        env:
-          JOBS: 2
-          LOAD_AVG: 2
-          MONOLITH_USEPKG: 'n'
-        run: make build-packages
-
       # scripts/build-packages.sh copies each failed package's build.log to output/logs.
       - name: Upload package build logs on failure
         if: failure()
@@ -237,6 +229,14 @@ jobs:
         with:
           name: release-inputs-${{ github.run_id }}
           path: output/release-inputs.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload the builder manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: builder-manifest-${{ github.run_id }}
+          path: output/builder-manifest.txt
           retention-days: 14
           if-no-files-found: error
 
@@ -423,7 +423,7 @@ jobs:
   # so a re-run whose artifact is gone fails at download-artifact.
   boot-test:
     needs: [build, build-a]
-    if: always() && needs.build.result == 'success' || always() && needs.build-a.result == 'success'
+    if: "!cancelled() && needs.build.result == 'success' || !cancelled() && needs.build-a.result == 'success'"
     uses: ./.github/workflows/boot-test.yml
     with:
       iso-artifact: iso-${{ github.run_id }}
@@ -436,7 +436,7 @@ jobs:
     timeout-minutes: 120
     needs: [build, build-a, compare, static-rebuild, boot-test]
     # The iteration path needs its build; the gate path needs compare, which needs both builds.
-    if: always() && needs.build.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success' || always() && needs.compare.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success'
+    if: "!cancelled() && needs.build.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success' || !cancelled() && needs.compare.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success'"
     permissions:
       contents: read
       packages: read
