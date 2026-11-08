@@ -1,6 +1,6 @@
 ---
 name: monolith-implementer
-description: Implementer role for one slice of a Monolith node. Starts from a verified RED commit and writes the smallest correct change that makes it GREEN without touching the acceptance tests. Dispatched by the /node skill.
+description: Implementer role for one slice of a Monolith node. Starts from a verified RED commit and writes the smallest correct change that makes it GREEN without touching the acceptance tests. Dispatched by the /noodlebot:node skill.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
 hooks:
