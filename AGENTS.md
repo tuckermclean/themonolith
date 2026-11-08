@@ -8,7 +8,7 @@ credential handling.
 
 - `SPEC.md`: product, constraints, the standard-mechanism table (§5), pins, oracle, release rules,
   open decisions (§10), conventions (§11).
-- `docs/graph.yaml`: the 22 nodes, their dependencies and the three milestones.
+- `docs/graph.yaml`: the 23 nodes, their dependencies and the three milestones.
 - `nodes/<ID>-<name>.md`: one spec per node, in the SPEC §9 template.
 - `docs/first-release.md`: the plan, owner actions and measured timings.
 - The port source is `tuckermclean/linux-live-iso-factory` at `b9f533b`. Cite it as `path:line` at that
