@@ -319,6 +319,159 @@ mk -n test-lint MODE=dev >/dev/null 2>&1 && pass "O01-AC-7 MODE=dev make -n test
 mk -n test-lint MODES=dev >/dev/null 2>&1 && pass "O01-AC-7 MODES=dev make -n test-lint succeeds" || fail "O01-AC-7 MODES=dev make -n test-lint succeeds"
 mk -n test-boot MODE=dev >/dev/null 2>&1 && fail "O01-AC-7 make -n test-boot MODE=dev still fails" || pass "O01-AC-7 make -n test-boot MODE=dev still fails"
 
+# ---- G01-AC-1 / G01-AC-2 (wiring): modes persist-init and entry. The boots themselves are
+# `make test-boot MODE=persist-init` and `MODE=entry` (run, not encoded here). Offline. ----
+BI="$ROOT/scripts/build-iso.sh"
+MK="$ROOT/Makefile"
+# The ISOLINUX labels and GRUB menuentries are derived from build-iso.sh, never listed here.
+labels=$(awk '/isolinux\.cfg" *<< *EOF/{on=1;next} on&&/^EOF$/{on=0} on&&/^LABEL [A-Za-z0-9_-]+$/{print $2}' "$BI" | tr '\n' ' ')
+nentries=$(awk '/<< *GRUBEOF/{on=1;next} /^GRUBEOF$/{on=0} on&&/^menuentry /{n++} END{print n+0}' "$BI")
+[ -n "$labels" ] && [ "$nentries" -gt 0 ] && pass "G01-AC-2 build-iso.sh yields ISOLINUX labels ($labels) and $nentries GRUB entries" || fail "G01-AC-2 build-iso.sh yields ISOLINUX labels and GRUB entries (labels='$labels', entries=$nentries)"
+
+# Makefile BOOT_MODES names both new modes
+bm=$(sed -n 's/^BOOT_MODES *:= *//p' "$MK")
+for m in persist-init entry; do
+	case " $bm " in *" $m "*) pass "G01 Makefile BOOT_MODES has $m" ;; *) fail "G01 Makefile BOOT_MODES has $m" ;; esac
+done
+
+# make -n test-boot MODE=<m> runs exactly that mode (word match is unusable: persist-init contains persist)
+for m in persist-init entry; do
+	out=$(mk -nB test-boot MODE=$m ISO="$tmp/fake.iso")
+	n=$(echo "$out" | grep 'boot-test\.py' | grep -c -- "--mode $m\( \|\$\)")
+	o=$(echo "$out" | grep 'boot-test\.py' | grep -vc -- "--mode $m\( \|\$\)")
+	if [ "$n" -ge 1 ] && [ "$o" = 0 ]; then pass "G01 make -n test-boot MODE=$m runs only --mode $m"; else fail "G01 make -n test-boot MODE=$m runs only --mode $m ($n boots of $m, $o others)"; fi
+done
+out=$(mk -nB test-boot MODE=persist ISO="$tmp/fake.iso")
+if echo "$out" | grep 'boot-test\.py' | grep -q -- '--mode persist-init'; then fail "G01-AC-1 MODE=persist does not run persist-init"; else pass "G01-AC-1 MODE=persist does not run persist-init"; fi
+
+# G01-AC-2: MODE=entry alone runs every leg; ENTRY_* narrow to one
+out=$(mk -nB test-boot MODE=entry ISO="$tmp/fake.iso")
+legs=$(echo "$out" | grep 'boot-test\.py' | grep -c -- '--mode entry')
+want=$(( $(echo $labels | wc -w) + nentries ))
+[ "$legs" = "$want" ] && pass "G01-AC-2 MODE=entry alone runs $want legs" || fail "G01-AC-2 MODE=entry alone runs $want legs (got $legs)"
+missing=""
+for l in $labels; do echo "$out" | grep 'boot-test\.py' | grep -q -- "--loader isolinux --label $l\( \|\$\|'\)" || missing="$missing isolinux:$l"; done
+i=0; while [ $i -lt "$nentries" ]; do echo "$out" | grep 'boot-test\.py' | grep -q -- "--loader grub --index $i\( \|\$\|'\)" || missing="$missing grub:$i"; i=$((i + 1)); done
+[ -z "$missing" ] && pass "G01-AC-2 MODE=entry covers every ISOLINUX label and GRUB index" || fail "G01-AC-2 MODE=entry covers every ISOLINUX label and GRUB index (missing:$missing)"
+first=$(echo $labels | cut -d' ' -f1)
+out=$(mk -nB test-boot MODE=entry ENTRY_LOADER=isolinux ENTRY_LABEL=serial ISO="$tmp/fake.iso")
+n=$(echo "$out" | grep 'boot-test\.py' | grep -c -- '--mode entry')
+if [ "$n" = 1 ] && echo "$out" | grep 'boot-test\.py' | grep -q -- '--loader isolinux --label serial'; then pass "G01-AC-2 ENTRY_LOADER=isolinux ENTRY_LABEL=serial narrows to one leg"; else fail "G01-AC-2 ENTRY_LOADER=isolinux ENTRY_LABEL=serial narrows to one leg ($n legs)"; fi
+out=$(mk -nB test-boot MODE=entry ENTRY_LOADER=grub ENTRY_INDEX=3 ISO="$tmp/fake.iso")
+n=$(echo "$out" | grep 'boot-test\.py' | grep -c -- '--mode entry')
+if [ "$n" = 1 ] && echo "$out" | grep 'boot-test\.py' | grep -q -- '--loader grub --index 3'; then pass "G01-AC-2 ENTRY_LOADER=grub ENTRY_INDEX=3 narrows to one leg"; else fail "G01-AC-2 ENTRY_LOADER=grub ENTRY_INDEX=3 narrows to one leg ($n legs)"; fi
+
+# boot-test.py and boot-test.yml (python: parse, import offline, build commands without booting)
+python3 - "$WF" "$BT" "$BI" "$tmp" "$labels" "$nentries" <<'PY'
+import sys, os, json, types, importlib.util, re, subprocess
+wf, bt, bi, tmp, labels, nent = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5].split(), int(sys.argv[6])
+bad = 0
+def chk(l, c):
+    global bad
+    print(("PASS: " if c else "FAIL: ") + l)
+    if not c: bad += 1
+
+# -- boot-test.yml
+try:
+    import yaml
+    jobs = yaml.safe_load(open(wf))["jobs"]
+except Exception as e:
+    print(f"FAIL: G01 boot-test.yml parses: {type(e).__name__}: {e}"); jobs = {}; bad += 1
+for name, ac in (("persist-init", "G01-AC-1"), ("entry", "G01-AC-2")):
+    j = jobs.get(name)
+    chk(f"{ac} boot-test.yml has a {name} job", isinstance(j, dict))
+    if not isinstance(j, dict): continue
+    ss = j.get("steps") or []
+    runs = [s for s in ss if re.search(r"make test-boot\b.*\bMODE=%s(\s|$)" % re.escape(name), s.get("run") or "")]
+    chk(f"{ac} job {name} runs make test-boot MODE={name}", len(runs) == 1)
+    chk(f"{ac} job {name} needs expected-kernel and fetch-iso", {"expected-kernel", "fetch-iso"} <= set(j.get("needs") or []))
+    env = (runs[0].get("env") or {}) if runs else {}
+    chk(f"{ac} job {name} passes EXPECTED_KERNEL through env", "EXPECTED_KERNEL" in env)
+    up = [s for s in ss if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+    chk(f"{ac} job {name} uploads its logs", bool(up) and f"boot-test-{name}" in str((up[0].get("with") or {}).get("name", "")) and f"boot-test-{name}" in str((up[0].get("with") or {}).get("path", "")) + str((up[0].get("with") or {}).get("name", "")))
+    if name == "entry":
+        inc = (((j.get("strategy") or {}).get("matrix") or {}).get("include")) or []
+        chk("G01-AC-2 entry job has a matrix include list", bool(inc))
+        for k in ("ENTRY_LOADER",):
+            chk(f"G01-AC-2 entry step narrows through env {k}", k in env)
+        chk("G01-AC-2 entry step env has ENTRY_LABEL and ENTRY_INDEX", "ENTRY_LABEL" in env and "ENTRY_INDEX" in env)
+        chk("G01-AC-2 entry matrix does not stop at the first failing leg (fail-fast: false)", (j.get("strategy") or {}).get("fail-fast") is False)
+        have_l = {str(i.get("label")) for i in inc if str(i.get("loader")) == "isolinux"}
+        have_g = {str(i.get("index")) for i in inc if str(i.get("loader")) == "grub"}
+        ml = [l for l in labels if l not in have_l]
+        mg = [str(n) for n in range(nent) if str(n) not in have_g]
+        chk("G01-AC-2 entry matrix has a leg per ISOLINUX label of build-iso.sh", not ml)
+        if ml: print("  missing labels: " + " ".join(ml))
+        chk("G01-AC-2 entry matrix has a leg per GRUB menuentry index of build-iso.sh", not mg)
+        if mg: print("  missing indexes: " + " ".join(mg))
+        chk("G01-AC-2 entry matrix has no leg for a label build-iso.sh lacks", have_l <= set(labels) and have_g <= {str(n) for n in range(nent)})
+
+# -- boot-test.py, imported offline (pexpect stubbed as in the O01-AC-3 case)
+if "pexpect" not in sys.modules:
+    stub = types.ModuleType("pexpect")
+    stub.TIMEOUT = type("TIMEOUT", (Exception,), {})
+    stub.EOF = type("EOF", (Exception,), {})
+    stub.ExceptionPexpect = type("ExceptionPexpect", (Exception,), {})
+    stub.spawn = lambda *a, **k: None
+    sys.modules["pexpect"] = stub
+try:
+    spec = importlib.util.spec_from_file_location("boot_test_mod_g01", bt)
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+except Exception as e:
+    print(f"FAIL: G01 boot-test.py imports offline: {type(e).__name__}: {e}"); sys.exit(1)
+for name, ac in (("persist-init", "G01-AC-1"), ("entry", "G01-AC-2")):
+    for tbl in ("MODE_BUILDERS", "MODE_RUNNERS", "MODE_DEFAULT_RAM"):
+        chk(f"{ac} {tbl} has {name}", name in getattr(m, tbl, {}))
+
+def parse(argv):
+    old = sys.argv
+    sys.argv = ["boot-test.py", "--iso", os.path.join(tmp, "fake.iso"), "--kernel-version", "6.12.80-i486-monolith"] + argv
+    try:
+        return m.parse_args(), None
+    except SystemExit as e:
+        return None, e.code
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+    finally:
+        sys.argv = old
+
+a, err = parse(["--mode", "entry", "--loader", "isolinux", "--label", labels[0] if labels else "linux"])
+a_ok_label = a is not None and getattr(a, "loader", None) == "isolinux" and getattr(a, "label", None) == (labels[0] if labels else "linux")
+chk("G01-AC-2 --mode entry --loader isolinux --label <L> is accepted", a_ok_label)
+if a is None: print(f"  parse error: {err}")
+a, err = parse(["--mode", "entry", "--loader", "grub", "--index", "2"])
+chk("G01-AC-2 --mode entry --loader grub --index <N> is accepted", a is not None and getattr(a, "loader", None) == "grub" and str(getattr(a, "index", None)) == "2")
+if a is None: print(f"  parse error: {err}")
+ok_l = a_ok_label
+a, err = parse(["--mode", "entry", "--loader", "isolinux", "--label", "no-such-label"])
+chk("G01-AC-2 an unknown ISOLINUX label is rejected (and a known one is not)", ok_l and a is None and err not in (0, None))
+a, err = parse(["--mode", "persist-init"])
+chk("G01-AC-1 --mode persist-init is accepted", a is not None)
+
+# persist-init builds a QEMU command with a second virtio disk; the host side partitions it with sfdisk
+img = os.path.join(tmp, "persist-init.img")
+a, err = parse(["--mode", "persist-init", "--persist-disk", img])
+cmd = None
+if a is not None:
+    try:
+        a.ram_mb = a.ram_mb or m.MODE_DEFAULT_RAM["persist-init"]
+        cmd = m.MODE_BUILDERS["persist-init"](a)
+    except BaseException as e:
+        print(f"  builder error: {type(e).__name__}: {e}")
+chk("G01-AC-1 persist-init builds a QEMU command", isinstance(cmd, list) and bool(cmd))
+if isinstance(cmd, list):
+    s = " ".join(map(str, cmd))
+    chk("G01-AC-1 persist-init command is qemu -cpu 486 with the ISO as cdrom", "-cpu 486" in s and "-cdrom" in s)
+    chk("G01-AC-1 persist-init command attaches the test disk as a virtio disk", img in s and cmd.count("virtio-blk-pci") + s.count("virtio-blk-pci,") >= 1 and "virtio-blk" in s)
+    r = subprocess.run(["sfdisk", "-d", img], capture_output=True, text=True) if os.path.exists(img) else None
+    chk("G01-AC-1 persist-init makes a partition 1 on the test disk (sfdisk -d lists it)", r is not None and r.returncode == 0 and re.search(re.escape(img) + r"1\s*:", r.stdout) is not None)
+src = open(bt).read()
+chk("G01-AC-1 boot-test.py partitions the test disk with sfdisk", "sfdisk" in src)
+chk("G01-AC-1 boot-test.py runs `monolith-persist init --yes /dev/vda1 --swap 16` in the guest", "monolith-persist init --yes /dev/vda1 --swap 16" in src)
+sys.exit(1 if bad else 0)
+PY
+[ $? -eq 0 ] || fails=$((fails + 1))
+
 echo
 if [ "$fails" -ne 0 ]; then echo "$fails FAILED"; exit 1; fi
 echo "ALL PASS"
