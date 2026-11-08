@@ -533,7 +533,7 @@ gate-route:
 # ---- B03: the root filesystem, the initramfs and the ISO ----
 
 ROOTFS_RUN = $(DOCKER) run --rm -v $(CURDIR)/configs:/configs:ro -v $(CURDIR)/scripts:/scripts:ro \
-	-v $(CURDIR)/rootfs:/rootfs:ro -v $(CURDIR)/output:/work/output -e OUTPUT_DIR=/work/output $(VERSION_ENV) $(IMAGE_NAME)
+	-v $(CURDIR)/rootfs:/rootfs:ro -v $(CURDIR)/output:/work/output -e OUTPUT_DIR=/work/output -e SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) $(VERSION_ENV) $(IMAGE_NAME)
 
 # Asserts the kernel modules the tier docs promise are in the sysroot of the package build.
 verify-kernel-modules:

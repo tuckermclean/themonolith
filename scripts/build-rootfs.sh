@@ -13,6 +13,8 @@
 
 set -e
 
+[ -n "${SOURCE_DATE_EPOCH}" ] || { echo "build-rootfs.sh: SOURCE_DATE_EPOCH is not set" >&2; exit 1; }
+
 # Configuration
 ROOTFS_DIR="/rootfs-build"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
@@ -716,6 +718,15 @@ create_squashfs() {
     else
         log_warn "host makewhatis or man dir missing; whatis database not baked"
     fi
+
+    # The shipped copy of the package database records build times, install
+    # counters and mtimes that differ run to run: normalise it, then clamp every
+    # mtime in the tree (symlinks included) so the squashfs does not depend on
+    # when the files were written.
+    if [ -d "$ROOTFS_DIR/var/db/pkg" ]; then
+        sh "$(dirname "$0")/normalize-vdb.sh" "$ROOTFS_DIR/var/db/pkg"
+    fi
+    find "$ROOTFS_DIR" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
     # Create SquashFS with gzip compression (low memory for i486).
     # mksquashfs 4.5+ reads SOURCE_DATE_EPOCH from the environment automatically;

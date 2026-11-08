@@ -13,6 +13,8 @@
 
 set -eo pipefail
 
+[ -n "${SOURCE_DATE_EPOCH}" ] || { echo "build-initrd.sh: SOURCE_DATE_EPOCH is not set" >&2; exit 1; }
+
 # Configuration
 INITRD_DIR="${INITRD_DIR:-/initrd}"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
@@ -340,17 +342,20 @@ log_info "Uncompressed initramfs size: ${UNCOMPRESSED_SIZE} KB"
 # on a CD/USB) at the cost of ~8 MB of peak boot RAM (decisive). Disc space is
 # cheap; a Pentium's RAM is not.
 # Reproducibility:
-#   1. Normalize all file timestamps to SOURCE_DATE_EPOCH before archiving so
-#      the cpio entries don't embed the live build time.
+#   1. Set the mtime of every entry, symlinks included (touch -h), to
+#      SOURCE_DATE_EPOCH before archiving so the cpio entries don't embed the
+#      live build time. SOURCE_DATE_EPOCH is required; the script exits at the
+#      top when it is unset.
 #   2. Sort the find output so the archive member order is deterministic
 #      (find visits directories in filesystem order, which varies by run).
-#   3. `gzip -n` omits the mtime/filename from the gzip header (also for repro).
-# Symlinks are excluded from touch because touch -h support varies and the
-# kernel initramfs extracts them correctly regardless of their mtime.
+#   3. `cpio --reproducible` writes the inode and device numbers as zero
+#      (hard-link groups stay linked), so the archive does not depend on the
+#      build filesystem.
+#   4. `gzip -n` omits the mtime/filename from the gzip header (also for repro).
 log_info "Creating compressed initramfs image..."
 cd "${INITRD_DIR}"
-find . -not -type l -exec touch -d "@${SOURCE_DATE_EPOCH:-0}" {} +
-find . -print0 | LC_ALL=C sort -z | cpio --null -o -H newc | gzip -9 -n > "${INITRD_IMAGE}"
+find . -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
+find . -print0 | LC_ALL=C sort -z | cpio --null -o -H newc --reproducible | gzip -9 -n > "${INITRD_IMAGE}"
 
 # Show final size
 COMPRESSED_SIZE=$(stat -c%s "${INITRD_IMAGE}")

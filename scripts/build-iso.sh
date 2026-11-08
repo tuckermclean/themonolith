@@ -15,6 +15,8 @@
 
 set -e
 
+[ -n "${SOURCE_DATE_EPOCH}" ] || { echo "build-iso.sh: SOURCE_DATE_EPOCH is not set" >&2; exit 1; }
+
 # Configuration
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 ISO_DIR="/tmp/iso"
@@ -347,6 +349,8 @@ menuentry "tHE m0n0LiTH ${BUILD_VERSION} (persistent)" {
 }
 GRUBEOF
 
+# Reproducibility: the memdisk grub-mkstandalone builds carries the mtime of its input.
+touch -h -d "@${SOURCE_DATE_EPOCH}" "$GRUB_CFG"
 grub-mkstandalone \
     --format=x86_64-efi \
     --output="${ISO_DIR}/EFI/BOOT/BOOTX64.EFI" \
@@ -367,10 +371,13 @@ EFI_IMG_MB=$(( (EFI_BINARY_SIZE + 1048576 + 1048575) / 1048576 ))
 [ "$EFI_IMG_MB" -lt 8 ] && EFI_IMG_MB=8
 log_info "EFI image size: ${EFI_IMG_MB} MB"
 dd if=/dev/zero of="$EFI_IMG" bs=1M count="$EFI_IMG_MB" 2>/dev/null
-mkfs.vfat -F 16 -s 1 -n "EFIBOOT" "$EFI_IMG" >/dev/null
+# Reproducibility: --invariant and a fixed volume id (-i) remove the creation time and the random
+# serial number; the files and directories on the ESP take the clamped SOURCE_DATE_EPOCH mtime.
+mkfs.vfat --invariant -i 4D4F4E4F -F 16 -s 1 -n "EFIBOOT" "$EFI_IMG" >/dev/null
+touch -h -d "@${SOURCE_DATE_EPOCH}" "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI"
 mmd   -i "$EFI_IMG" ::/EFI
 mmd   -i "$EFI_IMG" ::/EFI/BOOT
-mcopy -i "$EFI_IMG" "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
+mcopy -m -i "$EFI_IMG" "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
 
 # Show ISO directory structure
 log_info "ISO directory structure:"
@@ -392,9 +399,18 @@ log_info "Creating ISO image..."
 ISO_TMP=$(mktemp /tmp/boot.iso.XXXXXX)
 trap "rm -f '$ISO_TMP'" EXIT
 
+# Reproducibility: every timestamp in the image is SOURCE_DATE_EPOCH. The volume UUID (and with it the
+# isohybrid MBR id and, via --gpt_disk_guid, the GPT disk GUID) derives from it in xorriso's
+# YYYYMMDDhhmmsscc form; all file dates are set to it; the volume id is fixed.
+ISO_UUID=$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y%m%d%H%M%S00)
+
 # Build xorriso command
 XORRISO_CMD=(
-    xorriso -as mkisofs
+    xorriso
+    -volume_date uuid "$ISO_UUID"
+    -volume_date all_file_dates "=${SOURCE_DATE_EPOCH}"
+    -as mkisofs
+    --gpt_disk_guid volume_date_uuid
     -o "$ISO_TMP"
     -R -J                           # Rock Ridge + Joliet extensions
     -V "MONOLITH"                   # Volume ID
