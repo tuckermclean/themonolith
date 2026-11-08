@@ -1012,6 +1012,39 @@ for s in build-iso.sh build-rootfs.sh; do
 	first=$(fline "$f" '^(rm|mkdir|mktemp|dd|cd|cp|rsync|xorriso|grub-mkstandalone|mksquashfs|python3|log_info|create_[a-z_]+|install_[a-z_]+|main)([[:space:]]|$)')
 	if [ -n "$ck" ] && [ -n "$first" ] && [ "$ck" -lt "$first" ]; then pass "P02-AC-6 $s checks SOURCE_DATE_EPOCH before any work"; else fail "P02-AC-6 $s checks SOURCE_DATE_EPOCH before any work (check line '${ck:-none}', first work line '${first:-none}')"; fi
 done
+# ================= slice 4: change 7, live ebuilds out of the release graph (P02-AC-4, P02-AC-5, P02-AC-6 support) =================
+# Interface: sh scripts/check-no-live.sh <file>   <file> holds `emerge --pretend` output; every [ebuild ...] line
+# whose package version contains 9999 (host side "[ebuild  N    *] x11-base/xorg-proto-9999::gentoo  USE=..." and
+# target side "... to /usr/i486-linux-musl/ ...") is a live package: names each (category/package-version) on
+# stdout/stderr and exits non-zero; exit 0 when none. A missing/unreadable file is non-zero.
+NL="$ROOT/scripts/check-no-live.sh"
+FX="$HERE/fixtures"
+for fx in emerge-pretend-live.txt emerge-pretend-live-target.txt; do
+	out=$(sh "$NL" "$FX/$fx" 2>&1); rc=$?
+	if [ -f "$NL" ] && [ "$rc" -ne 0 ] && echo "$out" | grep -q 'dev-cpp/eigen-3.4.9999\|x11-base/xorg-proto-9999'; then pass "P02-AC-5 change 7: check-no-live.sh fails on $fx and names a live package"; else fail "P02-AC-5 change 7: check-no-live.sh fails on $fx and names a live package (rc=$rc)"; fi
+done
+out=$(sh "$NL" "$FX/emerge-pretend-live.txt" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && echo "$out" | grep -q 'x11-base/xorg-proto-9999' && echo "$out" | grep -q 'dev-cpp/eigen-3.4.9999'; then pass "P02-AC-5 change 7: check-no-live.sh names every live package (both)"; else fail "P02-AC-5 change 7: check-no-live.sh names every live package (both) (rc=$rc)"; fi
+if [ -f "$NL" ] && ! echo "$out" | grep -q 'jansson\|libffi\|pygments'; then pass "P02-AC-5 change 7: check-no-live.sh does not name released packages"; else fail "P02-AC-5 change 7: check-no-live.sh does not name released packages"; fi
+out=$(sh "$NL" "$FX/emerge-pretend-released.txt" 2>&1); rc=$?
+if [ -f "$NL" ] && [ "$rc" -eq 0 ]; then pass "P02-AC-5 change 7: check-no-live.sh exits 0 when the graph holds no live package"; else fail "P02-AC-5 change 7: check-no-live.sh exits 0 when the graph holds no live package (rc=$rc)"; fi
+out=$(sh "$NL" "$TMP/no-such-pretend" 2>&1); rc=$?
+if [ -f "$NL" ] && [ "$rc" -ne 0 ]; then pass "P02-AC-5 change 7: check-no-live.sh fails on a missing file"; else fail "P02-AC-5 change 7: check-no-live.sh fails on a missing file"; fi
+# the fetch path runs it before the fetch/archive: in build-packages.sh before the --fetchonly emerge, or in the
+# repro-fetch recipe before fetch-distfiles.sh
+BPK="$ROOT/scripts/build-packages.sh"
+ck=$(fline "$BPK" 'check-no-live\.sh'); fo=$(fline "$BPK" 'exec .*--fetchonly')
+rf=$(awk '/^repro-fetch:/{on=1;next} on&&/^[^\t]/{on=0} on' "$ROOT/Makefile")
+mk_ck=$(printf '%s\n' "$rf" | grep -n 'check-no-live\.sh' | head -n 1 | cut -d: -f1)
+mk_fd=$(printf '%s\n' "$rf" | grep -n 'fetch-distfiles\.sh' | head -n 1 | cut -d: -f1)
+if { [ -n "$ck" ] && [ -n "$fo" ] && [ "$ck" -lt "$fo" ]; } || { [ -n "$mk_ck" ] && [ -n "$mk_fd" ] && [ "$mk_ck" -lt "$mk_fd" ]; }; then pass "P02-AC-5 change 7: the fetch path runs check-no-live.sh before fetching/archiving"; else fail "P02-AC-5 change 7: the fetch path runs check-no-live.sh before fetching/archiving (build-packages '${ck:-none}' vs '${fo:-none}'; Makefile '${mk_ck:-none}' vs '${mk_fd:-none}')"; fi
+# Portage config: build-packages.sh copies configs/portage/package.mask/* onto the sysroot AND the build host's
+# /etc/portage (host BDEPEND resolution), so the repo files under configs/portage/package.mask are the source.
+# Existing ">=dev-cpp/eigen-9999" does not match 3.4.9999; the live versions seen must be masked exactly.
+PM=$(cat "$ROOT"/configs/portage/package.mask/* 2>/dev/null | grep -v '^[[:space:]]*#')
+for pat in '^=x11-base/xorg-proto-9999([[:space:]]|$)' '^=dev-cpp/eigen-3\.4\.9999([[:space:]]|$)'; do
+	if echo "$PM" | grep -Eq "$pat"; then pass "P02-AC-6 change 7: package.mask has a live-version mask matching $pat"; else fail "P02-AC-6 change 7: package.mask has a live-version mask matching $pat"; fi
+done
 # ================= slice cases end: add later slices' cases above this line =================
 
 [ "$fails" -eq 0 ]
