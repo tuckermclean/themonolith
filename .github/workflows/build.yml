@@ -20,8 +20,7 @@ on:
     branches: [main]
     # Only a change to a build input starts a push build (GitHub does not apply paths to tag pushes).
     paths:
-      - configs/portage/world
-      - configs/portage/versions.lock
+      - configs/portage/**
       - configs/overlay/**
       - scripts/**
       - rootfs/**
