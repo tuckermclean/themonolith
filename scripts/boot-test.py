@@ -860,14 +860,42 @@ def capture_output(child, cmd, timeout=30):
     return exit_code, output
 
 
-def run_check(child, name, cmd, validator, timeout=30):
+def failure_evidence(child, cmd, files, timeout=30):
+    """
+    Evidence for a failed check that named the `files` its command reads, taken in
+    the same boot: their sha256sums, the last 50 lines of dmesg and a second run of
+    `cmd`. Never raises; the check stays failed whatever the second run gives.
+    """
+    parts = []
+    for label, evidence_cmd in (
+        ("sha256sum", "sha256sum " + " ".join(files) + " 2>&1"),
+        ("dmesg | tail -n 50", "dmesg 2>&1 | tail -n 50"),
+        ("second run of the check's command", cmd),
+    ):
+        try:
+            code, out = capture_output(child, evidence_cmd, timeout=timeout)
+            parts.append(f"--- {label} (exit {code}) ---\n{out.strip()}")
+        except (pexpect.TIMEOUT, pexpect.EOF) as exc:
+            parts.append(f"--- {label}: {type(exc).__name__} after {timeout}s ---")
+    return "\n".join(parts)
+
+
+def run_check(child, name, cmd, validator, timeout=30, files=()):
     """
     Run `cmd` in the guest shell, wrapped with a unique sentinel that carries
     the exit code, and hand (exit_code, output_text) to `validator`.
 
     Returns (ok: bool, detail: str). Never raises — callers collect results
-    from every check so one failure doesn't hide the rest.
+    from every check so one failure doesn't hide the rest. A failed check that
+    names `files` gets failure_evidence appended to its detail.
     """
+    ok, detail = _run_check(child, name, cmd, validator, timeout)
+    if not ok and files:
+        detail += "\n" + failure_evidence(child, cmd, files, timeout)
+    return ok, detail
+
+
+def _run_check(child, name, cmd, validator, timeout):
     try:
         exit_code, output = capture_output(child, cmd, timeout=timeout)
     except pexpect.TIMEOUT:
@@ -1046,6 +1074,17 @@ def smoke_perl_utf8(child):
                      "perl -Mutf8 -CS -e 'print uc(qq(\\x{e9}));'", exit_code_only())
 
 
+# /usr/bin/perl goes last: the sha256sum line must not contain "perl <guestbook.cgi path>".
+PERL_CGI_FILES = (
+    "/usr/lib/cgi-bin/guestbook.cgi",
+    "/usr/lib/perl5/5.42.0/CGI.pm",
+    "/usr/lib/perl5/5.42.0/if.pm",
+    "/usr/lib/perl5/5.42.0/deprecate.pm",
+    "/usr/lib/perl5/5.42.0/i486-linux/Config.pm",
+    "/usr/bin/perl",
+)
+
+
 def smoke_perl_cgi(child):
     """
     CGI.pm's param() parses a synthetic query string — proves the pure-perl
@@ -1055,7 +1094,7 @@ def smoke_perl_cgi(child):
     return run_check(
         child, "CGI.pm param() works",
         "perl -MCGI -e 'print CGI->new(q(x=42))->param(q(x));'",
-        contains("42"))
+        contains("42"), files=PERL_CGI_FILES)
 
 
 def smoke_guestbook(child, results):
@@ -1080,7 +1119,7 @@ def smoke_guestbook(child, results):
         "rm -f /tmp/guestbook.db; "
         "REQUEST_METHOD=GET QUERY_STRING='name=Ada&message=Hello+from+1996' "
         "perl /usr/lib/cgi-bin/guestbook.cgi",
-        contains("Ada|Hello from 1996"),
+        contains("Ada|Hello from 1996"), files=PERL_CGI_FILES,
     )
     results.append(("guestbook.cgi inserts + reads back a row via sqlite3", ok1, detail1))
 
