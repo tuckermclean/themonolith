@@ -20,7 +20,7 @@ done
 
 tmp=$(mktemp "$out.XXXXXX") || exit 1
 keys=$(printf '%s\n' $FIELDS | jq -R . | jq -s .)
-if jq -n --argjson keys "$keys" '$ENV | with_entries(select(.key | IN($keys[])))' >"$tmp"; then
+if jq -n --argjson keys "$keys" 'reduce $keys[] as $k ({}; .[$k] = $ENV[$k])' >"$tmp"; then
 	mv "$tmp" "$out"
 else
 	rm -f "$tmp"
