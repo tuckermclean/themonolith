@@ -13,6 +13,11 @@
 
 set -e
 
+umask 022
+export TZ=UTC LC_ALL=C
+
+[ -n "${SOURCE_DATE_EPOCH}" ] || { echo "build-rootfs.sh: SOURCE_DATE_EPOCH is not set" >&2; exit 1; }
+
 # Configuration
 ROOTFS_DIR="/rootfs-build"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
@@ -716,6 +721,26 @@ create_squashfs() {
     else
         log_warn "host makewhatis or man dir missing; whatis database not baked"
     fi
+
+    # The shipped copy of the package database records build times, install
+    # counters and mtimes that differ run to run: normalise it, then clamp every
+    # mtime in the tree (symlinks included) so the squashfs does not depend on
+    # when the files were written.
+    if [ -d "$ROOTFS_DIR/var/db/pkg" ]; then
+        sh "$(dirname "$0")/normalize-vdb.sh" "$ROOTFS_DIR/var/db/pkg"
+        # Portage's own caches are regenerable and carry wall-clock times; the counter file is the highest
+        # renumbered COUNTER. The directory stays (the attestation allowlist names it).
+        if [ -d "$ROOTFS_DIR/var/cache/edb" ]; then
+            rm -f "$ROOTFS_DIR/var/cache/edb/vdb_metadata.pickle" \
+                  "$ROOTFS_DIR/var/cache/edb/vdb_metadata_delta.json" \
+                  "$ROOTFS_DIR/var/cache/edb/mtimedb"
+            find "$ROOTFS_DIR/var/db/pkg" -name COUNTER -type f -exec cat {} + \
+                | LC_ALL=C sort -n | tail -n 1 > "$ROOTFS_DIR/var/cache/edb/counter.new"
+            [ -s "$ROOTFS_DIR/var/cache/edb/counter.new" ] || echo 0 > "$ROOTFS_DIR/var/cache/edb/counter.new"
+            mv "$ROOTFS_DIR/var/cache/edb/counter.new" "$ROOTFS_DIR/var/cache/edb/counter"
+        fi
+    fi
+    find "$ROOTFS_DIR" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
     # Create SquashFS with gzip compression (low memory for i486).
     # mksquashfs 4.5+ reads SOURCE_DATE_EPOCH from the environment automatically;

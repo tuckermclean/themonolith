@@ -14,7 +14,7 @@ ARG PKGCHECK_VERSION=0.10.49
 # Fast tier: sh, bash, python3 + PyYAML, zstd (pr-validate.yml); shellcheck; jq.
 # Slow tier: qemu-system-x86 + ovmf + pexpect (boot-test.yml), kmod (its module check),
 # squashfs-tools, xorriso, mtools, dosfstools, cpio (ISO and rootfs inspection), pax-utils (scanelf, O02),
-# python3-venv (pkgcheck, R02).
+# python3-venv (pkgcheck, R02), diffoscope-minimal (the reproducibility gate's report on a mismatch, P02).
 RUN set -eu; \
     rm -f /etc/apt/sources.list.d/debian.sources; \
     printf '%s\n' \
@@ -34,7 +34,7 @@ RUN set -eu; \
       > /etc/apt/sources.list.d/snapshot.sources; \
     apt-get -o Acquire::Retries=5 update; \
     DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-      bash ca-certificates cpio curl diffutils dosfstools e2fsprogs file git jq kmod make mtools ovmf \
+      bash ca-certificates cpio curl diffoscope-minimal diffutils dosfstools e2fsprogs file git jq kmod make mtools ovmf \
       pax-utils python3 python3-pexpect python3-venv python3-yaml qemu-system-x86 shellcheck squashfs-tools \
       xorriso zstd; \
     rm -rf /var/lib/apt/lists/*

@@ -54,6 +54,7 @@ check_source_log() {
 # Parse arguments
 RESUME=0
 VERBOSE=0
+FETCHONLY=0
 while [[ $# -gt 0 ]]; do
     case $1 in
         --check-source-log)
@@ -72,9 +73,13 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=1
             shift
             ;;
+        --fetchonly)
+            FETCHONLY=1
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--resume] [--verbose] | --check-source-log <logfile>"
+            echo "Usage: $0 [--resume] [--verbose] [--fetchonly] | --check-source-log <logfile>"
             exit 1
             ;;
     esac
@@ -320,6 +325,24 @@ fi
 # Combined log for the parallel build
 LOGFILE="${LOGS_DIR}/emerge-parallel.log"
 
+# --fetchonly: download the distfiles of the same dependency graph and build nothing (the reproducibility
+# gate's fetch job; the offline builds then run with fetching disabled).
+if [ ${FETCHONLY} -eq 1 ]; then
+    echo "==> Fetching the distfiles of ${#ATOMS[@]} atoms"
+    unset BUILD_DIR
+    # A live (9999) ebuild has no distfile: the fetch would archive nothing for it and the offline build would fail.
+    # Resolve the graph first (the same atoms and flags, host and target side) and stop on any live package.
+    PRETEND_OUT="${LOGS_DIR}/emerge-pretend.txt"
+    if ! ${EMERGE_CMD} --pretend --color=n "${USEPKG_FLAGS[@]}" "${EXTRA_FLAGS[@]}" "${ATOMS[@]}" > "${PRETEND_OUT}" 2>&1; then
+        cat "${PRETEND_OUT}"
+        echo "ERROR: the dependency resolution failed"
+        exit 1
+    fi
+    cat "${PRETEND_OUT}"
+    sh "${SCRIPTS_DIR}/check-no-live.sh" "${PRETEND_OUT}" || exit 1
+    exec ${EMERGE_CMD} --fetchonly "${USEPKG_FLAGS[@]}" "${EXTRA_FLAGS[@]}" "${ATOMS[@]}"
+fi
+
 if [ $VERBOSE -eq 1 ]; then
     echo "  Running: ${EMERGE_CMD} --jobs=${JOBS} --load-average=${LOAD_AVG} --keep-going --buildpkg ${USEPKG_FLAGS[*]} ${EXTRA_FLAGS[*]} ${ATOMS[*]}"
 fi
@@ -506,6 +529,7 @@ elif [ "${RELEASE}" -eq 1 ]; then
             --log "${LOGFILE}" \
             --start "${RUN_START}" \
             --exceptions "${BOOTSTRAP_EXCEPTIONS}" \
+            --allowlist "${CONFIGS_DIR}/attestation/unowned-allowlist.yaml" \
             --output "${OUTPUT_DIR}/source-audit.tsv"; then
         echo "::error::Source audit failed: the sysroot holds files not built from source in this run"
         exit 1
