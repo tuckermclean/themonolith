@@ -1,0 +1,6 @@
+# nft embeds MAKE_STAMP, which configure sets to "$(shell date +%s)"; take it from SOURCE_DATE_EPOCH.
+post_src_prepare() {
+	[[ -n ${SOURCE_DATE_EPOCH} ]] || die "SOURCE_DATE_EPOCH is not set"
+	sed -i "s|^MAKE_STAMP=.*|MAKE_STAMP=\"${SOURCE_DATE_EPOCH}\"|" "${S}/configure" || die
+	grep -q "^MAKE_STAMP=\"${SOURCE_DATE_EPOCH}\"" "${S}/configure" || die "nftables: MAKE_STAMP not set from SOURCE_DATE_EPOCH"
+}

@@ -5,13 +5,18 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
 
 test-unit:
 	toolbox/run --network none -- sh -c 'echo "==> Shell unit tests (scripts/tests/*.sh)"; rc=0; for t in scripts/tests/*.sh; do [ -e "$$t" ] || continue; echo "==> Running $$t"; sh "$$t" || { echo "::error file=$$t::test suite failed"; rc=1; }; done; exit $$rc'
+
+# Compare two ISOs by sha256 (P02); fails on any difference. On a mismatch diffoscope's HTML report goes to DIFFOSCOPE_HTML.
+DIFFOSCOPE_HTML ?= output/diffoscope.html
+compare:
+	toolbox/run --network none -- env DIFFOSCOPE_HTML='$(DIFFOSCOPE_HTML)' sh scripts/compare-isos.sh '$(ISO_A)' '$(ISO_B)'
 
 # pkgcheck scan of the overlay against the pinned tree (needs the network for sync-portage).
 test-overlay: sync-portage
@@ -54,7 +59,7 @@ ISO ?= $(DEFAULT_ISO)
 # (packages, their kernel-module check, then rootfs; iso follows as the default ISO's prerequisite) runs before the first boot test.
 # The rc1 lane builds nothing. Prerequisites run left to right, so this sits ahead of test-boot.
 test_build_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),,sync-portage build-packages verify-kernel-modules build-rootfs))
-test: test-lint test-unit test-revbump test-overlay test-rust-offline $(test_build_dep) test-boot test-artifact test-gates test-cve-canary test-static-rebuild
+test: test-lint test-unit test-revbump test-overlay test-rust-offline $(test_build_dep) test-boot test-artifact test-gates test-cve-canary test-static-rebuild test-repro
 
 # Where fetch-iso writes the verified ISO.
 ISO_OUT ?= $(DEFAULT_ISO)
@@ -255,6 +260,8 @@ CROSSDEV_CONTAINER := monolith-crossdev-build
 # rc1's tree: gentoo-mirror commit TREE_COMMIT, archived once as an OCI artifact (scripts/seed-tree.sh) and
 # restored by digest (scripts/sync-portage.sh). docs/tree-pin.md has the evidence.
 TREE_COMMIT := 6e88ed01f3e97de8710efe1c333808dfbd05bf32
+# SPEC §6: the committer time of TREE_COMMIT (2026-08-11T23:00:56Z, docs/tree-pin.md).
+SOURCE_DATE_EPOCH := 1786489256
 TREE_FILES := 130089
 TREE_DIGEST := sha256:b01bbe7a886fa869a4018a5f711e11fae8fb783b30878216b0f8f408ad2a70bd
 TREE_REF := $(REGISTRY)/gentoo-tree
@@ -429,7 +436,7 @@ cache-push:
 JOBS ?= $(shell nproc)
 LOAD_AVG ?= $(shell nproc)
 MONOLITH_USEPKG ?= y
-PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG) -e MONOLITH_USEPKG=$(MONOLITH_USEPKG)
+PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG) -e MONOLITH_USEPKG=$(MONOLITH_USEPKG) -e SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH)
 DISTFILES_DIR ?= output/distfiles
 PORTAGE_LOGS_DIR ?= output/portage-logs
 
@@ -465,6 +472,98 @@ extract: pull-image ensure-volume
 	@echo "==> Installing packages from binpkgs"
 	$(BUILD_RUN) /scripts/extract-packages.sh
 
+# ---- P02: the reproducibility gate ----
+
+# fetch: the only step with a network. It downloads the distfiles of the release dependency graph (the cross emerge of
+# build-packages.sh in release mode, --fetchonly), packs them into DISTFILES_ARCHIVE and records every pin in RELEASE_INPUTS.
+# build-a and build-b: each reads its pins only from RELEASE_INPUTS and its source from the checkout, pulls the builder
+# and the tree by the recorded digests, unpacks the archive and builds with --network none. They differ in hostname and
+# JOBS; each writes its own output directory. compare then checks the two ISOs.
+RELEASE_INPUTS ?= output/release-inputs.json
+DISTFILES_ARCHIVE ?= $(dir $(RELEASE_INPUTS))distfiles.tar
+REPRO_VERSIONS := output/builder-versions.env
+ISO_A ?= output/repro-a/iso/boot-test.iso
+ISO_B ?= output/repro-b/iso/boot-test.iso
+# One distfile name removed from the unpacked archive before the build (the AC-4 run); the build must fail on it.
+DROP_DISTFILE ?=
+export DROP_DISTFILE
+REPRO_HOST_a := monolith-build-a
+REPRO_HOST_b := monolith-build-b
+REPRO_JOBS_a := 2
+REPRO_JOBS_b := 3
+
+# The recorded value of a field of RELEASE_INPUTS (empty if the file is absent; repro-build then fails naming the field).
+ri = $(if $(wildcard $(RELEASE_INPUTS)),$(shell jq -r '.$(1) // empty' '$(RELEASE_INPUTS)'))
+RI_FIELDS := VERSION SOURCE_COMMIT TREE_COMMIT TREE_DIGEST BUILDER_DIGEST DISTFILES_DIGEST SOURCE_DATE_EPOCH
+
+# The release dependency graph's distfiles, fetched with the network the builder is given here.
+F_OUT := output/repro-fetch
+F_MOUNTS := -v $(CURDIR)/configs:/configs -v $(CURDIR)/scripts:/scripts:ro \
+	-v $(CURDIR)/$(F_OUT):/output -v $(abspath $(TREE_DIR)):/var/db/repos/gentoo \
+	-v $(CURDIR)/$(F_OUT)/distfiles:/var/cache/distfiles -v $(CURDIR)/$(F_OUT)/portage-logs:/var/log/portage
+
+# The fetch keeps to $(F_OUT), so it leaves the iteration state (output/packages, output/distfiles, the built and failed lists) alone.
+repro-fetch: pull-image builder-manifest sync-portage grype-db-update
+	mkdir -p $(F_OUT)
+	$(DOCKER) run --rm -v $(CURDIR)/$(F_OUT):/d $(IMAGE_NAME) find /d -mindepth 1 -delete
+	mkdir -p $(F_OUT)/distfiles $(F_OUT)/portage-logs $(F_OUT)/packages $(F_OUT)/logs $(F_OUT)/sysroot
+	$(DOCKER) run --rm $(F_MOUNTS) -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG) -e MONOLITH_USEPKG=n $(IMAGE_NAME) /scripts/build-packages.sh --fetchonly
+	toolbox/run --network none -- sh scripts/fetch-distfiles.sh '$(F_OUT)/distfiles' '$(DISTFILES_ARCHIVE)' '$(SOURCE_DATE_EPOCH)'
+	$(ATTEST_RUN) sh /scripts/builder-versions.sh > '$(REPRO_VERSIONS)'
+	mkdir -p '$(dir $(RELEASE_INPUTS))'
+	toolbox/run --network none -- env VERSION='$(BUILD_VERSION)' SOURCE_COMMIT="$$(git rev-parse HEAD)" TREE_COMMIT='$(TREE_COMMIT)' TREE_DIGEST='$(TREE_DIGEST)' BUILDER_DIGEST='$(BUILDER_DIGEST)' SOURCE_DATE_EPOCH='$(SOURCE_DATE_EPOCH)' sh scripts/repro-inputs.sh '$(RELEASE_INPUTS)' '$(DISTFILES_ARCHIVE)' '$(REPRO_VERSIONS)'
+	@echo "==> Wrote $(RELEASE_INPUTS) and $(DISTFILES_ARCHIVE)"
+
+# Without RELEASE_INPUTS the recipe names no builder; the field check below fails first. RELEASE_INPUTS is read when make parses, so a build started in the same make run as repro-fetch goes through a second make.
+repro-build-a:
+	+@$(MAKE) --no-print-directory repro-build SLOT=a
+
+repro-build-b:
+	+@$(MAKE) --no-print-directory repro-build SLOT=b
+
+ifneq ($(filter a b,$(SLOT)),)
+R_OUT := output/repro-$(SLOT)
+R_HOST := $(REPRO_HOST_$(SLOT))
+R_JOBS := $(REPRO_JOBS_$(SLOT))
+R_IMAGE := $(IMAGE_NAME)-repro
+R_MOUNTS := -v $(CURDIR)/configs:/configs -v $(CURDIR)/scripts:/scripts:ro \
+	-v $(CURDIR)/$(R_OUT):/output -v $(CURDIR)/$(R_OUT)/repos/gentoo:/var/db/repos/gentoo \
+	-v $(CURDIR)/$(R_OUT)/distfiles:/var/cache/distfiles -v $(CURDIR)/$(R_OUT)/portage-logs:/var/log/portage
+R_RUN := $(DOCKER) run --rm --network none --hostname $(R_HOST) -e SOURCE_DATE_EPOCH=$(call ri,SOURCE_DATE_EPOCH)
+R_ROOTFS_MOUNTS := -v $(CURDIR)/configs:/configs:ro -v $(CURDIR)/scripts:/scripts:ro -v $(CURDIR)/rootfs:/rootfs:ro \
+	-v $(CURDIR)/$(R_OUT):/work/output -e OUTPUT_DIR=/work/output -e BUILD_VERSION=$(call ri,VERSION)
+R_OWN := $(shell id -u):$(shell id -g)
+endif
+
+repro-build:
+	@test -n '$(SLOT)' || { echo "repro-build: run make repro-build-a or repro-build-b"; exit 1; }
+	@for f in $(RI_FIELDS); do v=$$(jq -r --arg f "$$f" '.[$$f] // empty' '$(RELEASE_INPUTS)') && [ -n "$$v" ] || { echo "repro-build: $(RELEASE_INPUTS) has no $$f"; exit 1; }; done
+	test "$$(git rev-parse HEAD)" = '$(call ri,SOURCE_COMMIT)' || { echo "repro-build: the checkout is not the recorded source commit $(call ri,SOURCE_COMMIT)"; exit 1; }
+	$(if $(call ri,BUILDER_DIGEST),$(DOCKER) pull $(REGISTRY)/builder@$(call ri,BUILDER_DIGEST))
+	$(if $(call ri,BUILDER_DIGEST),$(DOCKER) tag $(REGISTRY)/builder@$(call ri,BUILDER_DIGEST) $(R_IMAGE))
+	mkdir -p $(R_OUT)
+	$(DOCKER) run --rm -v $(CURDIR)/output:/output $(R_IMAGE) find /output/repro-$(SLOT) -mindepth 1 -delete
+	mkdir -p $(R_OUT)/packages $(R_OUT)/logs $(R_OUT)/sysroot $(R_OUT)/distfiles $(R_OUT)/portage-logs $(R_OUT)/repos/gentoo $(R_OUT)/iso
+	$(TREE_RUN) sh -c 'set -eu; $(tree_login); REGISTRY=$(REGISTRY) TREE_REF=$(TREE_REF) TREE_COMMIT=$(call ri,TREE_COMMIT) TREE_DIGEST=$(call ri,TREE_DIGEST) TREE_DIR=$(R_OUT)/repos/gentoo sh scripts/sync-portage.sh'
+	toolbox/run --network none -- sh scripts/unpack-distfiles.sh '$(DISTFILES_ARCHIVE)' '$(call ri,DISTFILES_DIGEST)' '$(R_OUT)/distfiles' "$$DROP_DISTFILE"
+	toolbox/run --network none -- sh scripts/check-distfiles.sh '$(R_OUT)/distfiles'
+	$(if $(CI),rm -f '$(DISTFILES_ARCHIVE)')
+	$(R_RUN) $(R_MOUNTS) -e JOBS=$(R_JOBS) -e LOAD_AVG=$(R_JOBS) -e MONOLITH_USEPKG=n -e FETCHCOMMAND=/bin/false -e RESUMECOMMAND=/bin/false $(R_IMAGE) /scripts/build-packages.sh
+	$(R_RUN) $(R_ROOTFS_MOUNTS) $(R_IMAGE) /scripts/build-rootfs.sh
+	$(R_RUN) $(R_ROOTFS_MOUNTS) $(R_IMAGE) /scripts/build-initrd.sh
+	$(R_RUN) $(R_ROOTFS_MOUNTS) $(R_IMAGE) /scripts/build-iso.sh
+	$(R_RUN) -v $(CURDIR)/$(R_OUT):/output $(R_IMAGE) sh -c 'tar -C /output/sysroot -cf /output/sysroot.tar . && chown -R $(R_OWN) /output'
+	toolbox/run --network none -- sh scripts/verify-kernel-modules.sh '$(R_OUT)/sysroot'
+	mv '$(R_OUT)/themonolith-$(call ri,VERSION).iso' '$(R_OUT)/iso/boot-test.iso'
+	df -h .
+
+# The gate on one machine: fetch, two offline builds, compare.
+test-repro: repro-fetch repro-build-a repro-build-b compare
+
+# Writes gate=true|false to $GITHUB_OUTPUT: whether this run takes the gate path (a tag, or a dispatch that asks for it).
+gate-route:
+	@if [ '$(GITHUB_REF_TYPE)' = tag ] || [ '$(GATE)' = true ]; then g=true; else g=false; fi; echo "gate-route: gate=$$g"; echo "gate=$$g" >> "$${GITHUB_OUTPUT:-/dev/stdout}"
+
 # R05-AC-2: rl144 and stele build in the builder from distfiles fetched by emerge --fetchonly, under --network none with
 # FETCHCOMMAND=/bin/false, and run (scripts/rust-offline-build.sh). The builder is taken by digest and the pinned tree
 # must be in TREE_DIR (test-rust-offline depends on sync-portage). With podman, DOCKER='podman --cgroup-manager=cgroupfs' where no systemd user session runs.
@@ -475,7 +574,7 @@ test-rust-offline: sync-portage
 # ---- B03: the root filesystem, the initramfs and the ISO ----
 
 ROOTFS_RUN = $(DOCKER) run --rm -v $(CURDIR)/configs:/configs:ro -v $(CURDIR)/scripts:/scripts:ro \
-	-v $(CURDIR)/rootfs:/rootfs:ro -v $(CURDIR)/output:/work/output -e OUTPUT_DIR=/work/output $(VERSION_ENV) $(IMAGE_NAME)
+	-v $(CURDIR)/rootfs:/rootfs:ro -v $(CURDIR)/output:/work/output -e OUTPUT_DIR=/work/output -e SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) $(VERSION_ENV) $(IMAGE_NAME)
 
 # Asserts the kernel modules the tier docs promise are in the sysroot of the package build.
 verify-kernel-modules:

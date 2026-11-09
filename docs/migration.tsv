@@ -67,14 +67,14 @@ configs/overlay/dev-lang/monolith-perl/Manifest	100644	ad881039237711c06397df179
 configs/overlay/dev-lang/monolith-perl/monolith-perl-5.42.0-r5.ebuild	100644	54290ed6cf563addb7ed7724086ed491a99d7895	B01	port	configs/overlay/dev-lang/monolith-perl/monolith-perl-5.42.0-r5.ebuild	-
 configs/overlay/games-roguelike/rl144/Manifest	100644	d7f805a8a74d22939cead90a463fbd5cffe4e1bc	R05	port+fix	configs/overlay/games-roguelike/rl144/Manifest	-
 configs/overlay/games-roguelike/rl144/files/i486-unknown-linux-musl.json	100644	0c5889b6da6961c6841f22f0b3abd257d73d4a14	R05	port	configs/overlay/games-roguelike/rl144/files/i486-unknown-linux-musl.json	-
-configs/overlay/games-roguelike/rl144/rl144-0.1.0_p20260805.ebuild	100644	38aadeda0d526baf8fd9fae06e329b12563eb0a2	R05	port+fix	configs/overlay/games-roguelike/rl144/rl144-0.1.0_p20260805-r1.ebuild	-
+configs/overlay/games-roguelike/rl144/rl144-0.1.0_p20260805.ebuild	100644	38aadeda0d526baf8fd9fae06e329b12563eb0a2	R05	port+fix	configs/overlay/games-roguelike/rl144/rl144-0.1.0_p20260805-r2.ebuild	-
 configs/overlay/metadata/layout.conf	100644	ca9fee10308c229aa7a90e37db832bb27d8701c6	R01	port	configs/overlay/metadata/layout.conf	-
 configs/overlay/profiles/repo_name	100644	bc3a87f340ce3cabb8928cb43d9f36de7fd52bf4	R01	port	configs/overlay/profiles/repo_name	-
 configs/overlay/sys-kernel/monolith-kernel/Manifest	100644	d8fb659c2b8816a83471ded08be71fae5c48eac1	B01	port	configs/overlay/sys-kernel/monolith-kernel/Manifest	B02
 configs/overlay/sys-kernel/monolith-kernel/files/linux-6.12-gcc15-std-gnu11.patch	100644	dd11a2ecd90f738e3c51e0a5e0b95e9260ad0cd0	B01	port	configs/overlay/sys-kernel/monolith-kernel/files/linux-6.12-gcc15-std-gnu11.patch	-
 configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r8.ebuild	100644	62b3289da8997fd064a02bfde0d1c75451e8c1f9	B01	port	configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r8.ebuild	B02:configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r9.ebuild
 configs/overlay/www-client/stele/Manifest	100644	fcf1ca08b4e7c0e08854a85f95041d0f5222a934	R05	port+fix	configs/overlay/www-client/stele/Manifest	-
-configs/overlay/www-client/stele/stele-0.1.0_p20260821.ebuild	100644	596e109e93b88d4f156855ab3ee547b4291725fa	R05	port+fix	configs/overlay/www-client/stele/stele-0.1.0_p20260821-r1.ebuild	-
+configs/overlay/www-client/stele/stele-0.1.0_p20260821.ebuild	100644	596e109e93b88d4f156855ab3ee547b4291725fa	R05	port+fix	configs/overlay/www-client/stele/stele-0.1.0_p20260821-r2.ebuild	-
 configs/overlay/x11-base/monolith-xserver/Manifest	100644	6c142d25c20649ee1cd4560978a81657c753f608	B01	port	configs/overlay/x11-base/monolith-xserver/Manifest	-
 configs/overlay/x11-base/monolith-xserver/files/XShm.h	100644	b64346a147cea376a843d215ac798cee40e50896	B01	port	configs/overlay/x11-base/monolith-xserver/files/XShm.h	-
 configs/overlay/x11-base/monolith-xserver/files/XTest.h	100644	116702158c6a9e889711a776512f3c9befb8f5b1	B01	port	configs/overlay/x11-base/monolith-xserver/files/XTest.h	-
@@ -148,7 +148,7 @@ scripts/build-iso.sh	100755	faccf1d64a16b2fadd5ccde38f2c52f219e4d24a	B03	port	sc
 scripts/build-packages.sh	100755	5308e8c95e3633c4686f75473a6a462eddfcf481	B01	port+fix	scripts/build-packages.sh	B02 R03 G01
 scripts/build-rootfs.sh	100755	465c8539b4643e6e1d6e7db22cc30719fdcee1ad	B03	port+fix	scripts/build-rootfs.sh	P02 G01
 scripts/check-cves.sh	100755	1bf98d6b1c819e6b241aacb90e32d68860ed8d07	S01	port+fix	scripts/check-cves.sh	-
-scripts/check-licenses.py	100755	f7796e46f4b337adc94fcc6a93bd4c712fffc1d6	S01	port	scripts/check-licenses.py	-
+scripts/check-licenses.py	100755	f7796e46f4b337adc94fcc6a93bd4c712fffc1d6	S01	port+fix	scripts/check-licenses.py	S02
 scripts/check-unowned.py	100755	63dc3b77d96e73dd38a877d7386dce949966a573	S01	port+fix	scripts/check-unowned.py	B01
 scripts/enrich-sbom.py	100755	1a13bab8c068f02806d74e904d2488deeb3d64dd	S01	port+fix	scripts/enrich-sbom.py	-
 scripts/extract-packages.sh	100755	48d27efd736f06c8afecccbf1c4b08a08d236689	B01	port	scripts/extract-packages.sh	R03 G01

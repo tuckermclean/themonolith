@@ -1,0 +1,16 @@
+[ebuild  N     ] net-libs/libpcap-1.10.6::gentoo to /usr/i486-linux-musl/ USE="static-libs -bluetooth -dbus -netlink -rdma -remote -test -usb -verify-sig -yydebug" 0 KiB
+[ebuild  N     ] dev-libs/gmp-6.3.0-r2:0/10.4::gentoo to /usr/i486-linux-musl/ USE="static-libs -asm -cpudetection -cxx -doc -pic -verify-sig" 0 KiB
+[ebuild  N     ] sys-apps/coreutils-9.11-r1::gentoo to /usr/i486-linux-musl/ USE="static -acl -caps -gmp -hostname -kill -multicall -nls -openssl (-selinux) -split-usr -test -test-full -vanilla -verify-sig -xattr" 0 KiB
+[ebuild  N     ] sys-apps/file-5.48::gentoo to /usr/i486-linux-musl/ USE="static-libs -bzip2 -lzip -lzma -python -seccomp -verify-sig -zlib -zstd" PYTHON_TARGETS="-python3_12 -python3_13 -python3_14" 0 KiB
+[ebuild  N     ] app-arch/xz-utils-5.8.3::gentoo to /usr/i486-linux-musl/ USE="static-libs -doc -extra-filters -nls -pgo -verify-sig" 0 KiB
+[ebuild  N    *] x11-base/xorg-proto-9999::gentoo  USE="-test" 0 KiB
+[ebuild  N    *] dev-libs/jansson-2.15.1:0/4::gentoo to /usr/i486-linux-musl/ USE="static-libs -doc" 0 KiB
+[ebuild  N     ] dev-libs/popt-1.19-r1::gentoo to /usr/i486-linux-musl/ USE="static-libs -nls" 0 KiB
+[ebuild  N     ] dev-libs/libevent-2.1.13:0/2.1-7::gentoo to /usr/i486-linux-musl/ USE="static-libs -clock-gettime -debug -malloc-replacement -ssl -test -verbose-debug -verify-sig" 0 KiB
+[ebuild  N    *] dev-libs/libffi-3.7.1:0/8::gentoo to /usr/i486-linux-musl/ USE="static-libs -debug -exec-static-trampoline -pax-kernel -test" 0 KiB
+[ebuild  N    ~] dev-python/pygments-2.20.0::gentoo  USE="-test" PYTHON_TARGETS="python3_14 -python3_12 -python3_13 -python3_14t (-python3_15) (-python3_15t)" 0 KiB
+[ebuild  N     ] media-libs/libjpeg-turbo-3.1.4.1:0/0.2::gentoo  USE="-java -static-libs -test -verify-sig" ABI_X86="(64) -32 (-x32)" 0 KiB
+[ebuild  N     ] dev-python/olefile-0.47::gentoo  USE="-doc" PYTHON_TARGETS="python3_14 -python3_12 -python3_13 -python3_14t (-python3_15) (-python3_15t)" 0 KiB
+[ebuild  N    *] dev-cpp/eigen-3.4.9999:3/3.4::gentoo  USE="openmp -adolc (-blas) -boost -cholmod -cuda -cuda-clang -debug -doc -fftw -hip -klu (-lapack) -mathjax (-metis) (-opengl) (-pastix) -pocketfft -sparsehash -spqr -superlu (-test) -umfpack" CPU_FLAGS_X86="sse sse2 -avx -avx2 -avx512dq -avx512f -f16c -fma3 -popcnt -sse3 -sse4_1 -sse4_2 -ssse3" LLVM_SLOT="22 -21 (-23)" 0 KiB
+[ebuild  N     ] dev-python/pyproject-metadata-0.12.1::gentoo  USE="-test -verify-provenance" PYTHON_TARGETS="python3_14 -python3_12 -python3_13 -python3_14t (-python3_15) (-python3_15t)" 0 KiB
+[ebuild  N     ] dev-libs/cJSON-1.7.19::gentoo to /usr/i486-linux-musl/ USE="-test" 0 KiB

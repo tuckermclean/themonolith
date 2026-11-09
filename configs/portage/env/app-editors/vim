@@ -1,0 +1,9 @@
+# pathdef.c records the builder's user and host (compiled_user, compiled_sys); --with-compiledby fixes both.
+if [[ ${EXTRA_ECONF} != *--with-compiledby=* ]]; then
+	EXTRA_ECONF+=" --with-compiledby=monolith"
+fi
+
+# src_prepare removes src/auto/configure; src_configure regenerates it from configure.ac.
+post_src_prepare() {
+	grep -q -e '--with-compiledby' "${S}/src/configure.ac" || die "vim: configure.ac no longer offers --with-compiledby"
+}

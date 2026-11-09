@@ -1,0 +1,13 @@
+[ebuild  N     ] sys-apps/gentoo-functions-1.7.7::gentoo to /usr/i486-linux-musl/ USE="-test" 0 KiB
+[ebuild  N     ] sys-apps/kmod-34.2::gentoo to /usr/i486-linux-musl/ USE="tools -debug -doc -lzma -pkcs7 -zlib -zstd" 0 KiB
+[ebuild  N     ] net-misc/iputils-20250605-r4::gentoo to /usr/i486-linux-musl/ USE="-arping -caps -clockdiff -doc -filecaps -idn -nls -suid -test -tracepath -verify-sig" 0 KiB
+[ebuild  N     ] sys-devel/binutils-config-5.6::gentoo to /usr/i486-linux-musl/ USE="-native-symlinks" 0 KiB
+[ebuild  N    *] x11-libs/libXfont-1.5.4-r1::monolith to /usr/i486-linux-musl/ 0 KiB
+[ebuild  N    *] sys-devel/binutils-2.46.1:2.46::gentoo to /usr/i486-linux-musl/ USE="static-libs -cet -debuginfod -doc -gprofng -hardened -multitarget -nls -pgo -plugins -test -vanilla -verify-sig -xxhash -zstd" 0 KiB
+[ebuild  N    *] x11-base/monolith-xserver-1.3_p20241113-r1::monolith to /usr/i486-linux-musl/ 0 KiB
+[ebuild  N    ~] dev-python/pygments-2.20.0::gentoo  USE="-test" PYTHON_TARGETS="python3_14 -python3_12 -python3_13 -python3_14t (-python3_15) (-python3_15t)" 0 KiB
+[ebuild  N    *] dev-cpp/eigen-3.4.9999:3/3.4::gentoo  USE="openmp -adolc (-blas) -boost -cholmod -cuda -cuda-clang -debug -doc -fftw -hip -klu (-lapack) -mathjax (-metis) (-opengl) (-pastix) -pocketfft -sparsehash -spqr -superlu (-test) -umfpack" CPU_FLAGS_X86="sse sse2 -avx -avx2 -avx512dq -avx512f -f16c -fma3 -popcnt -sse3 -sse4_1 -sse4_2 -ssse3" LLVM_SLOT="22 -21 (-23)" 0 KiB
+[ebuild  N     ] dev-python/olefile-0.47::gentoo  USE="-doc" PYTHON_TARGETS="python3_14 -python3_12 -python3_13 -python3_14t (-python3_15) (-python3_15t)" 0 KiB
+[ebuild  N    ~] dev-python/scikit-build-core-1.0.3::gentoo  USE="-test -verify-provenance" PYTHON_TARGETS="python3_14 -python3_12 -python3_13 (-python3_15)" 0 KiB
+[ebuild  N    ~] dev-python/pybind11-3.1.0::gentoo  USE="-test" PYTHON_TARGETS="python3_14 -python3_12 -python3_13 (-python3_15)" 0 KiB
+[ebuild  N     ] dev-python/pillow-12.3.0::gentoo  USE="jpeg zlib -avif -debug -examples -imagequant -jpeg2k -lcms -raqm -test -tiff -tk -truetype -webp -xcb" PYTHON_TARGETS="python3_14 -python3_12 -python3_13 (-python3_15)" 0 KiB

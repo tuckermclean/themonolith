@@ -1,0 +1,6 @@
+# NetHack takes its build date from the build-time clock; REPRODUCIBLE_BUILD makes makedefs -v use SOURCE_DATE_EPOCH.
+post_src_prepare() {
+	[[ -n ${SOURCE_DATE_EPOCH} ]] || die "SOURCE_DATE_EPOCH is not set"
+	sed -i 's|^/\* #define REPRODUCIBLE_BUILD \*/|#define REPRODUCIBLE_BUILD|' "${S}/include/config.h" || die
+	grep -q '^#define REPRODUCIBLE_BUILD' "${S}/include/config.h" || die "nethack: REPRODUCIBLE_BUILD not enabled in config.h"
+}

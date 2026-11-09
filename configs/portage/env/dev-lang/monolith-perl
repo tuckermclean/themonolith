@@ -1,0 +1,2 @@
+# The perl in world is dev-lang/monolith-perl; its lib/unicore/mktables is the one dev-lang/perl patches.
+source "${PORTAGE_CONFIGROOT:-/}etc/portage/env/dev-lang/perl"
