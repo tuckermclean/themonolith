@@ -12,7 +12,7 @@ This repository continues
 `v0.1.0-rc1`. It ports the predecessor's working recipes, scripts, tests and workflows, replaces the dead
 S3 storage with GHCR and GitHub Releases, and fixes the bugs a study of the predecessor verified. It
 uses Portage, crossdev and the standard kernel, ISO, QEMU and supply-chain tools, and writes custom code
-only where they leave a gap. It is at the specification stage: nothing here builds an ISO yet.
+only where they leave a gap. The build workflow builds an ISO from this repository and the boot tests run on it.
 
 Licensed under the [MIT License](LICENSE).
 
@@ -35,3 +35,122 @@ Milestones:
   99 of the predecessor's packages including `rl144` and `stele`, and only then is it tested, attested
   and published as a prerelease.
 - **MS3:** cutover to the first non-prerelease.
+
+## What is on the disc
+
+The [world file](configs/portage/world) lists 99 top-level atoms, cross-compiled for `i486-linux-musl`.
+Every one is checked by the `smoke` boot mode against a row of `scripts/smoke-checks.txt`. Some are overlay
+ebuilds (`monolith-*`: the kernel, the base `/etc` and helper scripts, perl, sqlite, the X server, `st`, `dwm`),
+two are Rust (`rl144`, `stele`), and the rest come from the pinned Gentoo tree.
+
+| Category | Packages |
+|---|---|
+| Kernel / init | `sys-kernel/monolith-kernel`, `sys-apps/sysvinit`, `sys-apps/busybox` (initrd) |
+| Base system | `app-misc/monolith-base` (`/etc`, init scripts, `monolith-net`, `monolith-router`, `monolith-persist`) |
+| Shells | `app-shells/bash`, `app-shells/dash`, `app-shells/zsh`, `app-shells/bash-completion` |
+| GNU userland | `sys-apps/coreutils`, `sys-apps/util-linux`, `sys-apps/findutils`, `sys-apps/grep`, `sys-apps/sed`, `sys-apps/gawk`, `sys-apps/diffutils`, `app-arch/tar`, `app-text/tree` |
+| Libraries | `sys-libs/readline`, `sys-libs/ncurses`, `sys-libs/zlib`, `dev-libs/libpcre2`, `dev-libs/openssl` |
+| Files and editors | `sys-apps/file`, `sys-apps/less`, `app-editors/vim`, `app-editors/nano` |
+| Man pages | `sys-apps/man-pages`, `app-text/mandoc` |
+| Dev tools | `sys-devel/binutils`, `dev-build/make`, `dev-debug/strace`, `sys-devel/patch`, `dev-debug/gdb` |
+| Scripting and databases | `dev-lang/lua`, `dev-lang/monolith-perl`, `dev-db/monolith-sqlite` |
+| Compression | `app-arch/xz-utils`, `app-arch/bzip2`, `app-arch/gzip`, `app-arch/zip`, `app-arch/unzip`, `app-arch/cpio` |
+| Network configuration | `sys-apps/iproute2`, `sys-apps/net-tools`, `net-misc/iputils`, `net-misc/dhcpcd`, `sys-apps/ethtool` |
+| Router | `net-firewall/nftables`, `net-dns/dnsmasq` |
+| Serial links and remote access | `net-dialup/ppp`, `net-misc/dropbear` |
+| Network clients | `net-misc/curl`, `net-misc/wget`, `net-misc/whois`, `net-analyzer/netcat`, `net-analyzer/traceroute`, `www-client/lynx`, `mail-client/mutt`, `net-irc/irssi` |
+| Network analysis | `net-misc/socat`, `net-analyzer/iftop`, `net-analyzer/tcpdump`, `net-analyzer/mtr`, `net-misc/iperf:3` |
+| Terminal and users | `app-misc/tmux`, `sys-apps/shadow` |
+| System utilities | `sys-process/procps`, `sys-process/htop`, `sys-process/lsof`, `sys-process/psmisc`, `app-admin/sysklogd`, `sys-apps/pv`, `<sys-fs/ncdu-2` |
+| Modules and filesystems | `sys-apps/kmod`, `sys-fs/e2fsprogs`, `sys-fs/dosfstools`, `sys-fs/squashfs-tools` |
+| Search and sync | `net-misc/rsync`, `sys-apps/the_silver_searcher` |
+| Hardware info | `sys-apps/smartmontools`, `sys-apps/hdparm`, `sys-apps/dmidecode` |
+| Console | `sys-apps/kbd`, `media-fonts/terminus-font`, `sys-libs/gpm` |
+| X (bitmap fonts only, no freetype) | `x11-base/monolith-xserver`, `x11-base/xorg-proto`, `x11-libs/libxcb`, `x11-libs/libX11`, `x11-libs/libXext`, `x11-terms/monolith-st`, `x11-wm/monolith-dwm` |
+| Browser | `www-client/stele` (no JavaScript) |
+| Amusements | `games-misc/bsd-games`, `app-misc/figlet`, `app-misc/cmatrix`, `app-misc/sl`, `games-roguelike/rl144`, `=games-roguelike/nethack-3.6.7-r1` |
+
+There is no native compiler on the disc (`sys-devel/gcc` is not in the world file).
+
+## Booting
+
+The ISO boots by BIOS (ISOLINUX) and by 64-bit UEFI (GRUB). The `bios` mode boots it at 64 MB of RAM under
+QEMU with `-cpu 486`; the `uefi` mode boots it under OVMF.
+
+ISOLINUX labels, typed at the `boot:` prompt. The default is `fb800`. The `entry` mode
+boots each label and checks the kernel command line.
+
+| Label | Effect |
+|---|---|
+| `linux` | Normal boot, text console |
+| `fb` | Framebuffer, 1024x768 (`vga=791`) |
+| `fb800` | Framebuffer, 800x600 (`vga=788`), the default |
+| `fb640` | Framebuffer, 640x480 (`vga=785`) |
+| `vga` | Ask for a video mode (`vga=ask`) |
+| `serial` | Serial console, `ttyS0` at 115200n8 |
+| `debug` | Verbose boot output |
+| `persist` | Use the `MONOLITH_PERSIST` partition |
+| `rescue` | A rescue shell |
+
+The GRUB menu has seven entries, in order: normal, framebuffer, serial, debug, rescue shell, `toram` and
+persistent. The `entry` mode boots each. The `toram` kernel parameter copies the root filesystem into RAM
+so the boot medium can be ejected; the `toram` mode ejects the CD and checks that the system survives.
+
+## Persistence
+
+`monolith-persist init <dev> [--swap N] [--yes]` makes `<dev>` an ext4 filesystem labelled
+`MONOLITH_PERSIST`, which erases it, and optionally creates an N MB swapfile in it. Boot with the `persist`
+label (or the GRUB persistent entry) to use it as the overlay. The swapfile is not enabled
+automatically: run `swapon /overlay/swapfile`. Without such a partition the overlay is in RAM and the boot
+prints a warning. The `persist-init` mode runs this whole sequence, including a file that survives an
+unclean shutdown.
+
+## Networking
+
+The initrd's BusyBox and the packages above provide `ip`, `ifconfig`, `dhcpcd`, `curl`, `wget`,
+`tcpdump` and the rest of the network tools. `monolith-router` turns the disc into a NAT router with DHCP and
+DNS for a LAN (the `nat` mode). The `nic` mode boots with the emulated `pcnet`, `rtl8139`, `tulip`,
+`ne2k_pci` and `ne2k_isa` cards.
+
+```
+ip link set eth0 up
+dhcpcd eth0
+```
+
+The `serial-net` mode joins two guests with a serial line on `ttyS1` and runs these between them. `ttyS0`
+is the console. The disc has no standalone `slattach`; use BusyBox's.
+
+```
+busybox slattach -p slip /dev/ttyS1
+pppd /dev/ttyS1 115200 noauth local logfile /tmp/pppd.log 10.2.2.1:10.2.2.2 connect "chat -t 60 '' AT OK ATD5551212 CONNECT"
+```
+
+SSH: start the server with `dropbear`. The first boot creates one host key, an ECDSA one
+(`/etc/init.d/S20keygen`). The `serial-net` mode logs in with a key over a forwarded port.
+
+## Graphical environment
+
+The X stack uses bitmap fonts only: no freetype, fontconfig or Xft. `startx` starts the TinyX `Xfbdev`
+server on the framebuffer, the `dwm` window manager and an `st` terminal. Boot a framebuffer label such as
+`fb800` first. The `gui` mode runs `startx` and checks that the server and `st` run and the screen is not
+blank. `stele` is a document-web browser with no JavaScript; the `stele-acid2` mode renders the Acid2 page
+with it.
+
+## Testing
+
+The tests run in the [toolbox](toolbox/) (`toolbox/run`). The checks that need no ISO:
+
+```
+make test-lint test-unit
+```
+
+`test-unit` runs every `scripts/tests/*.sh`, including the one that checks this README: it fails on a
+claim the repository does not test. The ISO is booted in QEMU under TCG by `scripts/boot-test.py`:
+
+```
+make test-boot MODE=<mode>
+```
+
+The boot modes are `bios`, `uefi`, `toram`, `ahci`, `nvme`, `usb`, `virtio`, `nicless`, `nic`, `vga`,
+`fbdev-modprobe`, `nat`, `gui`, `stele-acid2`, `clock-epoch`, `clock-1996`, `persist`, `persist-init`,
+`entry`, `serial-net` and `smoke`. `MODES="bios uefi"` runs several. The disc is not tested on Hyper-V.
