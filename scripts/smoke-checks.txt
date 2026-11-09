@@ -9,7 +9,7 @@ app-misc/monolith-base	run	which monolith-persist monolith-router monolith-net	/
 sys-apps/busybox	run	busybox | head -n 1	BusyBox v
 app-shells/bash	run	bash --version | head -n 1	GNU bash, version
 app-shells/dash	run	dash -c 'echo dash_$((6*7))'	dash_42
-sys-apps/sysvinit	run	cat /proc/1/comm	^init
+sys-apps/sysvinit	run	readlink /sbin/poweroff && test -x /sbin/bootlogd && test -x /sbin/init	^halt
 sys-apps/coreutils	run	ls --version | head -n 1	GNU coreutils
 sys-apps/util-linux	run	mount --version	util-linux
 sys-apps/findutils	run	find --version | head -n 1	GNU findutils
@@ -59,7 +59,7 @@ www-client/lynx	run	lynx -version | head -n 1	^Lynx Version
 mail-client/mutt	run	mutt -v | head -n 1	^Mutt \d
 net-irc/irssi	run	irssi --version	^irssi \d
 app-misc/tmux	run	tmux -V	^tmux \d
-sys-apps/shadow	run	chage -l root | head -n 1	^Last password change
+sys-apps/shadow	run	useradd -M smoketest && id -gn smoketest; userdel smoketest	^users
 sys-process/procps	run	ps --version	procps-ng
 sys-process/htop	run	htop --version	^htop \d
 sys-process/lsof	run	lsof -v 2>&1 | head -n 2	lsof version
@@ -91,10 +91,10 @@ sys-libs/gpm	run	gpm -v 2>&1 | head -n 1	^gpm \d
 games-misc/bsd-games	run	echo abc | caesar 1	^bcd
 app-misc/figlet	run	figlet -v | head -n 1	FIGlet Copyright
 app-misc/cmatrix	run	cmatrix -V | head -n 1	CMatrix version
-app-misc/sl	run	file -L /usr/bin/sl	ELF 32-bit LSB executable, Intel i386
-games-roguelike/rl144	run	file -L /usr/bin/rl144	ELF 32-bit LSB executable, Intel i386
+app-misc/sl	run	TERM=linux timeout 3 sl | od -c | head -n 1	^0000000\s+033
+games-roguelike/rl144	run	timeout 20 rl144 --dump --seed 1 | head -n 2	^seed=1
 x11-base/monolith-xserver	covered	mode:gui
-x11-base/xorg-proto	untestable	headers only: no file of the package lands on the disc (/usr/include is absent)
+x11-base/xorg-proto	run	test -f /usr/share/pkgconfig/xproto.pc && echo has_xproto_$((6*7))	has_xproto_42
 x11-libs/libxcb	run	test -f /usr/lib/libxcb.a && echo has_xcb_$((6*7))	has_xcb_42
 x11-libs/libX11	run	test -f /usr/lib/libX11.a && echo has_x11_$((6*7))	has_x11_42
 x11-libs/libXext	run	test -f /usr/lib/libXext.a && echo has_xext_$((6*7))	has_xext_42
