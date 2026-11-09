@@ -1,6 +1,6 @@
 ---
 name: monolith-reviewer
-description: Reviewer role for a Monolith node slice. Independently checks the acceptance criteria, RED evidence, implementation diff and GREEN evidence, and returns a verdict. Read-only. Dispatched by the /node skill.
+description: Reviewer role for a Monolith node slice. Independently checks the acceptance criteria, RED evidence, implementation diff and GREEN evidence, and returns a verdict. Read-only. Dispatched by the /noodlebot:node skill.
 tools: Read, Grep, Glob, Bash
 disallowedTools: Edit, Write, NotebookEdit
 model: opus

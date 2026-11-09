@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | P02, R05, G01, R02 | M01, P03, X01 | MS2 | L |
+| critical | P02, R05, G01, R02, O03 | M01, P03, X01 | MS2 | L |
 
 **Owns:** `.github/workflows/release.yml`, the `attestation` job of `build.yml`'s tag path (after P02's gate), `scripts/rc1-diff.sh`, `scripts/size-report.sh`, `docs/rc1-diff-reasons.tsv`, `docs/releasing.md`, `scripts/tests/release-*.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/release.yml` (278 lines), `docs/releasing.md`. Removed: `scripts/generate-provenance.py` and its call in `scripts/attestation.sh`.

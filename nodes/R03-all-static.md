@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | later | O02, B03 | X01 | — | L |
 
-**Owns:** `configs/portage/env/`, `configs/portage/package.env/`, `configs/portage/package.use/static`, `configs/portage/bashrc` (static-link hooks), O02's allowlist file (shrinking only), edits to `extract-packages.sh:147-157` and `build-packages.sh:384-385`.
+**Owns:** `configs/portage/env/`, `configs/portage/package.env/`, `configs/portage/package.use/static`, `configs/portage/bashrc` (static-link hooks), O02's allowlist file (shrinking only), edits to `extract-packages.sh:147-157` and `build-packages.sh:384-385` (`scripts/build-packages.sh:485-496` and `scripts/extract-packages.sh:137-160` in this repository), `scripts/tests/all-static.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** nothing new. It changes the static mechanism B01 ported in `configs/portage/{make.conf,bashrc,env/static.conf,env/no-static-ldflags.conf,package.env/cross-compile,package.use/static}`.
 **Study refs:** D-all-static (the predecessor's comments expecting dynamic binaries: README.md:127, RELEASE-READINESS.md:108-118, `extract-packages.sh:137-151`; the loader copy: `extract-packages.sh:147-157`, `build-packages.sh:384-385`; rc1 itself is all static, per O02's scan); D-no-dynamic-loading-no-dlopen; OD-2.
 
@@ -30,10 +30,10 @@ Gentoo gives, in order: a `static` or `static-libs` USE flag if the ebuild has o
 3. **Allowlist entries removed one at a time**, each in its own PR, so a boot regression names its cause. *AC-3.*
 
 ## Gate
-- **R03-AC-1** — O02's check passes with an empty dynamic-binary allowlist on a built ISO. *Verify:* the `artifact-checks` job in build.yml.
-- **R03-AC-2** — No `ld-musl-i386.so.1` in the squashfs, and neither script copies it. *Verify:* O02 `musl-loader` rule; `grep -r 'ld-musl-i386' scripts/` returns nothing outside tests.
+- **R03-AC-1** — O02's check passes with an empty dynamic-binary allowlist on a built ISO. *Verify:* the `attestation` job in build.yml (its `make test-artifact` step: `static-audit.sh --strict` with the allowlist), on the PR with the `full-ci` label; `scripts/tests/artifact-checks-workflow.test.sh` checks that the allowlist has no entries.
+- **R03-AC-2** — No `ld-musl-i386.so.1` in the squashfs, and neither script copies it. *Verify:* O02 `musl-loader` rule (the `loader` check of `static-audit.sh`, in the same `make test-artifact` step); `grep -r 'ld-musl-i386' scripts/` returns nothing outside `scripts/tests/` and `scripts/static-audit.sh` (whose `loader` check names the file), checked by `scripts/tests/all-static.test.sh`.
 - **R03-AC-3** — All 17 boot modes pass on the all-static ISO. *Verify:* boot-test.yml.
-- **R03-AC-4** — The allowlist file only shrinks across the node's PRs. *Verify:* O02's shrink check.
+- **R03-AC-4** — The allowlist file only shrinks across the node's PRs. *Verify:* O02's empty-allowlist check (`scripts/tests/artifact-checks-workflow.test.sh`, "allowlist has no entries"), which fails on any added entry while the list is empty; `git diff <node base>..HEAD -- configs/attestation/dynamic-allowlist.txt` adds no entry line.
 
 ## Risks
 - rc1's dynamic set is empty (O02's scan); a build from this repository may still differ. The candidate fixes above are unverified guesses from the predecessor's comments, not tested.
