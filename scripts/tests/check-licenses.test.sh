@@ -77,5 +77,14 @@ run_sbom fail-nested.cdx.json fail-nested
 expect_status fail-nested nested-group-or-not-b fail '|| ( ( MIT NOT-ALLOWED ) NOT-B )'
 expect_rc 1 'SBOM holding || ( ( MIT NOT-ALLOWED ) NOT-B )'
 
+# S02-AC-2 fail-closed: malformed input inside a || group must not pass vacuously
+run_sbom fail-empty-group.cdx.json fail-empty-group
+expect_status fail-empty-group malformed-empty-group fail '|| ( NOT-ALLOWED ( ) ) fail-closed'
+expect_rc 1 'SBOM holding || ( NOT-ALLOWED ( ) ) fail-closed'
+
+run_sbom fail-unclosed.cdx.json fail-unclosed
+expect_status fail-unclosed malformed-unclosed fail '|| ( NOT-ALLOWED ( fail-closed'
+expect_rc 1 'SBOM holding || ( NOT-ALLOWED ( fail-closed'
+
 if [ "$fails" -ne 0 ]; then echo "check-licenses.test.sh: $fails failure(s)"; exit 1; fi
 echo "check-licenses.test.sh: all passed"
