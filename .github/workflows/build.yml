@@ -210,7 +210,7 @@ jobs:
       - name: Test the static rebuild
         run: make test-static-rebuild
 
-  # Boots the ISO of this run in every mode but stele-acid2 (Stele is out of world until R05); see
+  # Boots the ISO of this run in every mode (the list of boot-test-workflow.test.sh); see
   # .github/workflows/boot-test.yml and scripts/boot-test.py. The ISO comes from the artifact of this run,
   # so a re-run whose artifact is gone fails at download-artifact.
   boot-test:
@@ -218,7 +218,7 @@ jobs:
     uses: ./.github/workflows/boot-test.yml
     with:
       iso-artifact: iso-${{ github.run_id }}
-      modes: bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui clock-epoch clock-1996 persist
+      modes: bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist
 
   # The O02 artifact checks and the S01 gates on the same ISO. The signing step (P01) and any publishing step
   # are added to this job, after these, and need the same jobs.
