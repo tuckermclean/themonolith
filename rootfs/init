@@ -384,7 +384,7 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             devname="${sysdev##*/}"
             case "$devname" in loop*|ram*) continue ;; esac
             for dev in "/dev/$devname" "/dev/${devname}"[0-9]*; do
-                persist_is_blk "$dev" || continue
+                [ -b "$dev" ] || continue
                 dbg "Trying block device $dev..."
                 if mount -o ro "$dev" /media 2>/dev/null; then
                     if [ -f /media/rootfs.squashfs ]; then
@@ -517,7 +517,15 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
                 persist_is_blk "$dev" || continue
                 if cat "$dev" 2>/dev/null | tr -d '\000' 2>/dev/null | grep -q MONOLITH_PERSIST 2>/dev/null; then
-                    msg "persist DIAG: $dev contains MONOLITH_PERSIST (expected for a whole disk whose partition carries it)"
+                    _dg_has=0
+                    for _dg_p in "$dev"[0-9]* "$dev"p[0-9]*; do
+                        if persist_is_blk "$_dg_p"; then _dg_has=1; break; fi
+                    done
+                    if [ "$_dg_has" -eq 1 ]; then
+                        msg "persist DIAG: $dev contains MONOLITH_PERSIST but was skipped: a whole disk with partitions"
+                    else
+                        msg "persist DIAG: $dev contains MONOLITH_PERSIST"
+                    fi
                 else
                     msg "persist DIAG: $dev scanned, no MONOLITH_PERSIST label"
                 fi

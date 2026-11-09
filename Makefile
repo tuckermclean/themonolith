@@ -118,7 +118,7 @@ boot_runs = \
 	$(if $(filter clock-1996,$(BOOT_WANT)),$(call boot,clock-1996,,clock-1996)) \
 	$(if $(filter persist,$(BOOT_WANT)),$(call boot,persist,,persist)) \
 	$(if $(filter persist-init,$(BOOT_WANT)),$(call boot,persist-init,,persist-init)) \
-	$(if $(filter entry,$(BOOT_WANT)),$(if $(filter isolinux,$(or $(ENTRY_LOADER),isolinux grub)),$(foreach l,$(if $(ENTRY_LABEL),$(ENTRY_LABEL),$(ENTRY_LABELS)),$(call boot,entry,--loader isolinux --label $(l),entry-isolinux-$(l))))$(if $(filter grub,$(or $(ENTRY_LOADER),isolinux grub)),$(foreach i,$(if $(ENTRY_INDEX),$(ENTRY_INDEX),$(ENTRY_INDEXES)),$(call boot,entry,--loader grub --index $(i),entry-grub-$(i)))))
+	$(if $(filter entry,$(BOOT_WANT)),$(if $(filter-out isolinux grub,$(ENTRY_LOADER)),$(error unknown ENTRY_LOADER: $(ENTRY_LOADER); valid: isolinux grub))$(if $(filter isolinux,$(or $(ENTRY_LOADER),isolinux grub)),$(foreach l,$(if $(ENTRY_LABEL),$(ENTRY_LABEL),$(ENTRY_LABELS)),$(call boot,entry,--loader isolinux --label $(l),entry-isolinux-$(l))))$(if $(filter grub,$(or $(ENTRY_LOADER),isolinux grub)),$(foreach i,$(if $(ENTRY_INDEX),$(ENTRY_INDEX),$(ENTRY_INDEXES)),$(call boot,entry,--loader grub --index $(i),entry-grub-$(i)))))
 
 # vga is rc1's expected failure (rc1 ships no cirrusfb): when the ISO's sha256 (computed once, above) is RC1_SHA256, a failing vga boot is
 # reported as XFAIL and is not a failure, and a passing one is (stale expectation). Any other digest is strict; no other mode is expected to fail.

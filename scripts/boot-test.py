@@ -2432,7 +2432,7 @@ def run_persist_init(child, args):
     results = []
     _boot_to_shell(child, args, "serial", "boot 1")
     results.append(("boot 1: monolith-persist init succeeds on the blank partition",
-                    *run_check(child, "persist init", PERSIST_INIT_CMD + " && echo INIT_DONE",
+                    *run_check(child, "persist init", PERSIST_INIT_CMD + " && echo INIT\"\"_DONE",
                                contains("INIT_DONE"), timeout=180)))
     ok = report_results(results)
     poweroff_and_wait(child)
@@ -2451,11 +2451,11 @@ def run_persist_init(child, args):
                                    regex_matches(r"overlay_dev=/dev/vda1 overlay_fstype=ext4"))))
         results.append(("boot 2: a marker is written to /overlay",
                         *run_check(child2, "write marker",
-                                   f"echo {marker} > /overlay/g01-marker && sync && echo WROTE_{marker}",
+                                   f"echo {marker} > /overlay/g01-marker && sync && echo WROTE\"\"_{marker}",
                                    contains(f"WROTE_{marker}"))))
         results.append(("boot 2: swapon /overlay/swapfile succeeds",
-                        *run_check(child2, "swapon", "swapon /overlay/swapfile && cat /proc/swaps",
-                                   contains("/overlay/swapfile"), timeout=60)))
+                        *run_check(child2, "swapon", "swapon /overlay/swapfile && grep -q '^/overlay/swapfile ' /proc/swaps && echo SWAP\"\"ON_OK",
+                                   contains("SWAPON_OK"), timeout=60)))
         ok = report_results(results)
         log("persist-init: killing QEMU uncleanly (SIGKILL, no poweroff)")
     finally:
