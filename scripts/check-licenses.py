@@ -107,7 +107,9 @@ def _parse_or_items(tokens: list, pos: int) -> tuple:
             inner_alts, pos = _parse_alternatives(tokens, pos + 1)
             if pos < len(tokens) and tokens[pos] == ")":
                 pos += 1
-            alts.append([lic for alt in inner_alts for lic in alt])
+            flat = [lic for alt in inner_alts for lic in alt]
+            if flat:
+                alts.append(flat)
         elif tok in ("AND", "OR", "||"):
             pos += 1
         else:
