@@ -2339,8 +2339,8 @@ def run_serial_net(child, args):
                 child, "other host keys", "ls /etc/dropbear", regex_absent(r"dropbear_(rsa|ed25519|dss)_host_key"))))
             results.append(("guest: dropbear starts on request", *run_check(
                 child, "dropbear",
-                "! netstat -ltn | grep -q ':22 ' && dropbear && for i in $(seq 1 20); do netstat -ltn | grep -q ':22 ' && break; sleep 1; done; "
-                "netstat -ltn | grep ':22 '", regex_matches(r"0\.0\.0\.0:22\s.*LISTEN|:::22\s.*LISTEN"), timeout=60)))
+                "echo before=$(netstat -ltn | grep -c ':22 '); dropbear; for i in $(seq 1 20); do netstat -ltn | grep -q ':22 ' && break; sleep 1; done; "
+                "netstat -ltn | grep ':22 '", regex_matches(r"before=0\b[\s\S]*(0\.0\.0\.0:22\s.*LISTEN|:::22\s.*LISTEN)"), timeout=60)))
             _serial_net_drain(child)
             known = os.path.join(st["dir"], "known_hosts")
             ssh = ["ssh", "-i", key, "-p", str(st["port"]), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
