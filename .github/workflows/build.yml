@@ -218,7 +218,7 @@ jobs:
     uses: ./.github/workflows/boot-test.yml
     with:
       iso-artifact: iso-${{ github.run_id }}
-      modes: bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist persist-init entry smoke
+      modes: bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist persist-init entry serial-net smoke
 
   # The O02 artifact checks and the S01 gates on the same ISO. The signing step (P01) and any publishing step
   # are added to this job, after these, and need the same jobs.

@@ -721,6 +721,39 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  # Serial networking between two guests joined by a -chardev socket serial link (ttyS1): SLIP and PPP (through chat
+  # against a fake modem) each bring a link up and carry a ping from one guest to the other, a chat expecting a string
+  # that never arrives fails, and dropbear started on request takes a host `ssh -i` login that runs `id`, with an
+  # ECDSA host key. See run_serial_net in scripts/boot-test.py.
+  serial-net:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — serial-net (SLIP, PPP through chat, dropbear login)
+        env:
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=serial-net ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boot-test-serial-net-${{ github.run_id }}
+          path: |
+            output/boot-test-serial-net.log*
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
   # One boot, one check per row of scripts/smoke-checks.txt (a command in the guest and a regex on its output).
   # See run_smoke in scripts/boot-test.py.
   smoke:

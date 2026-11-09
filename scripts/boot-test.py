@@ -27,6 +27,13 @@ was coldplug-loaded from the initrd before the squashfs was mounted:
           coldplug loads modules for hardware that's present, not
           unconditionally.
 
+Serial networking (G01) — see build_serial_net_cmd / run_serial_net:
+  serial-net  Two guests joined by a -chardev socket serial link on ttyS1: SLIP
+              (slattach) and PPP (pppd, dialled through chat against a fake modem)
+              each carry a ping across the link; a chat expecting a string that
+              never arrives fails; guest A runs dropbear on request and a host
+              `ssh -i key ... id` over a forwarded port logs in, with an ECDSA host key.
+
 THE CLOCK LANDMINE (Monolith UX Pass Task 2) — both directions of the
 /etc/init.d/S45monolith-time boot hook, via QEMU's `-rtc base=<date>`
 (--rtc-date; see build_clock_epoch_cmd/build_clock_1996_cmd):
@@ -2235,6 +2242,213 @@ def run_nat(child, args):
     return ok
 
 
+# serial-net: two guests joined by a serial link, plus dropbear on a forwarded port.
+# Both guests have the link on ttyS1 (a -chardev socket; ttyS0 stays the console). The
+# link joins two guests rather than a pty pair in one: with both ends in one guest every
+# link address is local, Linux routes a ping to a local address through lo, and no packet
+# would cross the link. Guest A (the child main spawns) also has a user-mode NIC whose
+# host port forwards to guest port 22.
+def _serial_net_state(args):
+    """The scratch directory (link socket, ssh key) and the forwarded port, made once per args."""
+    st = getattr(args, "_serial_net_state", None)
+    if st is None:
+        import tempfile
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        st = {"dir": tempfile.mkdtemp(prefix="serial-net."), "port": port}
+        args._serial_net_state = st
+    return st
+
+
+def build_serial_net_cmd(args):
+    # Guest A: build_bios_cmd's guest, plus the link server on ttyS1 and one e1000 user-net NIC with
+    # 127.0.0.1:PORT -> guest :22 (the host ssh login).
+    st = _serial_net_state(args)
+    return build_bios_cmd(args) + [
+        "-chardev", f"socket,id=link,path={st['dir']}/link.sock,server=on,wait=off",
+        "-serial", "chardev:link",
+        "-nic", f"user,model=e1000,hostfwd=tcp:127.0.0.1:{st['port']}-:22",
+    ]
+
+
+def build_serial_net_peer_cmd(args):
+    # Guest B: build_bios_cmd's guest, plus the link client on ttyS1 and no NIC.
+    st = _serial_net_state(args)
+    return build_bios_cmd(args) + [
+        "-chardev", f"socket,id=link,path={st['dir']}/link.sock",
+        "-serial", "chardev:link",
+        "-nic", "none",
+    ]
+
+
+def _serial_net_drain(child):
+    # An idle guest's console output backs up in its pexpect pty and can stall QEMU (as in run_nat).
+    try:
+        while True:
+            child.read_nonblocking(size=65536, timeout=0)
+    except Exception:
+        pass
+
+
+def _serial_net_ping_ok(peer_addr):
+    """A ping that got a reply from the peer and every reply it sent for."""
+    return regex_matches(rf"(?s)64 bytes from {re.escape(peer_addr)}.*3 packets transmitted, 3 (packets )?received")
+
+
+def _serial_net_host(cmd, timeout):
+    """Run a command on the host (the toolbox): (exit_code, output)."""
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           timeout=timeout, text=True, errors="replace")
+        return r.returncode, r.stdout
+    except FileNotFoundError as exc:
+        return 127, str(exc)
+    except subprocess.TimeoutExpired:
+        return 124, f"timed out after {timeout}s"
+
+
+def run_serial_net(child, args):
+    # child == guest A (spawned by main via build_serial_net_cmd).
+    results = []
+    st = _serial_net_state(args)
+    peer = None
+    try:
+        _boot_isolinux_to_shell(child, args)
+
+        # ---- dropbear on request, host `ssh -i ... id`, ECDSA host key (G01-AC-5) ----
+        key = os.path.join(st["dir"], "id_ecdsa")
+        rc, out = _serial_net_host(["ssh-keygen", "-q", "-t", "ecdsa", "-b", "256", "-N", "", "-f", key], 60)
+        if rc != 0:
+            results.append(("host: ssh-keygen makes a client key", False, f"exit {rc}: {out.strip()[-300:]}"))
+        else:
+            pub = open(key + ".pub").read().strip()
+            results.append(("guest: eth0 has its user-net address", *run_check(
+                child, "eth0 address",
+                "for i in $(seq 1 60); do ip -4 -o addr show dev eth0 | grep -q 10.0.2. && break; sleep 1; done; "
+                "ip -4 -o addr show dev eth0 | grep -o 'inet [0-9.]*'", regex_matches(r"inet 10\.0\.2\.\d+"), timeout=90)))
+            results.append(("guest: root authorizes the host's key", *run_check(
+                child, "authorized_keys",
+                f"mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo '{pub}' > /root/.ssh/authorized_keys "
+                "&& chmod 600 /root/.ssh/authorized_keys && echo keys=$(wc -l < /root/.ssh/authorized_keys)", regex_matches(r"keys=1\b"))))
+            results.append(("guest: the host key on disk is ECDSA", *run_check(
+                child, "host key files", "ls /etc/dropbear; dropbearkey -y -f /etc/dropbear/dropbear_ecdsa_host_key",
+                regex_matches(r"dropbear_ecdsa_host_key[\s\S]*ecdsa-sha2-nistp256"))))
+            results.append(("guest: no RSA or ed25519 host key (the README names ECDSA)", *run_check(
+                child, "other host keys", "ls /etc/dropbear", regex_absent(r"dropbear_(rsa|ed25519|dss)_host_key"))))
+            results.append(("guest: dropbear starts on request", *run_check(
+                child, "dropbear",
+                "dropbear && for i in $(seq 1 20); do netstat -ltn | grep -q ':22 ' && break; sleep 1; done; "
+                "netstat -ltn | grep ':22 '", regex_matches(r"0\.0\.0\.0:22\s.*LISTEN|:::22\s.*LISTEN"), timeout=60)))
+            _serial_net_drain(child)
+            known = os.path.join(st["dir"], "known_hosts")
+            ssh = ["ssh", "-i", key, "-p", str(st["port"]), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+                   "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={known}",
+                   "-o", "HostKeyAlgorithms=ecdsa-sha2-nistp256", "-o", "ConnectTimeout=120",
+                   "root@127.0.0.1", "id"]
+            log("host: " + " ".join(ssh))
+            rc, out = 1, ""
+            for _ in range(3):
+                rc, out = _serial_net_host(ssh, 240)
+                if rc == 0:
+                    break
+                time.sleep(5)
+                _serial_net_drain(child)
+            results.append(("host: ssh -i key root@guest id runs", rc == 0 and "uid=0(root)" in out,
+                            f"exit {rc}: {out.strip()[-400:]}"))
+            try:
+                kh = open(known).read()
+            except OSError:
+                kh = ""
+            results.append(("host: the guest's host key as ssh saw it is ECDSA", "ecdsa-sha2-nistp256" in kh,
+                            f"known_hosts: {kh.strip()[-200:]}"))
+
+        # ---- guest B: the other end of the serial link ----
+        # B's addresses (10.1.1.2 for SLIP, 10.2.2.2 for PPP) are not A's, so a reply to A's ping can only have
+        # crossed the serial link.
+        peer_cmd = build_serial_net_peer_cmd(args)
+        peer = pexpect.spawn(peer_cmd[0], peer_cmd[1:], timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace")
+        if args.log_file:
+            peer.logfile = open(args.log_file + ".peer", "w", encoding="utf-8", errors="replace")
+        _boot_isolinux_to_shell(peer, args)
+        _serial_net_drain(child)
+
+        # SLIP: slattach (busybox's applet) binds sl0 to ttyS1 on each guest; A pings B across it.
+        results.append(("B: slattach brings up sl0", *run_check(
+            peer, "B slattach",
+            "busybox slattach -p slip /dev/ttyS1 > /tmp/slattach.log 2>&1 & echo $! > /tmp/slattach.pid; "
+            "for i in $(seq 1 20); do ifconfig sl0 10.1.1.2 pointopoint 10.1.1.1 up 2>/dev/null && break; sleep 1; done; "
+            "ifconfig sl0 | grep -o 'inet [0-9.]*'", regex_matches(r"inet 10\.1\.1\.2\b"), timeout=60)))
+        results.append(("A: slattach brings up sl0", *run_check(
+            child, "A slattach",
+            "busybox slattach -p slip /dev/ttyS1 > /tmp/slattach.log 2>&1 & echo $! > /tmp/slattach.pid; "
+            "for i in $(seq 1 20); do ifconfig sl0 10.1.1.1 pointopoint 10.1.1.2 up 2>/dev/null && break; sleep 1; done; "
+            "ifconfig sl0 | grep -o 'inet [0-9.]*'", regex_matches(r"inet 10\.1\.1\.1\b"), timeout=60)))
+        _serial_net_drain(peer)
+        results.append(("A: ping across SLIP reaches B (10.1.1.2 is not an address of A)", *run_check(
+            child, "SLIP ping",
+            "! ip -4 -o addr | grep -qE 'inet 10\\.1\\.1\\.2[ /]' && ping -c 3 -W 5 10.1.1.2",
+            _serial_net_ping_ok("10.1.1.2"), timeout=60)))
+        results.append(("A: sl0 carried the packets (TX counter)", *run_check(
+            child, "SLIP counters", "echo txpackets=$(cat /sys/class/net/sl0/statistics/tx_packets)",
+            regex_matches(r"txpackets=[1-9][0-9]*"))))
+        for node in (peer, child):
+            run_check(node, "SLIP down", "kill $(cat /tmp/slattach.pid); sleep 1; ifconfig sl0 down; true", exit_code_only(), timeout=30)
+        _serial_net_drain(peer)
+
+        # chat expecting a string that never arrives must FAIL: the check passes only when chat exits non-zero
+        # (not 126 or 127) after really waiting out its timeout on the quiet serial line (it sends nothing before
+        # the string arrives, so the peer's line stays clean for the PPP dial below). chat's exit 3 is its timeout.
+        def chat_fails(exit_code, output):
+            m = re.search(r"chat_rc=(\d+) waited=(\d+)", output)
+            if not m:
+                return False, f"no result line from the chat run: {output.strip()[-300:]}"
+            rc, waited = int(m.group(1)), int(m.group(2))
+            if rc in (0, 126, 127):
+                return False, f"expected chat to fail on a string that never arrives; exit {rc}, output: {output.strip()[-300:]}"
+            if rc != 3 or waited < 3:
+                return False, f"expected chat's timeout (exit 3 after 3s), got exit {rc} after {waited}s: {output.strip()[-300:]}"
+            return True, f"chat exited {rc} after {waited}s"
+        results.append(("A: chat expecting a string that never arrives fails (non-zero exit)", *run_check(
+            child, "chat never",
+            "t0=$(date +%s); chat -t 3 NEVER x < /dev/ttyS1 > /dev/ttyS1 2> /tmp/chat-never.err; rc=$?; "
+            "cat /tmp/chat-never.err; echo chat_rc=$rc waited=$(( $(date +%s) - t0 ))",
+            chat_fails, timeout=40)))
+
+        # PPP through chat against a fake modem. B plays the modem on ttyS1: answers AT with OK and ATD with
+        # CONNECT, then runs pppd on the line. A dials with pppd, whose connect script is chat.
+        modem = ("( stty -F /dev/ttyS1 115200 raw -echo icrnl; exec 3<>/dev/ttyS1; read -r l <&3; printf 'OK\\r\\n' >&3; "
+                 "read -r l <&3; printf 'CONNECT\\r\\n' >&3; exec 3>&-; "
+                 "exec pppd /dev/ttyS1 115200 noauth local nodetach 10.2.2.2:10.2.2.1 logfile /tmp/pppd.log ) "
+                 "> /tmp/modem.log 2>&1 &")
+        run_check(peer, "B fake modem", modem + " sleep 1; true", exit_code_only(), timeout=30)
+        results.append(("A: pppd dials through chat and brings up ppp0", *run_check(
+            child, "A pppd",
+            "pppd /dev/ttyS1 115200 noauth local logfile /tmp/pppd.log 10.2.2.1:10.2.2.2 "
+            "connect \"chat -t 60 '' AT OK ATD5551212 CONNECT\"; "
+            "for i in $(seq 1 90); do ifconfig ppp0 2>/dev/null | grep -q 10.2.2.2 && break; sleep 1; done; "
+            "ifconfig ppp0 | grep -o 'destination [0-9.]*' || tail -n 30 /tmp/pppd.log", regex_matches(r"destination 10\.2\.2\.2\b"), timeout=150)))
+        _serial_net_drain(peer)
+        results.append(("A: ping across PPP reaches B (10.2.2.2 is not an address of A)", *run_check(
+            child, "PPP ping",
+            "! ip -4 -o addr | grep -qE 'inet 10\\.2\\.2\\.2[ /]' && ping -c 3 -W 5 10.2.2.2",
+            _serial_net_ping_ok("10.2.2.2"), timeout=60)))
+        results.append(("B: ppp0 is up with its own address", *run_check(
+            peer, "B ppp0", "ifconfig ppp0 | grep -o 'inet [0-9.]*'", regex_matches(r"inet 10\.2\.2\.2\b"))))
+    finally:
+        if peer is not None:
+            try:
+                peer.close(force=True)
+            except Exception:
+                pass
+        shutil.rmtree(st["dir"], ignore_errors=True)
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
 def _persist_boot_to_shell(child, args, suffix=""):
     """Shared milestone sequence for both persist-mode boots."""
     select_isolinux_label(child, "serial persist")
@@ -2719,6 +2933,7 @@ MODE_BUILDERS = {
     "persist": build_persist_cmd,
     "persist-init": build_persist_init_cmd,
     "entry": build_entry_cmd,
+    "serial-net": build_serial_net_cmd,
     "smoke": build_bios_cmd,
 }
 
@@ -2742,6 +2957,7 @@ MODE_RUNNERS = {
     "persist": run_persist,
     "persist-init": run_persist_init,
     "entry": run_entry,
+    "serial-net": run_serial_net,
     "smoke": run_smoke,
 }
 
@@ -2765,6 +2981,7 @@ MODE_DEFAULT_RAM = {
     "persist": 128,  # BIOS/pc + one extra virtio-blk-pci disk; no networking needed
     "persist-init": 128,  # as persist; mkfs.ext4 and the swapfile run in the guest
     "entry": 512,  # the toram entry copies the squashfs into RAM; the others share the setting
+    "serial-net": 256,  # two guests at this size, as nat; dropbear's key exchange and pppd run in them
     "smoke": 256,  # as bios at 256M: perl, gdb and the like run in the guest
 }
 

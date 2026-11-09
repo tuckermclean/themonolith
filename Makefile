@@ -78,7 +78,7 @@ OVMF_CODE ?= $(firstword \
 	$(wildcard /usr/share/edk2/ovmf/OVMF_CODE.fd) \
 	$(wildcard /usr/share/edk2-ovmf/OVMF_CODE.fd))
 
-BOOT_MODES := bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist persist-init entry smoke
+BOOT_MODES := bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist persist-init entry serial-net smoke
 BOOT_UNKNOWN := $(filter-out $(BOOT_MODES),$(MODE) $(MODES))
 $(if $(and $(BOOT_UNKNOWN),$(filter test test-boot,$(MAKECMDGOALS))),$(error unknown boot mode(s): $(BOOT_UNKNOWN); valid: $(BOOT_MODES)))
 BOOT_WANT := $(filter $(if $(MODE),$(MODE),$(BOOT_MODES)),$(if $(MODES),$(MODES),$(BOOT_MODES)))
@@ -118,6 +118,7 @@ boot_runs = \
 	$(if $(filter clock-1996,$(BOOT_WANT)),$(call boot,clock-1996,,clock-1996)) \
 	$(if $(filter persist,$(BOOT_WANT)),$(call boot,persist,,persist)) \
 	$(if $(filter persist-init,$(BOOT_WANT)),$(call boot,persist-init,,persist-init)) \
+	$(if $(filter serial-net,$(BOOT_WANT)),$(call boot,serial-net,,serial-net)) \
 	$(if $(filter smoke,$(BOOT_WANT)),$(call boot,smoke,,smoke)) \
 	$(if $(filter entry,$(BOOT_WANT)),$(if $(filter-out isolinux grub,$(ENTRY_LOADER)),$(error unknown ENTRY_LOADER: $(ENTRY_LOADER); valid: isolinux grub))$(if $(filter isolinux,$(or $(ENTRY_LOADER),isolinux grub)),$(foreach l,$(if $(ENTRY_LABEL),$(ENTRY_LABEL),$(ENTRY_LABELS)),$(call boot,entry,--loader isolinux --label $(l),entry-isolinux-$(l))))$(if $(filter grub,$(or $(ENTRY_LOADER),isolinux grub)),$(foreach i,$(if $(ENTRY_INDEX),$(ENTRY_INDEX),$(ENTRY_INDEXES)),$(call boot,entry,--loader grub --index $(i),entry-grub-$(i)))))
 
