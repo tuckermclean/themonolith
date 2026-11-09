@@ -233,7 +233,7 @@ REAL="$ROOT/configs/attestation/unowned-allowlist.yaml"
 mk alpreal
 unown alpreal bin/sh etc/profile.env etc/csh.env etc/passwd- etc/env.d/05binutils etc/env.d/binutils/config-i486-linux-musl \
     usr/bin/ld usr/bin/objdump var/db/pkg/sys-libs/musl-1.2.6/CONTENTS
-for pn in sys-devel/binutils sys-apps/shadow; do
+for pn in sys-devel/binutils sys-apps/shadow app-shells/bash; do
     echo ">>> Emerging (3 of 3) ${pn}-1::gentoo to /usr/i486-linux-musl/" >> "$TMP/alpreal/emerge.log"
 done
 goa alpreal "$REAL"
