@@ -96,5 +96,19 @@ run_sbom fail-stray-or.cdx.json fail-stray-or
 expect_status fail-stray-or stray-or fail '|| ( || NOT-ALLOWED ) OR fail-closed'
 expect_rc 1 'SBOM holding || ( || NOT-ALLOWED ) OR fail-closed'
 
+# S02-AC-2 fail-closed: AND joins a nested || group as a whole, on either side
+run_sbom fail-and-nested-or.cdx.json fail-and-nested-or
+expect_status fail-and-nested-or and-nested-or fail '|| ( NOT-A AND || ( NOT-B MIT ) ) fail-closed'
+expect_rc 1 'SBOM holding || ( NOT-A AND || ( NOT-B MIT ) ) fail-closed'
+
+run_sbom fail-nested-or-and.cdx.json fail-nested-or-and
+expect_status fail-nested-or-and nested-or-and fail '|| ( || ( MIT NOT-A ) AND NOT-B ) fail-closed'
+expect_rc 1 'SBOM holding || ( || ( MIT NOT-A ) AND NOT-B ) fail-closed'
+
+# S02-AC-2 AND with nested ||: positive control
+run_sbom pass-and-nested-or.cdx.json pass-and-nested-or
+expect_status pass-and-nested-or pass-and-nested-or pass '|| ( MIT AND || ( NOT-B Apache-2.0 ) ) AND with nested ||'
+expect_rc 0 'SBOM holding || ( MIT AND || ( NOT-B Apache-2.0 ) ) AND with nested ||'
+
 if [ "$fails" -ne 0 ]; then echo "check-licenses.test.sh: $fails failure(s)"; exit 1; fi
 echo "check-licenses.test.sh: all passed"
