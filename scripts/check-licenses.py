@@ -98,22 +98,45 @@ def parse_portage_expr(expr: str) -> list:
 
 def _parse_or_items(tokens: list, pos: int) -> tuple:
     alts = []
+    conj = False  # an AND joins the next item onto the previous alternative
     while pos < len(tokens) and tokens[pos] != ")":
         tok = tokens[pos]
-        if tok == "||" and pos + 1 < len(tokens) and tokens[pos + 1] == "(":
-            nested, pos = _parse_or_items(tokens, pos + 2)
-            alts.extend(nested)
+        if tok == "||":
+            if pos + 1 < len(tokens) and tokens[pos + 1] == "(":
+                nested, pos = _parse_or_items(tokens, pos + 2)
+                if conj and alts and nested:
+                    alts[-1] = alts[-1] + nested[0]
+                    nested = nested[1:]
+                alts.extend(nested)
+                conj = False
+            else:
+                pos += 1  # malformed; stop, as the old parser did
+                if pos < len(tokens) and tokens[pos] == ")":
+                    pos += 1
+                return alts, pos
         elif tok == "(":
             inner_alts, pos = _parse_alternatives(tokens, pos + 1)
             if pos < len(tokens) and tokens[pos] == ")":
                 pos += 1
             flat = [lic for alt in inner_alts for lic in alt]
             if flat:
-                alts.append(flat)
-        elif tok in ("AND", "OR", "||"):
+                if conj and alts:
+                    alts[-1] = alts[-1] + flat
+                else:
+                    alts.append(flat)
+            conj = False
+        elif tok == "AND":
+            conj = True
+            pos += 1
+        elif tok == "OR":
+            conj = False
             pos += 1
         else:
-            alts.append([tok])
+            if conj and alts:
+                alts[-1] = alts[-1] + [tok]
+            else:
+                alts.append([tok])
+            conj = False
             pos += 1
     if pos < len(tokens):
         pos += 1  # consume ")"
