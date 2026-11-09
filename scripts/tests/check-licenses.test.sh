@@ -86,5 +86,15 @@ run_sbom fail-unclosed.cdx.json fail-unclosed
 expect_status fail-unclosed malformed-unclosed fail '|| ( NOT-ALLOWED ( fail-closed'
 expect_rc 1 'SBOM holding || ( NOT-ALLOWED ( fail-closed'
 
+# S02-AC-2 fail-closed: AND keeps its conjunctive meaning inside a || group
+run_sbom fail-and-in-or.cdx.json fail-and-in-or
+expect_status fail-and-in-or and-in-or fail '|| ( MIT AND NOT-ALLOWED ) fail-closed'
+expect_rc 1 'SBOM holding || ( MIT AND NOT-ALLOWED ) fail-closed'
+
+# S02-AC-2 fail-closed: a stray || with no ( inside a || group is malformed
+run_sbom fail-stray-or.cdx.json fail-stray-or
+expect_status fail-stray-or stray-or fail '|| ( || NOT-ALLOWED ) OR fail-closed'
+expect_rc 1 'SBOM holding || ( || NOT-ALLOWED ) OR fail-closed'
+
 if [ "$fails" -ne 0 ]; then echo "check-licenses.test.sh: $fails failure(s)"; exit 1; fi
 echo "check-licenses.test.sh: all passed"
