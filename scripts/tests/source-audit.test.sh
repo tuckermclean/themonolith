@@ -116,6 +116,137 @@ bad=$(grep -v '^[[:space:]]*\(#\|$\)' "$EX" 2>/dev/null | awk -v lock="$LOCK" '
 if [ -f "$EX" ] && [ -z "$bad" ]; then ok "B01-AC-11 every bootstrap exception is a cross-i486-linux-musl cpv at the crossdev.lock version"
 else fail "B01-AC-11 every bootstrap exception is a cross cpv at the crossdev.lock version ($bad)"; fi
 
+
+# --- B01-AC-11 / B01-AC-12 (change 9 as amended by spec #55): allowlist mode (lines added by P02) ---
+# Added interface: the optional argument  --allowlist FILE  (configs/attestation/unowned-allowlist.yaml form:
+#   `  - path: <fnmatch pattern>   # comment` then `    source: "<value>"`; patterns follow check-unowned.py:
+#   fnmatch on the path without its leading `/`, `*` also matches `/`).
+#   Only `source: portage` and `source: "postinst:<cat/pn>"` entries cover an unowned sysroot file; `build-rootfs.sh`
+#   entries never do; an entry matching no sysroot file is not a failure. The `postinst:<cat/pn>` entry covers a file
+#   only when some cpv of that cat/pn has a `>>> Emerging (N of M)` line in the log. Without --allowlist behaviour
+#   is unchanged. Report provenance: `portage` (owner column `portage`) or `postinst` (owner column the built cpv).
+goa() {
+    d="$TMP/$1"
+    sh "$SUBJ" --sysroot "$d/sysroot" --vdb "$d/vdb" --log "$d/emerge.log" --start "$START" \
+        --exceptions "$d/exceptions.txt" --allowlist "$2" --output "$d/source-audit.tsv" > "$d/out.txt" 2>&1
+    RC=$?
+}
+# unown NAME PATH...: add unowned files to the fixture sysroot
+unown() { n=$1; shift; for f in "$@"; do mkdir -p "$TMP/$n/sysroot/$(dirname "$f")"; : > "$TMP/$n/sysroot/$f"; done; }
+AL="$TMP/allowlist.yaml"
+cat > "$AL" <<'YAML'
+allowlist:
+  - path: etc/profile.env   # env-update output
+    source: "portage"
+  - path: var/db/pkg/**
+    source: portage
+  - path: etc/env.d/05bar
+    source: "postinst:app-misc/bar"
+  - path: etc/env.d/05qux
+    source: "postinst:app-misc/qux"
+  - path: opt/rootfs/*
+    source: "build-rootfs.sh"
+  - path: lib/ld-musl-i386.so.1
+    source: "portage"
+  - path: never/there
+    source: "portage"
+modified:
+  - path: usr/bin/stray
+    source: "portage"
+YAML
+rowr() { awk -F'\t' -v p="$2" -v o="$3" -v c="$4" '$1==p && $2==o && $3==c {f=1} END{exit !f}' "$1" 2>/dev/null; }
+
+mk alp; unown alp etc/profile.env var/db/pkg/cat/pkg-1/CONTENTS var/db/pkg/a/b/c/deep
+goa alp "$AL"
+[ "$RC" -eq 0 ] && ok "B01-AC-11 unowned files covered by portage allowlist entries pass" \
+    || fail "B01-AC-11 unowned files covered by portage allowlist entries pass (rc=$RC)"
+rowr "$TMP/alp/source-audit.tsv" /etc/profile.env portage portage \
+    && rowr "$TMP/alp/source-audit.tsv" /var/db/pkg/cat/pkg-1/CONTENTS portage portage \
+    && ok "B01-AC-12 portage-covered file: report row has owner and provenance 'portage'" \
+    || fail "B01-AC-12 portage-covered file: report row has owner and provenance 'portage'"
+rowr "$TMP/alp/source-audit.tsv" /var/db/pkg/a/b/c/deep portage portage \
+    && ok "B01-AC-11 pattern 'var/db/pkg/**' follows fnmatch: matches across directories" \
+    || fail "B01-AC-11 pattern 'var/db/pkg/**' follows fnmatch: matches across directories"
+rowr "$TMP/alp/source-audit.tsv" /usr/bin/foo app-misc/foo-1 built-this-run \
+    && ok "B01-AC-12 owned files keep their built-this-run rows with an allowlist" \
+    || fail "B01-AC-12 owned files keep their built-this-run rows with an allowlist"
+
+mk alpi; unown alpi etc/env.d/05bar
+goa alpi "$AL"
+[ "$RC" -eq 0 ] && ok "B01-AC-11 unowned file covered by postinst:app-misc/bar (bar-2 built this run) passes" \
+    || fail "B01-AC-11 unowned file covered by postinst:app-misc/bar (bar-2 built this run) passes (rc=$RC)"
+rowr "$TMP/alpi/source-audit.tsv" /etc/env.d/05bar app-misc/bar-2 postinst \
+    && ok "B01-AC-12 postinst row names the built cpv app-misc/bar-2 as owner" \
+    || fail "B01-AC-12 postinst row names the built cpv app-misc/bar-2 as owner"
+
+mk alpn; unown alpn etc/env.d/05qux
+goa alpn "$AL"
+if [ "$RC" -ne 0 ] && grep -q -e /etc/env.d/05qux -e app-misc/qux "$TMP/alpn/out.txt"; then
+    ok "B01-AC-11 postinst:app-misc/qux entry, package not built this run: fails and names it"
+else fail "B01-AC-11 postinst:app-misc/qux entry, package not built this run: fails and names it (rc=$RC)"; fi
+
+mk alpb; unown alpb etc/env.d/05qux
+echo '>>> Emerging binary (3 of 3) app-misc/qux-1::gentoo to /usr/i486-linux-musl/' >> "$TMP/alpb/emerge.log"
+goa alpb "$AL"
+if [ "$RC" -ne 0 ] && grep -q -e /etc/env.d/05qux -e app-misc/qux "$TMP/alpb/out.txt"; then
+    ok "B01-AC-11 postinst entry whose package only has an 'Emerging binary' line: fails and names it"
+else fail "B01-AC-11 postinst entry whose package only has an 'Emerging binary' line: fails and names it (rc=$RC)"; fi
+
+mk alps; unown alps etc/env.d/05qux
+echo '>>> Emerging (3 of 3) app-misc/qux-1::gentoo to /usr/i486-linux-musl/' >> "$TMP/alps/emerge.log"
+goa alps "$AL"
+if [ "$RC" -eq 0 ] && rowr "$TMP/alps/source-audit.tsv" /etc/env.d/05qux app-misc/qux-1 postinst; then
+    ok "B01-AC-11 postinst entry passes once the package has an Emerging line (row owner app-misc/qux-1)"
+else fail "B01-AC-11 postinst entry passes once the package has an Emerging line (rc=$RC)"; fi
+
+mk alpr; unown alpr opt/rootfs/file
+goa alpr "$AL"
+if [ "$RC" -ne 0 ] && grep -q /opt/rootfs/file "$TMP/alpr/out.txt"; then
+    ok "B01-AC-11 build-rootfs.sh allowlist entry does not cover a sysroot file: fails and names it"
+else fail "B01-AC-11 build-rootfs.sh allowlist entry does not cover a sysroot file (rc=$RC)"; fi
+
+mk alpx; unown alpx etc/other opt/rootfs/file
+goa alpx "$AL"
+if [ "$RC" -ne 0 ] && grep -q /etc/other "$TMP/alpx/out.txt"; then
+    ok "B01-AC-11 unowned file matching no allowlist entry still fails with an allowlist given"
+else fail "B01-AC-11 unowned file matching no allowlist entry still fails with an allowlist given (rc=$RC)"; fi
+
+mk alpm; unown alpm usr/bin/stray
+goa alpm "$AL"
+if [ "$RC" -ne 0 ] && grep -q /usr/bin/stray "$TMP/alpm/out.txt"; then
+    ok "B01-AC-11 the modified: section is not an allowlist"
+else fail "B01-AC-11 the modified: section is not an allowlist (rc=$RC)"; fi
+
+# the exception list and the allowlist coexist; unmatched allowlist entries (never/there) are not stale
+mk alpc; goa alpc "$AL"
+[ "$RC" -eq 0 ] && ok "B01-AC-11 clean fixture passes with an allowlist (unmatched entries are not failures)" \
+    || fail "B01-AC-11 clean fixture passes with an allowlist (rc=$RC)"
+
+# frozen calls without --allowlist keep their results: unowned file covered only by the allowlist fails
+mk alpq; unown alpq etc/profile.env; go alpq
+if [ "$RC" -ne 0 ] && grep -q /etc/profile.env "$TMP/alpq/out.txt"; then
+    ok "B01-AC-11 without --allowlist an unowned file still fails"
+else fail "B01-AC-11 without --allowlist an unowned file still fails (rc=$RC)"; fi
+
+# the real allowlist covers paths from a real release-mode run (literals from run 42538229470)
+REAL="$ROOT/configs/attestation/unowned-allowlist.yaml"
+mk alpreal
+unown alpreal bin/sh etc/profile.env etc/csh.env etc/passwd- etc/env.d/05binutils etc/env.d/binutils/config-i486-linux-musl \
+    usr/bin/ld usr/bin/objdump var/db/pkg/sys-libs/musl-1.2.6/CONTENTS
+for pn in sys-devel/binutils sys-apps/shadow; do
+    echo ">>> Emerging (3 of 3) ${pn}-1::gentoo to /usr/i486-linux-musl/" >> "$TMP/alpreal/emerge.log"
+done
+goa alpreal "$REAL"
+if [ "$RC" -eq 0 ] && rowr "$TMP/alpreal/source-audit.tsv" /etc/profile.env portage portage \
+    && rowr "$TMP/alpreal/source-audit.tsv" /usr/bin/ld sys-devel/binutils-1 postinst; then
+    ok "B01-AC-12 real unowned-allowlist.yaml covers paths of a real run (portage and postinst rows)"
+else fail "B01-AC-12 real unowned-allowlist.yaml covers paths of a real run (rc=$RC): $(head -5 "$TMP/alpreal/out.txt" | tr '\n' ' ')"; fi
+
+# build-packages.sh's release call passes the allowlist to source-audit.sh
+if awk '/source-audit\.sh/ {on=1} on {print} on && /output/ {exit}' "$ROOT/scripts/build-packages.sh" \
+    | grep -q -e '--allowlist.*unowned-allowlist\.yaml'; then
+    ok "B01-AC-12 build-packages.sh release call passes --allowlist unowned-allowlist.yaml"
+else fail "B01-AC-12 build-packages.sh release call passes --allowlist unowned-allowlist.yaml"; fi
 echo
 [ "$fails" -eq 0 ] && { echo "source-audit: all passed"; exit 0; }
 echo "source-audit: $fails failed"; exit 1
