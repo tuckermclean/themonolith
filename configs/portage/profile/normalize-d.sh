@@ -2,6 +2,7 @@
 # Normalises the wall-clock stamps in a package image directory before Portage records CONTENTS:
 #   gzip files (*.gz, *.tgz)  MTIME field of the header (bytes 4-7) -> 0
 #   ar archives (*.a)         date field of the first member, the armap (bytes 24-35) -> "0"
+# A gzip under 18 bytes, an ar under 68 bytes, or a gzip with FHCRC set is left alone.
 # File mtimes and modes are kept. Usage: normalize-d.sh <image-dir>
 set -eu
 
@@ -28,11 +29,19 @@ ar=0
 while IFS= read -r f; do
 	case "$f" in
 	*.gz|*.tgz)
+		[ "$(stat -c %s "$f")" -ge 18 ] || continue
 		[ "$(head -c 2 "$f" | od -An -tx1 | tr -d ' \n')" = 1f8b ] || continue
+		# FLG bit 1 (FHCRC): the header CRC16 would go stale; leave the file as it is
+		flg=$(dd if="$f" bs=1 skip=3 count=1 status=none | od -An -tu1 | tr -d ' \n')
+		if [ $((flg & 2)) -ne 0 ]; then
+			echo "normalize-d: skipping $f: gzip header has FHCRC" >&2
+			continue
+		fi
 		patch "$f" 4 '\000\000\000\000'
 		gz=$((gz + 1))
 		;;
 	*.a)
+		[ "$(stat -c %s "$f")" -ge 68 ] || continue
 		[ "$(head -c 8 "$f")" = '!<arch>' ] || continue
 		patch "$f" 24 '0           '
 		ar=$((ar + 1))

@@ -2,3 +2,7 @@
 if [[ ${EXTRA_ECONF} != *--with-compiledby=* ]]; then
 	EXTRA_ECONF+=" --with-compiledby=monolith"
 fi
+
+post_src_configure() {
+	grep -q -e '--with-compiledby' "${S}/src/configure.ac" "${S}/src/auto/configure" || die "vim: configure no longer offers --with-compiledby"
+}
