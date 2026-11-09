@@ -200,9 +200,10 @@ allowlist:
     source: "postinst:sys-apps/shadow"
 
   # ── binutils eselect symlinks — managed by binutils-config in pkg_postinst ──
-  # binutils-config uses eselect to install these unversioned /usr/bin/
-  # wrappers pointing into /usr/lib/binutils/. They are intentionally absent
-  # from CONTENTS because eselect manages them dynamically.
+  # binutils-config installs these unversioned /usr/bin/<tool> wrappers, which
+  # chain /usr/bin/<tool> -> i486-linux-musl-<tool> -> /usr/i486-linux-musl/bin/<tool>
+  # -> /usr/i486-linux-musl/binutils-bin/<ver>/<tool>. They are intentionally
+  # absent from CONTENTS because binutils-config manages them dynamically.
   - path: usr/bin/addr2line
     source: "postinst:sys-devel/binutils"
   - path: usr/bin/ar
@@ -238,6 +239,9 @@ allowlist:
 
   # binutils-config pkg_postinst also links /usr/bin/<tool> -> i486-linux-musl-<tool>
   # -> /usr/i486-linux-musl/bin/<tool> -> binutils-bin/<ver>/<tool>; the last two hops are not in CONTENTS.
+  # CONTENTS owns only /usr/i486-linux-musl, binutils-bin and binutils-bin/<ver>, not the bin/ directory.
+  - path: usr/i486-linux-musl/bin
+    source: "postinst:sys-devel/binutils"
   - path: usr/bin/i486-linux-musl-addr2line
     source: "postinst:sys-devel/binutils"
   - path: usr/i486-linux-musl/bin/addr2line

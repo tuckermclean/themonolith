@@ -29,7 +29,7 @@ sys-apps/less	run	less --version | head -n 1	^less \d
 app-editors/vim	run	vim --version | head -n 1	VIM - Vi IMproved
 app-editors/nano	run	nano --version | head -n 1	GNU nano
 sys-apps/man-pages	run	ls /usr/share/man/man2/open.2* && echo has_man2_$((6*7))	has_man2_42
-app-text/mandoc	run	printf '.TH T 1\n.SH NAME\nt \\- x\n' | mandoc -T ascii | grep -c General	^1
+app-text/mandoc	run	printf '.TH T 1\n.SH NAME\nt \\- x\n' | mandoc -T ascii | grep -c General	^1$
 sys-devel/binutils	run	ld --version | head -n 1	GNU ld
 dev-build/make	run	make --version | head -n 1	GNU Make
 dev-debug/strace	run	strace -V | head -n 1	strace -- version
@@ -59,7 +59,7 @@ www-client/lynx	run	lynx -version | head -n 1	^Lynx Version
 mail-client/mutt	run	mutt -v | head -n 1	^Mutt \d
 net-irc/irssi	run	irssi --version	^irssi \d
 app-misc/tmux	run	tmux -V	^tmux \d
-sys-apps/shadow	run	useradd -M smoketest && id -gn smoketest; userdel smoketest	^users
+sys-apps/shadow	run	useradd -M -N smoketest && id -gn smoketest; userdel smoketest	^users$
 sys-process/procps	run	ps --version	procps-ng
 sys-process/htop	run	htop --version	^htop \d
 sys-process/lsof	run	lsof -v 2>&1 | head -n 2	lsof version
