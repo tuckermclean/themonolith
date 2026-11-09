@@ -145,8 +145,8 @@ scripts/binpkg-store.sh	100755	6564cb6b4d48c4242beee1a4cdb6368b07714059	B01	port
 scripts/boot-test.py	100755	283c29256ba121891ade6e3d469afe43ac72474e	O01	port+fix	scripts/boot-test.py	B02 G01
 scripts/build-initrd.sh	100755	b23e9164b77db04e5208b59ace91797eb0b40c84	B03	port	scripts/build-initrd.sh	P02
 scripts/build-iso.sh	100755	faccf1d64a16b2fadd5ccde38f2c52f219e4d24a	B03	port	scripts/build-iso.sh	P02
-scripts/build-packages.sh	100755	5308e8c95e3633c4686f75473a6a462eddfcf481	B01	port+fix	scripts/build-packages.sh	B02 R03
-scripts/build-rootfs.sh	100755	465c8539b4643e6e1d6e7db22cc30719fdcee1ad	B03	port+fix	scripts/build-rootfs.sh	P02
+scripts/build-packages.sh	100755	5308e8c95e3633c4686f75473a6a462eddfcf481	B01	port+fix	scripts/build-packages.sh	B02 R03 G01
+scripts/build-rootfs.sh	100755	465c8539b4643e6e1d6e7db22cc30719fdcee1ad	B03	port+fix	scripts/build-rootfs.sh	P02 G01
 scripts/check-cves.sh	100755	1bf98d6b1c819e6b241aacb90e32d68860ed8d07	S01	port+fix	scripts/check-cves.sh	-
 scripts/check-licenses.py	100755	f7796e46f4b337adc94fcc6a93bd4c712fffc1d6	S01	port	scripts/check-licenses.py	-
 scripts/check-unowned.py	100755	63dc3b77d96e73dd38a877d7386dce949966a573	S01	port+fix	scripts/check-unowned.py	B01
