@@ -202,6 +202,7 @@ EOF
     cat > "$ROOTFS_DIR/etc/group" << 'EOF'
 root:x:0:
 wheel:x:10:root
+users:x:100:
 nobody:x:65534:
 EOF
 

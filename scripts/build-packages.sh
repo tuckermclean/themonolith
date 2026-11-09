@@ -451,6 +451,11 @@ mkdir -p "${SYSROOT_DIR}"
 #   usr/include/         kernel UAPI + musl + package dev headers (linux-headers, musl crossdev pkgs)
 #   usr/i486-linux-musl/ nested crossdev sysroot created by some packages (e.g. binutils)
 #   usr/bin/i486-linux-musl-* crossdev wrapper symlinks (binutils-config eselect, not runtime tools)
+# Kept, because the disc ships binutils: usr/i486-linux-musl/binutils-bin/ (the real tools the
+# /usr/bin/i486-linux-musl-<tool> links point to) and those links for the binutils tools. rsync
+# takes the first matching rule and never descends into an excluded directory, so the includes
+# come first: the parent dir, then binutils-bin and everything below it, then the exclude of
+# the rest of usr/i486-linux-musl/ (a single * does not cross a slash).
 #   etc/portage/         portage build config synced into crossdev sysroot by build-packages.sh
 #   etc/passwd, etc/group  seeded accounts for the install phases; build-rootfs.sh writes both in full
 #   usr/lib/pkgconfig/   .pc files — needed to compile against libs, not to run them
@@ -459,7 +464,26 @@ mkdir -p "${SYSROOT_DIR}"
 #   lib/libssp_nonshared.a  GCC stack-smashing protection static lib (crossdev GCC artifact)
 rsync -a \
     --exclude='/usr/include/' \
-    --exclude='/usr/i486-linux-musl/' \
+    --include='/usr/i486-linux-musl/' \
+    --include='/usr/i486-linux-musl/binutils-bin/' \
+    --include='/usr/i486-linux-musl/binutils-bin/***' \
+    --include='/usr/bin/i486-linux-musl-ld' \
+    --include='/usr/bin/i486-linux-musl-as' \
+    --include='/usr/bin/i486-linux-musl-ar' \
+    --include='/usr/bin/i486-linux-musl-nm' \
+    --include='/usr/bin/i486-linux-musl-objdump' \
+    --include='/usr/bin/i486-linux-musl-readelf' \
+    --include='/usr/bin/i486-linux-musl-strip' \
+    --include='/usr/bin/i486-linux-musl-objcopy' \
+    --include='/usr/bin/i486-linux-musl-ranlib' \
+    --include='/usr/bin/i486-linux-musl-size' \
+    --include='/usr/bin/i486-linux-musl-strings' \
+    --include='/usr/bin/i486-linux-musl-addr2line' \
+    --include='/usr/bin/i486-linux-musl-c++filt' \
+    --include='/usr/bin/i486-linux-musl-elfedit' \
+    --include='/usr/bin/i486-linux-musl-gprof' \
+    --include='/usr/bin/i486-linux-musl-ld.bfd' \
+    --exclude='/usr/i486-linux-musl/*' \
     --exclude='/usr/bin/i486-linux-musl-*' \
     --exclude='/etc/portage/' \
     --exclude='/etc/passwd' \
