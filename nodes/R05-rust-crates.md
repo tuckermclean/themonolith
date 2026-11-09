@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | critical | B03 | P01 | — | M |
 
-**Owns:** `configs/overlay/games-roguelike/rl144/` (new revision), `configs/overlay/www-client/stele/` (new revision), their Manifests, their `world` and `versions.lock` lines, the `stele-acid2` entry in B03's boot-mode list, `scripts/tests/no-network-ebuilds.test.sh`.
+**Owns:** `configs/overlay/games-roguelike/rl144/` (new revision), `configs/overlay/www-client/stele/` (new revision), their Manifests, their `world` and `versions.lock` lines, the `stele-acid2` entry in B03's boot-mode list, `scripts/tests/no-network-ebuilds.test.sh`, `scripts/tests/rust-offline.test.sh`, `scripts/fixtures/R05/`, the AC-2 job (`.github/workflows/rust-offline.yml`, `scripts/rust-offline-build.sh`, the `test-rust-offline` Make target), the two packages' accepted warnings in `docs/overlay-qa.md`.
 **Ports from linux-live-iso-factory@b9f533b:** `rl144-0.1.0_p20260805.ebuild` with `files/i486-unknown-linux-musl.json`, `stele-0.1.0_p20260821.ebuild`, unchanged apart from the crate handling; their `world` lines (`world:253-256`, `:295-300`).
 **Study refs:** D-supply-chain-honesty, D-revbump-on-overlay-change; SPEC §1 "Reproducibility", §5 "Distfiles".
 
@@ -27,7 +27,7 @@
 
 ## Gate
 - **R05-AC-1** — No ebuild under `configs/overlay/` has `network-sandbox` in `RESTRICT` or calls `cargo` without `--offline` or `cargo.eclass`. *Verify:* `scripts/tests/no-network-ebuilds.test.sh`.
-- **R05-AC-2** — With `DISTDIR` filled only by `emerge --fetchonly` for the two packages, both build in the builder inside `docker run --network none` with `FETCHCOMMAND=/bin/false`, and the binaries run. A smoke run of `rl144 --version` is enough before AC-5. *Verify:* a CI dispatch job that runs the two emerges in the builder under `--network none`.
+- **R05-AC-2** — With `DISTDIR` filled only by `emerge --fetchonly` for the two packages, both build in the builder inside `docker run --network none` with `FETCHCOMMAND=/bin/false`, and the binaries run. A smoke run of `rl144 --render-frame`, and of `stele` with no arguments (it prints its hello line), is enough before AC-5. *Verify:* a CI dispatch job that runs the two emerges in the builder under `--network none`.
 - **R05-AC-3** — Both packages have new revisions, Manifests that list every crate, and matching `versions.lock` lines. *Verify:* `scripts/tests/no-network-ebuilds.test.sh` (counts `CRATES` entries against Manifest `DIST` lines); R04's check.
 - **R05-AC-4** — The `CRATES` list covers every package in the builder toolchain's `library/Cargo.lock` as well as the project's, and the offline build in AC-2 compiles std with `-Z build-std` from those distfiles alone. *Verify:* `scripts/tests/no-network-ebuilds.test.sh` (lock-file entries against `CRATES`, with the library lock extracted from the builder image); the AC-2 job.
 - **R05-AC-5** — `world` lists both packages again, `build.yml`'s boot-test call includes `stele-acid2`, and the next `main` build passes the `stele-acid2` mode. *Verify:* `scripts/tests/versions-lock-complete.test.sh`; the Build run URL.

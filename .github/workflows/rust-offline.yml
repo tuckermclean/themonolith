@@ -1,0 +1,44 @@
+name: Rust Offline
+
+# R05-AC-2 and the build half of R05-AC-4: rl144 and stele build in the pinned builder image from distfiles fetched
+# by emerge --fetchonly, with --network none and FETCHCOMMAND=/bin/false, and the binaries run
+# (scripts/rust-offline-build.sh). Dispatch it from the Actions tab or `gh workflow run`; it also runs on a pull
+# request that touches the two packages, the script or this workflow.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - configs/overlay/games-roguelike/rl144/**
+      - configs/overlay/www-client/stele/**
+      - scripts/rust-offline-build.sh
+      - scripts/fixtures/R05/**
+      - .github/workflows/rust-offline.yml
+      - Makefile
+
+permissions:
+  contents: read
+  # read: the builder image and the pinned tree come from GHCR.
+  packages: read
+
+concurrency:
+  group: rust-offline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      JOBS: 2
+      LOAD_AVG: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Sync the pinned portage tree
+        run: make sync-portage
+
+      - name: Build both packages offline and run them
+        run: make test-rust-offline
