@@ -23,7 +23,7 @@ boot.html	100644	867f7ca6ab05ab66d5ebd04e8dc3339e317d4121	-	drop	-	-
 configs/attestation/cpe-exclusions.yaml	100644	3ab8ddc8ee5172beed45707677a90deedefa0312	S01	port	configs/attestation/cpe-exclusions.yaml	-
 configs/attestation/cpe-overrides.yaml	100644	a1e906c8309e8a0518925db6a7300369dd365a63	S01	port	configs/attestation/cpe-overrides.yaml	-
 configs/attestation/cve-policy.yaml	100644	47eeabd11254d70d09384e450308d99304e5b387	S01	port+fix	configs/attestation/cve-policy.yaml	-
-configs/attestation/license-policy.yaml	100644	80f1f64c186c625802aead6d791b26aaaa908ccc	S01	port	configs/attestation/license-policy.yaml	-
+configs/attestation/license-policy.yaml	100644	80f1f64c186c625802aead6d791b26aaaa908ccc	S01	port+fix	configs/attestation/license-policy.yaml	R05
 configs/attestation/schemas/README	100644	910b6f3a0182be58d924b689249631169f800252	S01	port	configs/attestation/schemas/README	-
 configs/attestation/schemas/bom-1.6.schema.json	100644	8d19f410103d1c41e7dd16333fb7f60aa783c3fd	S01	port	configs/attestation/schemas/bom-1.6.schema.json	-
 configs/attestation/schemas/bom-1.7.schema.json	100644	9eb10ac4a29f9ccd70e1ea1f942f0d2a8aa5e06d	S01	port	configs/attestation/schemas/bom-1.7.schema.json	-
