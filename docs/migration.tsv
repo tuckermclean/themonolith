@@ -2,7 +2,7 @@
 # (tree d12a8f4243ff1fbb755d387001bdca3fb685747c). Checked by scripts/check-migration.py; see docs/capabilities.md.
 # path	mode	blob	node	disposition	dest	then
 .github/workflows/boot-test.yml	100644	56358933599f7f094ab7cdcc9c90f9dbbe4ccacc	O01	port+fix	.github/workflows/boot-test.yml	G01
-.github/workflows/build.yml	100644	c2954cb893681414e7efc4f2332ee93c30e9c21e	B03	port+fix	.github/workflows/build.yml	P02 P01 R05
+.github/workflows/build.yml	100644	c2954cb893681414e7efc4f2332ee93c30e9c21e	B03	port+fix	.github/workflows/build.yml	P02 P01 R05 G01
 .github/workflows/cve-gate-canary.yml	100644	e3bffd87b8a48dd4f8012bb66125402be56c57c4	S01	port+fix	.github/workflows/cve-gate-canary.yml	-
 .github/workflows/gc.yml	100644	2ed3ea9592661e63b2a4393b4be62536b0055366	-	drop	-	-
 .github/workflows/nightly-cve-scan.yml	100644	d231f55df72ad7ebc63c2cd2b21e9ed901dfc06a	P03	port+fix	.github/workflows/advisory-feed.yml	-
@@ -16,7 +16,7 @@ AGENTS.md	100644	a2336123b5d397ced1a9bf587703ede25b3b3da1	F01	port+fix	AGENTS.md
 CLAUDE.md	100644	3ec91d10d2a32ffd0a9329d385576b979467d337	F01	port+fix	CLAUDE.md	-
 Dockerfile	100644	0fc5ab83b26909e4f8b88dcb8b252a436f9caaec	I03	port	Dockerfile	M02
 LICENSE	100644	e89a90744bc641cd621ff276eff4055cc5718bee	-	port	LICENSE	-
-Makefile	100644	15088d7a8bb697824348f043da7362efda7966cc	F01	port+fix	Makefile	I01 I02 I03 R01 B01 B02 B03 O01 S01 M01 M02
+Makefile	100644	15088d7a8bb697824348f043da7362efda7966cc	F01	port+fix	Makefile	I01 I02 I03 R01 B01 B02 B03 O01 S01 M01 M02 G01
 README.md	100644	7b9b022cfbf2059b5d7b84f8ea9537c238208f0c	G01	port+fix	README.md	X01
 RELEASE-READINESS.md	100644	7bbff833b744b4b83118b2d05533892daf2aeea6	-	drop	-	-
 boot.html	100644	867f7ca6ab05ab66d5ebd04e8dc3339e317d4121	-	drop	-	-
@@ -145,8 +145,8 @@ scripts/binpkg-store.sh	100755	6564cb6b4d48c4242beee1a4cdb6368b07714059	B01	port
 scripts/boot-test.py	100755	283c29256ba121891ade6e3d469afe43ac72474e	O01	port+fix	scripts/boot-test.py	B02 G01
 scripts/build-initrd.sh	100755	b23e9164b77db04e5208b59ace91797eb0b40c84	B03	port	scripts/build-initrd.sh	P02
 scripts/build-iso.sh	100755	faccf1d64a16b2fadd5ccde38f2c52f219e4d24a	B03	port	scripts/build-iso.sh	P02
-scripts/build-packages.sh	100755	5308e8c95e3633c4686f75473a6a462eddfcf481	B01	port+fix	scripts/build-packages.sh	B02 R03
-scripts/build-rootfs.sh	100755	465c8539b4643e6e1d6e7db22cc30719fdcee1ad	B03	port+fix	scripts/build-rootfs.sh	P02
+scripts/build-packages.sh	100755	5308e8c95e3633c4686f75473a6a462eddfcf481	B01	port+fix	scripts/build-packages.sh	B02 R03 G01
+scripts/build-rootfs.sh	100755	465c8539b4643e6e1d6e7db22cc30719fdcee1ad	B03	port+fix	scripts/build-rootfs.sh	P02 G01
 scripts/check-cves.sh	100755	1bf98d6b1c819e6b241aacb90e32d68860ed8d07	S01	port+fix	scripts/check-cves.sh	-
 scripts/check-licenses.py	100755	f7796e46f4b337adc94fcc6a93bd4c712fffc1d6	S01	port	scripts/check-licenses.py	-
 scripts/check-unowned.py	100755	63dc3b77d96e73dd38a877d7386dce949966a573	S01	port+fix	scripts/check-unowned.py	B01
