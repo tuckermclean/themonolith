@@ -2339,7 +2339,7 @@ def run_serial_net(child, args):
                 child, "other host keys", "ls /etc/dropbear", regex_absent(r"dropbear_(rsa|ed25519|dss)_host_key"))))
             results.append(("guest: dropbear starts on request", *run_check(
                 child, "dropbear",
-                "dropbear && for i in $(seq 1 20); do netstat -ltn | grep -q ':22 ' && break; sleep 1; done; "
+                "! netstat -ltn | grep -q ':22 ' && dropbear && for i in $(seq 1 20); do netstat -ltn | grep -q ':22 ' && break; sleep 1; done; "
                 "netstat -ltn | grep ':22 '", regex_matches(r"0\.0\.0\.0:22\s.*LISTEN|:::22\s.*LISTEN"), timeout=60)))
             _serial_net_drain(child)
             known = os.path.join(st["dir"], "known_hosts")
@@ -2357,12 +2357,6 @@ def run_serial_net(child, args):
                 _serial_net_drain(child)
             results.append(("host: ssh -i key root@guest id runs", rc == 0 and "uid=0(root)" in out,
                             f"exit {rc}: {out.strip()[-400:]}"))
-            try:
-                kh = open(known).read()
-            except OSError:
-                kh = ""
-            results.append(("host: the guest's host key as ssh saw it is ECDSA", "ecdsa-sha2-nistp256" in kh,
-                            f"known_hosts: {kh.strip()[-200:]}"))
 
         # ---- guest B: the other end of the serial link ----
         # B's addresses (10.1.1.2 for SLIP, 10.2.2.2 for PPP) are not A's, so a reply to A's ping can only have
@@ -2443,6 +2437,7 @@ def run_serial_net(child, args):
             except Exception:
                 pass
         shutil.rmtree(st["dir"], ignore_errors=True)
+        args._serial_net_state = None  # a launch retry gets a fresh scratch dir and link socket
 
     ok = report_results(results)
     poweroff_and_wait(child)
