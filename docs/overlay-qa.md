@@ -15,9 +15,15 @@ app-misc/monolith-base BadDescription  # R01's ported DESCRIPTION is over 80 cha
 dev-lang/monolith-perl ExcessiveLineLength  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
 dev-lang/monolith-perl MissingRemoteId  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
 dev-lang/monolith-perl NonPosixHeadTailUsage  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
+games-roguelike/rl144 MissingRemoteId  # ported unchanged from b9f533b by R05; a fix changes the ebuild and needs a revbump
+games-roguelike/rl144 RustMissingDeps  # builds with the builder's pinned rustup nightly (R05 Change 2), so it sets RUST_OPTIONAL and declares no dev-lang/rust dependency
 sys-kernel/monolith-kernel EbuildReservedName  # ported unchanged from b9f533b by B01; B02 changes it (a fix changes the ebuild and needs a revbump)
 sys-kernel/monolith-kernel ExcessiveLineLength  # ported unchanged from b9f533b by B01; B02 changes it (a fix changes the ebuild and needs a revbump)
 sys-kernel/monolith-kernel VariableOrderWrong  # ported unchanged from b9f533b by B01; B02 changes it (a fix changes the ebuild and needs a revbump)
+www-client/stele BadDescription  # ported unchanged from b9f533b by R05; a fix changes the ebuild and needs a revbump
+www-client/stele ExcessiveLineLength  # ported unchanged from b9f533b by R05; a fix changes the ebuild and needs a revbump
+www-client/stele MissingRemoteId  # ported unchanged from b9f533b by R05; a fix changes the ebuild and needs a revbump
+www-client/stele RustMissingDeps  # builds with the builder's pinned rustup nightly (R05 Change 2), so it sets RUST_OPTIONAL and declares no dev-lang/rust dependency
 x11-base/monolith-xserver DeprecatedDep  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
 x11-base/monolith-xserver EmptyGlobalAssignment  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump
 x11-base/monolith-xserver MissingRemoteId  # ported unchanged from b9f533b by B01; a fix changes the ebuild and needs a revbump

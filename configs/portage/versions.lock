@@ -93,6 +93,8 @@ games-misc/bsd-games:3.3:0
 app-misc/figlet:2.2.5-r2:0
 app-misc/cmatrix:2.0-r6:0
 app-misc/sl:5.02-r1:0
+games-roguelike/rl144:0.1.0_p20260805-r1:0
+www-client/stele:0.1.0_p20260821-r1:0
 x11-base/monolith-xserver:1.3_p20241113-r1:0
 x11-base/xorg-proto:2025.1:0
 x11-libs/libxcb:1.17.0:0

@@ -5,8 +5,10 @@
 #   B01-AC-6   update-versions.sh update exits non-zero when an atom does not resolve (stub portageq)
 #   B01-AC-8   every package of doctrine.yaml D-no-readding-removed-things is absent from world and masked
 #              (sys-devel/gcc in profile/package.mask only: target root, never mirrored to the host)
-#   B01-AC-13  world has neither games-roguelike/rl144 nor www-client/stele, names no overlay ebuild with
-#              network-sandbox in RESTRICT, and has net-firewall/nftables
+#   B01-AC-13  world names no overlay ebuild with network-sandbox in RESTRICT, and has net-firewall/nftables
+#   R05-AC-5   world has games-roguelike/rl144 and www-client/stele again (owner-approved change of the
+#              B01-AC-13 loop, Q2); build.yml's boot-test call runs the stele-acid2 mode;
+#              docs/rc1-diff-reasons.tsv no longer lists the two packages
 #
 # Uses the seams of build-packages-classify.test.sh (SYSROOT, HOST_ETC, CONFIGS_DIR, OUTPUT_DIR).
 set -u
@@ -209,8 +211,8 @@ fi
 # ===== B01-AC-13: world contents =====
 if [ -f "$WORLD" ]; then
     for a in games-roguelike/rl144 www-client/stele; do
-        if atoms_of "$WORLD" | grep -qxF "$a"; then fail "B01-AC-13: $a is in world (restored by R05, not before)"
-        else pass "B01-AC-13: $a is not in world"; fi
+        if atoms_of "$WORLD" | grep -qxF "$a"; then pass "R05-AC-5: $a is in world"
+        else fail "R05-AC-5: $a is not in world"; fi
     done
     if atoms_of "$WORLD" | grep -qxF net-firewall/nftables; then pass "B01-AC-13: world has net-firewall/nftables"
     else fail "B01-AC-13: world lacks net-firewall/nftables"; fi
@@ -244,6 +246,37 @@ if [ -f "$WORLD" ]; then
     else fail "B01-AC-13: world names overlay packages with network-sandbox in RESTRICT: $named"; fi
 else
     fail "B01-AC-13: world is missing, so the overlay check cannot run"
+fi
+
+# ===== R05-AC-5: stele-acid2 in build.yml's boot-test modes; rc1-diff-reasons rows removed =====
+# (each world atom having a versions.lock line is the generic B01-AC-5 check above)
+BUILDYML="$ROOT/.github/workflows/build.yml"
+if [ -f "$BUILDYML" ]; then
+    modes="$(python3 -I - "$BUILDYML" <<'PY'
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+j = d["jobs"]["boot-test"]
+if j.get("uses") != "./.github/workflows/boot-test.yml":
+    sys.exit(1)
+print(j["with"]["modes"])
+PY
+)"
+    case " $modes " in
+        *" stele-acid2 "*) pass "R05-AC-5: build.yml's boot-test call includes the stele-acid2 mode" ;;
+        *) fail "R05-AC-5: build.yml's boot-test call lacks stele-acid2 (modes: ${modes:-unreadable})" ;;
+    esac
+else
+    fail "R05-AC-5: .github/workflows/build.yml is missing"
+fi
+TSV="$ROOT/docs/rc1-diff-reasons.tsv"
+if [ -f "$TSV" ]; then
+    for a in games-roguelike/rl144 www-client/stele; do
+        if awk -F'\t' -v a="$a" '$1==a{f=1} END{exit !f}' "$TSV"; then
+            fail "R05-AC-5: docs/rc1-diff-reasons.tsv still lists $a"
+        else pass "R05-AC-5: docs/rc1-diff-reasons.tsv does not list $a"; fi
+    done
+else
+    fail "R05-AC-5: docs/rc1-diff-reasons.tsv is missing"
 fi
 
 if [ "$fails" -gt 0 ]; then
