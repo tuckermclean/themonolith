@@ -96,6 +96,28 @@ def parse_portage_expr(expr: str) -> list:
         return [[expr]]
 
 
+def _parse_or_items(tokens: list, pos: int) -> tuple:
+    alts = []
+    while pos < len(tokens) and tokens[pos] != ")":
+        tok = tokens[pos]
+        if tok == "||" and pos + 1 < len(tokens) and tokens[pos + 1] == "(":
+            nested, pos = _parse_or_items(tokens, pos + 2)
+            alts.extend(nested)
+        elif tok == "(":
+            inner_alts, pos = _parse_alternatives(tokens, pos + 1)
+            if pos < len(tokens) and tokens[pos] == ")":
+                pos += 1
+            alts.append([lic for alt in inner_alts for lic in alt])
+        elif tok in ("AND", "OR", "||"):
+            pos += 1
+        else:
+            alts.append([tok])
+            pos += 1
+    if pos < len(tokens):
+        pos += 1  # consume ")"
+    return alts, pos
+
+
 def _parse_alternatives(tokens: list, pos: int) -> tuple:
     """
     Recursive descent parser.  Returns (alternatives, new_pos).
@@ -130,9 +152,7 @@ def _parse_alternatives(tokens: list, pos: int) -> tuple:
             if pos >= len(tokens) or tokens[pos] != "(":
                 break  # malformed; stop
             pos += 1  # consume "("
-            inner_alts, pos = _parse_alternatives(tokens, pos)
-            if pos < len(tokens) and tokens[pos] == ")":
-                pos += 1  # consume ")"
+            inner_alts, pos = _parse_or_items(tokens, pos)
 
             # Cross-product: each current conjunction × each inner alternative
             new_conjunctions = []
