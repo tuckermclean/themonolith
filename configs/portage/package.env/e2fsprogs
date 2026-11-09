@@ -1,0 +1,3 @@
+# Read after cross-compile (files sort by name), so this env file is applied
+# after static.conf and its EXTRA_ECONF wins.
+sys-fs/e2fsprogs   e2fsprogs-static-tools.conf
