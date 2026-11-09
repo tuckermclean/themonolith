@@ -55,6 +55,23 @@ find "$VDB" -mindepth 3 -maxdepth 3 -name CONTENTS -print | LC_ALL=C sort > "$WO
 
 mkdir -p "$(dirname "$OUTPUT")"
 awk -v vdb="$VDB" -v start="$START" -v logf="$LOG" -v exc="$EXCEPTIONS" -v out="$OUTPUT" -v allow="$ALLOWLIST" '
+# class body as fnmatch reads it: a reversed range matches nothing, [ is a literal
+function fnclass(cls,   o, p, n, c, x, y) {
+    if (!ordok) { for (x = 1; x < 256; x++) ord[sprintf("%c", x)] = x; ordok = 1 }
+    n = length(cls); o = ""
+    for (p = 1; p <= n; p++) {
+        c = substr(cls, p, 1)
+        if (substr(cls, p + 1, 1) == "-" && p + 2 <= n) {
+            y = substr(cls, p + 2, 1)
+            if (ord[c] > ord[y]) { p += 2; continue }
+            o = o c "-" y; p += 2; continue
+        }
+        o = o c
+    }
+    gsub(/\\/, "\\\\", o)
+    gsub(/\[/, "\\[", o)
+    return o
+}
 # fnmatch pattern -> anchored extended regex: * any run (including /), ? one character,
 # [..] / [!..] classes, everything else literal
 function fn2re(pat,   i, n, ch, re, j, cls, k) {
@@ -71,8 +88,10 @@ function fn2re(pat,   i, n, ch, re, j, cls, k) {
             if (j > n) { re = re "\\["; continue }
             cls = substr(pat, i + 1, j - i - 1); k = ""
             if (substr(cls, 1, 1) == "!") { k = "^"; cls = substr(cls, 2) }
-            gsub(/\\/, "\\\\", cls)
-            re = re "[" k cls "]"; i = j
+            cls = fnclass(cls)
+            if (cls == "") re = re (k == "" ? "x^" : ".")
+            else re = re "[" (k == "" && substr(cls, 1, 1) == "^" ? "\\" : "") k cls "]"
+            i = j
         }
         else if (ch ~ /[.^$()|+{}\\]/) re = re "\\" ch
         else re = re ch
