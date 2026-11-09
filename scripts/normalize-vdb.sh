@@ -5,6 +5,7 @@
 #   COUNTER      := 1..N in LC_ALL=C order of category/pn-pv
 #   environment.bz2 loses the declare lines of variables that change every run or between builders (time, random,
 #   JOBS, LOAD_AVG, MAKEOPTS, the compression command, the host name), then bzip2 -9
+#   BINPKGMD5    removed (md5 of the gpkg just packed, which embeds the build time and file mtimes)
 #   CONTENTS     the trailing mtime of every obj and sym line := SOURCE_DATE_EPOCH
 set -eu
 
@@ -30,6 +31,7 @@ while read -r cpv; do
 		bzip2 -9 -c "$tmp/env.n" >"$tmp/env.bz2"
 		cat "$tmp/env.bz2" >"$p/environment.bz2"
 	fi
+	rm -f "$p/BINPKGMD5"
 	if [ -f "$p/CONTENTS" ]; then
 		sed -E "s/^(obj|sym) (.*) [0-9]+\$/\\1 \\2 $SOURCE_DATE_EPOCH/" "$p/CONTENTS" >"$tmp/contents"
 		cat "$tmp/contents" >"$p/CONTENTS"
