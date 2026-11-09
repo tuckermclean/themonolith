@@ -109,7 +109,7 @@ configs/portage/package.env/cross-compile	100644	465c89e90a6a258ab81d9f081d5ecab
 configs/portage/package.mask/problematic	100644	30513bedd52a10a069790398a4caf98fc2c207c5	B01	port	configs/portage/package.mask/problematic	-
 configs/portage/package.use/dnsmasq	100644	12bc9154218d9bbffeff179b82e80520cc054255	B01	port	configs/portage/package.use/dnsmasq	-
 configs/portage/package.use/nftables	100644	c4da2a3b2c5c95f6713b3df419c6defe109417a0	B01	port	configs/portage/package.use/nftables	-
-configs/portage/package.use/static	100644	c7900091f8ef69b5b28028c12c37beb41b0da7f4	B01	port	configs/portage/package.use/static	R03
+configs/portage/package.use/static	100644	c7900091f8ef69b5b28028c12c37beb41b0da7f4	B01	port	configs/portage/package.use/static	R03 G01
 configs/portage/profile/package.provided	100644	9f00f94eaf1766fa160a04998b92d80ff9f9e345	B01	port	configs/portage/profile/package.provided	-
 configs/portage/savedconfig/sys-apps/busybox	100644	e6a0bde9384774bfe14333a3ecd02126c5f6da54	B01	port	configs/portage/savedconfig/sys-apps/busybox	-
 configs/portage/versions.lock	100644	e97405ac916fdb7ff5d51f4fc631d3c2dc960532	B01	port+fix	configs/portage/versions.lock	B02 R05 M01
@@ -137,7 +137,7 @@ docs/superpowers/specs/2026-08-13-perl-for-the-monolith-design.md	100644	78d1072
 docs/superpowers/specs/2026-08-14-gui-design.md	100644	e72f6d9513bb8d6b234386564184bec127952b3d	-	drop	-	-
 docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md	100644	0eecb3521d8cf889df6ef7ab4590201be868d79f	-	drop	-	-
 docs/version-pinning.md	100644	5b3787ec6198573d1b0e949a6fcee1541be21375	M01	port+fix	docs/version-pinning.md	M02
-rootfs/init	100755	715030ae15c1082e59a18b6c38d278bf4a2fe5f2	B03	port	rootfs/init	-
+rootfs/init	100755	715030ae15c1082e59a18b6c38d278bf4a2fe5f2	B03	port	rootfs/init	G01
 rootfs/usr/share/udhcpc/default.script	100755	3577203da4e25ca002a5cda30c8e75fb014a234b	B03	port	rootfs/usr/share/udhcpc/default.script	-
 scripts/agent-git-env.sh	100755	da2d5162cede289725f76fb398e232308b2f7ff7	-	drop	-	-
 scripts/attestation.sh	100755	ac0fcdffc362cb31e999a86a673b9e142469c737	S01	port+fix	scripts/attestation.sh	-
