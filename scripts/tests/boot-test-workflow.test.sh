@@ -472,6 +472,44 @@ sys.exit(1 if bad else 0)
 PY
 [ $? -eq 0 ] || fails=$((fails + 1))
 
+# ---- G01 lane wiring (S1c): build.yml and the rc1 lane name the new modes ----
+python3 - "$ROOT" "$MODES" <<'PY'
+import sys, os
+import yaml
+root, known = sys.argv[1], sys.argv[2].split()
+O01 = "bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist".split()
+bad = 0
+def chk(l, c):
+    global bad
+    if c: print("PASS: " + l)
+    else: print("FAIL: " + l); bad += 1
+def modes_of(rel, job):
+    try:
+        doc = yaml.safe_load(open(os.path.join(root, rel)))
+        return str(doc["jobs"][job]["with"]["modes"]).split()
+    except Exception as e:
+        print(f"  {rel} job {job}: no with.modes ({type(e).__name__}: {e})")
+        return None
+b = modes_of(".github/workflows/build.yml", "boot-test")
+chk("G01 build.yml job boot-test passes with.modes", b is not None)
+b = b or []
+chk("G01 build.yml boot-test modes contain all 17 O01 modes", all(x in b for x in O01))
+chk("G01 build.yml boot-test modes contain persist-init", "persist-init" in b)
+chk("G01 build.yml boot-test modes contain entry", "entry" in b)
+chk("G01 build.yml boot-test modes are all known modes", bool(b) and all(x in known for x in b))
+for job in ("boot-test", "boot-test-dispatch"):
+    r = modes_of(".github/workflows/boot-test-rc1.yml", job)
+    p = f"G01 boot-test-rc1.yml job {job}"
+    chk(f"{p} passes with.modes", r is not None)
+    r = r or []
+    chk(f"{p} modes contain all 17 O01 modes", all(x in r for x in O01))
+    chk(f"{p} modes contain entry", "entry" in r)
+    chk(f"{p} modes do not contain persist-init", bool(r) and "persist-init" not in r)
+    chk(f"{p} modes are all known modes", bool(r) and all(x in known for x in r))
+sys.exit(1 if bad else 0)
+PY
+[ $? -eq 0 ] || fails=$((fails + 1))
+
 echo
 if [ "$fails" -ne 0 ]; then echo "$fails FAILED"; exit 1; fi
 echo "ALL PASS"
