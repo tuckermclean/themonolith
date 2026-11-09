@@ -510,6 +510,45 @@ sys.exit(1 if bad else 0)
 PY
 [ $? -eq 0 ] || fails=$((fails + 1))
 
+# ---- G01-AC-6 (wiring): mode smoke. The boot is `make test-boot MODE=smoke` (run, not encoded). ----
+python3 - "$ROOT" <<'PY'
+import sys, os, re, types, importlib.util
+import yaml
+root = sys.argv[1]
+bad = 0
+def chk(l, c):
+    global bad
+    if c: print("PASS: " + l)
+    else: print("FAIL: " + l); bad += 1
+m = None
+try:
+    spec = importlib.util.spec_from_file_location("boot_test_mod_g01_smoke_wf", os.path.join(root, "scripts/boot-test.py"))
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+except BaseException as e:
+    print(f"  cannot import boot-test.py: {type(e).__name__}: {e}")
+chk("G01-AC-6 smoke is in boot-test.py MODE_RUNNERS", m is not None and "smoke" in m.MODE_RUNNERS)
+chk("G01-AC-6 smoke is in boot-test.py MODE_BUILDERS", m is not None and "smoke" in m.MODE_BUILDERS)
+chk("G01-AC-6 smoke is in boot-test.py MODE_DEFAULT_RAM", m is not None and "smoke" in m.MODE_DEFAULT_RAM)
+mk = open(os.path.join(root, "Makefile")).read()
+bm = re.search(r"^BOOT_MODES\s*:?=\s*(.*)$", mk, re.M)
+chk("G01-AC-6 Makefile BOOT_MODES names smoke", bm is not None and "smoke" in bm.group(1).split())
+try:
+    jobs = yaml.safe_load(open(os.path.join(root, ".github/workflows/boot-test.yml")))["jobs"]
+except Exception as e:
+    print(f"  boot-test.yml: {type(e).__name__}: {e}"); jobs = {}
+steps = (jobs.get("smoke") or {}).get("steps") or []
+chk("G01-AC-6 boot-test.yml has a smoke job", "smoke" in jobs)
+chk("G01-AC-6 boot-test.yml smoke job runs `make test-boot` with MODE=smoke",
+    any("make test-boot" in str(s.get("run", "")) and "MODE=smoke" in str(s.get("run", "")).split() for s in steps))
+try:
+    b = str(yaml.safe_load(open(os.path.join(root, ".github/workflows/build.yml")))["jobs"]["boot-test"]["with"]["modes"]).split()
+except Exception as e:
+    print(f"  build.yml: {type(e).__name__}: {e}"); b = []
+chk("G01-AC-6 build.yml boot-test modes contain smoke", "smoke" in b)
+sys.exit(1 if bad else 0)
+PY
+[ $? -eq 0 ] || fails=$((fails + 1))
+
 echo
 if [ "$fails" -ne 0 ]; then echo "$fails FAILED"; exit 1; fi
 echo "ALL PASS"

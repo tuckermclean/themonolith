@@ -1,0 +1,8 @@
+# fixture world for smoke-coverage.test.sh
+sys-apps/busybox
+net-misc/iperf:3
+<sys-fs/ncdu-2
+=games-roguelike/nethack-3.6.7-r1
+sys-libs/zlib
+
+app-misc/foo
