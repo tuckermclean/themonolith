@@ -9,11 +9,11 @@
 #   4. the binaries run: rl144 --render-frame (exit 0) and stele with no arguments (exit 0, "i486 binary live").
 # Dependencies: neither ebuild declares any, and the rest of the world is binary packages in the normal build, so both are
 # emerged with --nodeps: the job is about these two packages' own source fetch and build.
-# Env: DOCKER (default docker), BUILDER_REF (also $1; the builder image by digest), CONFIGS_DIR, TREE_DIR (the pinned
+# Env: DOCKER (default docker; may be several words, e.g. podman --cgroup-manager=cgroupfs), BUILDER_REF (also $1; the builder image by digest), CONFIGS_DIR, TREE_DIR (the pinned
 # tree), RUST_OFFLINE_DIR (state; DISTDIR is $RUST_OFFLINE_DIR/distfiles). Any failure exits non-zero.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd -P)
-DOCKER=${DOCKER:-docker}
+engine=${DOCKER:-docker}
 BUILDER_REF=${1:-${BUILDER_REF:-}}
 [ -n "$BUILDER_REF" ] || { echo "rust-offline: BUILDER_REF (or \$1) is the builder image by digest" >&2; exit 2; }
 CONFIGS_DIR=${CONFIGS_DIR:-$PWD/configs}
@@ -33,6 +33,8 @@ mkdir -p "$STATE"
 rm -rf "$DISTDIR" "$STATE/output"
 mkdir -p "$DISTDIR" "$STATE/output"
 chmod 0777 "$DISTDIR" "$STATE/output"
+# Run the engine from the state dir so podman's cgroupfs `oom` file does not land in the checkout (all paths are absolute).
+cd "$STATE"
 
 # The mounts of the package build (Makefile BUILD_MOUNTS): configs, the pinned tree, DISTDIR (/var/cache/distfiles),
 # and /output (PKGDIR, from make.conf).
@@ -53,19 +55,19 @@ unset BUILD_DIR
 '
 
 echo "==> (d) the builder's library/Cargo.lock must equal the fixture"
-"$DOCKER" run --rm "$BUILDER_REF" cat "$LIBLOCK" >"$STATE/image-library-Cargo.lock"
+$engine run --rm "$BUILDER_REF" cat "$LIBLOCK" >"$STATE/image-library-Cargo.lock"
 if ! cmp "$STATE/image-library-Cargo.lock" "$FIXTURE"; then
 	echo "rust-offline: the builder image's library/Cargo.lock differs from $FIXTURE; regenerate CRATES and the fixture" >&2
 	exit 1
 fi
 
 echo "==> (a) fetch the distfiles of both packages, with network"
-"$DOCKER" run --rm $MOUNTS -e JOBS="$JOBS" -e LOAD_AVG="$LOAD_AVG" "$BUILDER_REF" sh -c "$PREP"'
+$engine run --rm $MOUNTS -e JOBS="$JOBS" -e LOAD_AVG="$LOAD_AVG" "$BUILDER_REF" sh -c "$PREP"'
 ${CROSS_TARGET:-i486-linux-musl}-emerge --fetchonly --oneshot --nodeps '"$ATOMS"
 echo "    DISTDIR: $(find "$DISTDIR" -type f | wc -l) files"
 
 echo "==> (b) build both offline from that DISTDIR"
-"$DOCKER" run --rm --network none $MOUNTS -e JOBS="$JOBS" -e LOAD_AVG="$LOAD_AVG" \
+$engine run --rm --network none $MOUNTS -e JOBS="$JOBS" -e LOAD_AVG="$LOAD_AVG" \
 	-e FETCHCOMMAND=/bin/false -e RESUMECOMMAND=/bin/false "$BUILDER_REF" sh -c "$PREP"'
 SYS=/usr/${CROSS_TARGET:-i486-linux-musl}
 ${CROSS_TARGET:-i486-linux-musl}-emerge --oneshot --nodeps --verbose '"$ATOMS"'
@@ -74,10 +76,11 @@ cp $SYS/usr/bin/rl144 $SYS/usr/bin/stele /output/target/usr/bin/
 chmod -R a+rX /output/target'
 
 echo "==> (c) smoke runs of the installed binaries"
-"$DOCKER" run --rm --network none -v "$STATE/output/target:/tgt:ro" "$BUILDER_REF" \
+$engine run --rm --network none -v "$STATE/output/target:/tgt:ro" "$BUILDER_REF" \
 	/tgt/usr/bin/rl144 --render-frame </dev/null >"$STATE/rl144-frame.txt"
-"$DOCKER" run --rm --network none -v "$STATE/output/target:/tgt:ro" "$BUILDER_REF" \
+$engine run --rm --network none -v "$STATE/output/target:/tgt:ro" "$BUILDER_REF" \
 	/tgt/usr/bin/stele </dev/null >"$STATE/stele-hello.txt"
+echo "    rl144 --render-frame: $(wc -c <"$STATE/rl144-frame.txt") bytes"
 cat "$STATE/stele-hello.txt"
 grep -q 'i486 binary live' "$STATE/stele-hello.txt" || { echo "rust-offline: stele printed no 'i486 binary live' line" >&2; exit 1; }
 echo "rust-offline: both packages built offline and run"
