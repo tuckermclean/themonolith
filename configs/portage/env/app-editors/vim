@@ -1,0 +1,4 @@
+# pathdef.c records the builder's user and host (compiled_user, compiled_sys); --with-compiledby fixes both.
+if [[ ${EXTRA_ECONF} != *--with-compiledby=* ]]; then
+	EXTRA_ECONF+=" --with-compiledby=monolith"
+fi
