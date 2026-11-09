@@ -39,7 +39,7 @@ Milestones:
 ## What is on the disc
 
 The [world file](configs/portage/world) lists 99 top-level atoms, cross-compiled for `i486-linux-musl`.
-Every one has a row in `scripts/smoke-checks.txt`: the `smoke` boot mode runs most, and the rest are covered by a named mode (the kernel by `bios`, the X packages by `gui`, `stele` by `stele-acid2`). Some are overlay
+Every one has a row in `scripts/smoke-checks.txt`: the `smoke` boot mode runs most, and the rest are covered by a named mode (the kernel by `bios`, the X server, `st` and `dwm` by `gui`, `stele` by `stele-acid2`). Some are overlay
 ebuilds (`monolith-*`: the kernel, the base `/etc` and helper scripts, perl, sqlite, the X server, `st`, `dwm`),
 two are Rust (`rl144`, `stele`), and the rest come from the pinned Gentoo tree.
 
@@ -112,7 +112,7 @@ The initrd's BusyBox and the packages above provide `ip`, `ifconfig`, `dhcpcd`, 
 DNS for a LAN (the `nat` mode). The `nic` mode boots with the emulated `pcnet`, `rtl8139`, `tulip`,
 `ne2k_pci` and `ne2k_isa` cards.
 
-Boot starts `dhcpcd` on `eth0` by itself; the `smoke` mode checks that `eth0` holds a DHCP lease.
+Boot starts `dhcpcd` on `eth0` by itself; the `bios` and `uefi` modes check that `eth0` has a DHCP-assigned address.
 
 The `serial-net` mode joins two guests with a serial line on `ttyS1` and runs these between them. `ttyS0`
 is the console. The disc has no standalone `slattach`; use BusyBox's.
