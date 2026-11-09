@@ -1,0 +1,10 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {"type": "library", "name": "mit-or-notallowed", "version": "1", "licenses": [{"expression": "|| ( MIT NOT-ALLOWED )"}]},
+    {"type": "library", "name": "mit-or-llvm", "version": "1", "licenses": [{"expression": "|| ( MIT Apache-2.0-with-LLVM-exceptions )"}]},
+    {"type": "library", "name": "nested-group-or-apache", "version": "1", "licenses": [{"expression": "|| ( ( MIT NOT-ALLOWED ) Apache-2.0 )"}]}
+  ]
+}
