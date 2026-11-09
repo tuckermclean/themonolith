@@ -5,7 +5,7 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -453,6 +453,14 @@ build-packages-resume: pull-image ensure-volume
 extract: pull-image ensure-volume
 	@echo "==> Installing packages from binpkgs"
 	$(BUILD_RUN) /scripts/extract-packages.sh
+
+# R05-AC-2: rl144 and stele build in the builder from distfiles fetched by emerge --fetchonly, under --network none with
+# FETCHCOMMAND=/bin/false, and run (scripts/rust-offline-build.sh). The builder is taken by digest and the pinned tree
+# must be in TREE_DIR (make sync-portage). With podman, DOCKER='podman --cgroup-manager=cgroupfs' where no systemd user session runs.
+test-rust-offline:
+	@test -d '$(TREE_DIR)/profiles' || { echo "test-rust-offline: no pinned tree in $(TREE_DIR); run make sync-portage"; exit 1; }
+	DOCKER='$(DOCKER)' BUILDER_REF='$(BUILDER_REF)' CONFIGS_DIR='$(abspath configs)' TREE_DIR='$(abspath $(TREE_DIR))' \
+		JOBS='$(JOBS)' LOAD_AVG='$(LOAD_AVG)' sh scripts/rust-offline-build.sh '$(BUILDER_REF)'
 
 # ---- B03: the root filesystem, the initramfs and the ISO ----
 
