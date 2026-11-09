@@ -5,7 +5,7 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-boot test-artifact test-gates test-cve-canary test-static-rebuild attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -122,6 +122,8 @@ test-boot: $(default_iso_dep)
 	mkdir -p output
 	rm -f output/boot-failed
 	toolbox/run --network none -- sh -c 'qemu-system-i386 --version; qemu-system-x86_64 --version; dpkg-query -W qemu-system-x86 ovmf' > output/tool-versions.txt
+	grep -m1 '^model name' /proc/cpuinfo >> output/tool-versions.txt
+	grep -m1 '^flags' /proc/cpuinfo >> output/tool-versions.txt
 	@sha256sum '$(ISO)' | cut -d' ' -f1 > output/boot-iso.sha256
 	$(boot_runs)
 	@$(vga_xfail)
@@ -136,6 +138,15 @@ iso-artifact-name:
 	@name='$(if $(ISO_ARTIFACT),$(ISO_ARTIFACT),$(if $(ISO_URL),boot-test-iso-$(GITHUB_RUN_ID)))'; \
 	test -n "$$name" || { echo "need iso-artifact or iso-url"; exit 1; }; \
 	echo "artifact=$$name" >> "$$GITHUB_OUTPUT"
+
+# The job indices 1..COUNT of a boot-test-repeat matrix, as a JSON array (to $GITHUB_OUTPUT).
+repeat-matrix:
+	@case "$$COUNT" in \
+	''|*[!0-9]*) echo "count must be a positive integer, got '$$COUNT'"; exit 1;; \
+	0*) echo "count must not be zero or have leading zeros, got '$$COUNT'"; exit 1;; \
+	esac; \
+	test "$$COUNT" -le 256 || { echo "count must be at most 256 (the Actions matrix limit), got '$$COUNT'"; exit 1; }; \
+	echo "index=[$$(seq -s, 1 "$$COUNT")]" >> "$$GITHUB_OUTPUT"
 
 # Manual boots (not tests): serial console, Ctrl+A X to exit.
 run-bios:

@@ -134,31 +134,6 @@ rsync -a \
     --exclude='/lib/libssp_nonshared.a' \
     "/usr/${CROSS_TARGET}/" "${SYSROOT_DIR}/"
 
-# Fix the musl dynamic linker. The crossdev sysroot installs it as a symlink
-# pointing to an absolute crossdev path (/usr/i486-linux-musl/usr/lib/libc.so)
-# which is dangling on the live system. Replace with the actual binary.
-#
-# 2026-08-02 static-linking audit: evaluated whether this is still needed now
-# that configs/portage/env/static.conf + package.use/static force -static
-# across the world file. Kept — util-linux's client utilities (mount,
-# agetty, mountpoint) have no 'static' USE flag upstream, so at least some
-# dynamically-linked binaries reach the live rootfs regardless of these
-# static flags, and would abort with "No such file or directory" on exec
-# without a working ld-musl-i386.so.1. Since this build environment cannot
-# run Docker/emerge to produce a sysroot and re-verify with zero remaining
-# dynamic binaries, removing this is deferred to CI: run
-# `scripts/static-audit.sh --strict` against a built sysroot; only remove
-# this block once that comes back clean.
-echo "==> Installing musl dynamic linker..."
-MUSL_LIBC="/usr/${CROSS_TARGET}/usr/lib/libc.so"
-if [ -f "${MUSL_LIBC}" ]; then
-    rm -f "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
-    cp "${MUSL_LIBC}" "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
-else
-    echo "WARNING: musl libc not found at ${MUSL_LIBC}"
-    echo "  Dynamically-linked binaries will fail to execute at runtime!"
-fi
-
 # Decompress bzip2-compressed man pages.
 # Gentoo installs man pages as .bz2; mandoc is built without libbz2 support.
 echo "==> Decompressing bzip2 man pages..."
