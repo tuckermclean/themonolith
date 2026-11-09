@@ -54,7 +54,7 @@ ISO ?= $(DEFAULT_ISO)
 # (packages, their kernel-module check, then rootfs; iso follows as the default ISO's prerequisite) runs before the first boot test.
 # The rc1 lane builds nothing. Prerequisites run left to right, so this sits ahead of test-boot.
 test_build_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),,sync-portage build-packages verify-kernel-modules build-rootfs))
-test: test-lint test-unit test-revbump test-overlay $(test_build_dep) test-boot test-artifact test-gates test-cve-canary test-static-rebuild
+test: test-lint test-unit test-revbump test-overlay test-rust-offline $(test_build_dep) test-boot test-artifact test-gates test-cve-canary test-static-rebuild
 
 # Where fetch-iso writes the verified ISO.
 ISO_OUT ?= $(DEFAULT_ISO)
@@ -456,9 +456,8 @@ extract: pull-image ensure-volume
 
 # R05-AC-2: rl144 and stele build in the builder from distfiles fetched by emerge --fetchonly, under --network none with
 # FETCHCOMMAND=/bin/false, and run (scripts/rust-offline-build.sh). The builder is taken by digest and the pinned tree
-# must be in TREE_DIR (make sync-portage). With podman, DOCKER='podman --cgroup-manager=cgroupfs' where no systemd user session runs.
-test-rust-offline:
-	@test -d '$(TREE_DIR)/profiles' || { echo "test-rust-offline: no pinned tree in $(TREE_DIR); run make sync-portage"; exit 1; }
+# must be in TREE_DIR (test-rust-offline depends on sync-portage). With podman, DOCKER='podman --cgroup-manager=cgroupfs' where no systemd user session runs.
+test-rust-offline: sync-portage
 	DOCKER='$(DOCKER)' BUILDER_REF='$(BUILDER_REF)' CONFIGS_DIR='$(abspath configs)' TREE_DIR='$(abspath $(TREE_DIR))' \
 		JOBS='$(JOBS)' LOAD_AVG='$(LOAD_AVG)' sh scripts/rust-offline-build.sh '$(BUILDER_REF)'
 
