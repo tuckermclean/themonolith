@@ -1,9 +1,10 @@
 name: Boot Test rc1
 
-# The rc1 lane: the 17 boot modes on the v0.1.0-rc1 release ISO, fetched by URL and checked by sha256, before
+# The rc1 lane: the 17 original boot modes, plus entry, on the v0.1.0-rc1 release ISO, fetched by URL and checked by sha256, before
 # this repository builds anything. workflow_dispatch runs only for a workflow on the default branch, so a
 # pull_request trigger on the oracle's own files runs it on the PR that changes them. A dispatch with a
 # wrong iso-sha256 must fail the fetch-iso job before any mode runs.
+# persist-init is left out because rc1 lacks the persistence fixes it checks.
 on:
   workflow_dispatch:
     inputs:
@@ -32,6 +33,7 @@ jobs:
       iso-url: https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
       iso-sha256: a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
       kernel-version: 6.12.80-i486-monolith
+      modes: bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist entry
 
   # The digest of the dispatch, right or wrong.
   boot-test-dispatch:
@@ -41,3 +43,4 @@ jobs:
       iso-url: https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
       iso-sha256: ${{ inputs.iso-sha256 }}
       kernel-version: 6.12.80-i486-monolith
+      modes: bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist entry
