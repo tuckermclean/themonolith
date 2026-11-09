@@ -112,6 +112,22 @@ S="${WORKDIR}/rl144-${COMMIT}"
 # earlier happy-valley/master split is resolved now that they've converged), so
 # the shipped source carries it and src_install dodoc's it below.
 LICENSE="MIT"
+
+# Licences of the crates linked into the binary (CRATES above, project and std).
+# Names are Gentoo names; each dependency's choice of licence is an || group.
+LICENSE+="
+	BSD
+	MIT
+	MPL-2.0
+	Unicode-3.0
+	ZLIB
+	|| ( 0BSD Apache-2.0 MIT )
+	|| ( Apache-2.0 Apache-2.0-with-LLVM-exceptions MIT )
+	|| ( Apache-2.0 LGPL-2.1+ MIT )
+	|| ( Apache-2.0 MIT )
+	|| ( Apache-2.0 MIT ZLIB )
+	|| ( MIT Unlicense )
+"
 SLOT="0"
 KEYWORDS="~amd64"
 
