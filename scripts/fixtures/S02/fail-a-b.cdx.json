@@ -1,0 +1,8 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {"type": "library", "name": "not-a-or-not-b", "version": "1", "licenses": [{"expression": "|| ( NOT-A NOT-B )"}]}
+  ]
+}
