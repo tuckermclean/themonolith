@@ -23,7 +23,7 @@ boot.html	100644	867f7ca6ab05ab66d5ebd04e8dc3339e317d4121	-	drop	-	-
 configs/attestation/cpe-exclusions.yaml	100644	3ab8ddc8ee5172beed45707677a90deedefa0312	S01	port	configs/attestation/cpe-exclusions.yaml	-
 configs/attestation/cpe-overrides.yaml	100644	a1e906c8309e8a0518925db6a7300369dd365a63	S01	port	configs/attestation/cpe-overrides.yaml	-
 configs/attestation/cve-policy.yaml	100644	47eeabd11254d70d09384e450308d99304e5b387	S01	port+fix	configs/attestation/cve-policy.yaml	-
-configs/attestation/license-policy.yaml	100644	80f1f64c186c625802aead6d791b26aaaa908ccc	S01	port	configs/attestation/license-policy.yaml	-
+configs/attestation/license-policy.yaml	100644	80f1f64c186c625802aead6d791b26aaaa908ccc	S01	port+fix	configs/attestation/license-policy.yaml	R05
 configs/attestation/schemas/README	100644	910b6f3a0182be58d924b689249631169f800252	S01	port	configs/attestation/schemas/README	-
 configs/attestation/schemas/bom-1.6.schema.json	100644	8d19f410103d1c41e7dd16333fb7f60aa783c3fd	S01	port	configs/attestation/schemas/bom-1.6.schema.json	-
 configs/attestation/schemas/bom-1.7.schema.json	100644	9eb10ac4a29f9ccd70e1ea1f942f0d2a8aa5e06d	S01	port	configs/attestation/schemas/bom-1.7.schema.json	-
@@ -31,7 +31,7 @@ configs/attestation/schemas/cryptography-defs.schema.json	100644	85818224f297f0f
 configs/attestation/schemas/jsf-0.82.schema.json	100644	7e47f257841df7712b0aa48722d51d53b96bdf9f	S01	port	configs/attestation/schemas/jsf-0.82.schema.json	-
 configs/attestation/schemas/spdx.schema.json	100644	a160ab0daf093366324330c5e15719fd671181f3	S01	port	configs/attestation/schemas/spdx.schema.json	-
 configs/attestation/spdx-license-ids.txt	100644	0b03344595d49ac750ee4172a047b4b72b7a5af7	S01	port	configs/attestation/spdx-license-ids.txt	-
-configs/attestation/unowned-allowlist.yaml	100644	9990fb9175b2ad2b70c4231ac5ecae70443df51c	S01	port	configs/attestation/unowned-allowlist.yaml	B01
+configs/attestation/unowned-allowlist.yaml	100644	9990fb9175b2ad2b70c4231ac5ecae70443df51c	S01	port	configs/attestation/unowned-allowlist.yaml	B01 G01
 configs/bootbg.png	100644	3340e68405986c64ef9cf1801fc261589e318467	B03	port	configs/bootbg.png	-
 configs/initrd-modules.txt	100644	8c909f21c9478c7b23d00c3363a9757132a4707e	B03	port	configs/initrd-modules.txt	-
 configs/kernel.config	100644	d55ac5830c2a954e8a2e8c654f59f5d2c51c65aa	B01	port	configs/kernel.config	B02:configs/portage/savedconfig/sys-kernel/monolith-kernel
@@ -151,7 +151,7 @@ scripts/check-cves.sh	100755	1bf98d6b1c819e6b241aacb90e32d68860ed8d07	S01	port+f
 scripts/check-licenses.py	100755	f7796e46f4b337adc94fcc6a93bd4c712fffc1d6	S01	port	scripts/check-licenses.py	-
 scripts/check-unowned.py	100755	63dc3b77d96e73dd38a877d7386dce949966a573	S01	port+fix	scripts/check-unowned.py	B01
 scripts/enrich-sbom.py	100755	1a13bab8c068f02806d74e904d2488deeb3d64dd	S01	port+fix	scripts/enrich-sbom.py	-
-scripts/extract-packages.sh	100755	48d27efd736f06c8afecccbf1c4b08a08d236689	B01	port	scripts/extract-packages.sh	R03
+scripts/extract-packages.sh	100755	48d27efd736f06c8afecccbf1c4b08a08d236689	B01	port	scripts/extract-packages.sh	R03 G01
 scripts/fixtures/canary-sbom.cdx.json	100644	5013867e0bae1241171b79bdaa221ab9d5e1c8a4	S01	port	scripts/fixtures/canary-sbom.cdx.json	-
 scripts/generate-dashboard.py	100755	417644e3fa8199f87e735ad87a156dbc70aca316	-	drop	-	-
 scripts/generate-provenance.py	100644	4753ffb05815f4af7c2cfdba4efb3b71c2c8f090	P01	replace	-	-
