@@ -9,7 +9,8 @@
 #       (a) fetch: emerge --fetchonly of both -r1 atoms, with network, into a DISTDIR
 #       (b) then a separate container with --network none, FETCHCOMMAND=/bin/false and RESUMECOMMAND=/bin/false
 #           emerging both from that DISTDIR
-#       (c) smoke runs: rl144 --version and stele --version|--help, a non-zero exit fails the script
+#       (c) smoke runs: rl144 --render-frame and stele with no arguments (its output must contain
+#           "i486 binary live"); a non-zero exit or a missing hello line fails the script
 #       (d) the image's library/Cargo.lock (read with `cat` or `docker cp`, or compared in the container with
 #           cmp/diff) equals scripts/fixtures/R05/library-Cargo.lock; a difference fails
 #       (e) any failing step makes the script exit non-zero
@@ -90,6 +91,12 @@ line=$(printf '%s %s' "$*" "$in" | tr '\n' ' ')
 echo "$line" >>"$STUB_LOG"
 case "$1" in create) echo stubcid; exit 0 ;; esac
 if [ -n "${FAIL_RE:-}" ] && printf '%s\n' "$line" | grep -Eq -- "$FAIL_RE"; then exit 1; fi
+case "$line" in *emerge*) ;; *)
+	# stele run with no arguments (the command ends in the stele binary): print its hello line
+	if printf '%s\n' "$line" | grep -Eq '(^|[ '\''"]|/bin/)stele[ '\''"]*$'; then
+		printf '%s\n' "${STELE_SAY-stele 0.1.0 — M0 toolchain hello: i486 binary live}"
+	fi ;;
+esac
 case "$line" in *"$STUB_LIBLOCK"*)
 	if [ "$1" = cp ]; then
 		for a in "$@"; do dest=$a; done
@@ -114,14 +121,16 @@ run_case() { # run_case <name> <FAIL_RE> <LOCK_SRC>   -> $tmp/<name>.log, $tmp/<
 	[ -f "$tmp/$1.log" ] || : >"$tmp/$1.log"
 }
 NET='--(network|net)[= ]none'
+STELE_RE='(^|[ '\''"]|/bin/)stele[ '\''"]*$'
 if [ ! -f "$SCRIPT" ]; then
 	fail "R05-AC-2 scripts/rust-offline-build.sh exists"
 fi
 run_case ok '' "$tmp/lock.same"
 run_case nofetch '--fetchonly' "$tmp/lock.same"
 run_case nobuild "$NET" "$tmp/lock.same"
-run_case norl '(^| |/)rl144 --version' "$tmp/lock.same"
-run_case nostele '(^| |/)stele (--version|--help)' "$tmp/lock.same"
+run_case norl '(^| |/)rl144 --render-frame' "$tmp/lock.same"
+run_case nostele "$STELE_RE" "$tmp/lock.same"
+STELE_SAY='stele 0.1.0 without the greeting' run_case nohello '' "$tmp/lock.same"
 run_case drift '' "$tmp/lock.diff"
 L=$tmp/ok.log
 first() { grep -nE -e "$2" "$1" | head -n 1 | cut -d: -f1; }
@@ -150,17 +159,18 @@ ck "R05-AC-2 (b) the offline emerge does not fetch (no --fetchonly)" \
 	sh -c '[ -n "$3" ] && ! grep -E -e "$2" "$1" | grep -q -e "--fetchonly"' _ "$L" "$NET" "$ln_net"
 ck "R05-AC-2 (b) both containers use the same DISTDIR (distfiles mount or DISTDIR)" \
 	sh -c 'f=$(grep -E -e "--fetchonly" "$1" | head -n 1); n=$(grep -E -e "$2" "$1" | head -n 1); for x in "$f" "$n"; do echo "$x" | grep -Eq "DISTDIR|distfiles" || exit 1; done' _ "$L" "$NET"
-ck "R05-AC-2 (c) rl144 --version is run" grep -Eq '(^| |/)rl144 --version' "$L"
-ck "R05-AC-2 (c) stele is smoke-run (--version or --help)" grep -Eq '(^| |/)stele (--version|--help)' "$L"
+ck "R05-AC-2 (c) rl144 --render-frame is run" grep -Eq '(^| |/)rl144 --render-frame' "$L"
+ck "R05-AC-2 (c) stele is smoke-run with no arguments" sh -c 'grep -v emerge "$1" | grep -Eq -e "$2"' _ "$L" "$STELE_RE"
 ck "R05-AC-2 (c) the smoke runs come after the fetch" \
-	sh -c 'n=$(grep -nE -e "(^| |/)rl144 --version" "$1" | head -n 1 | cut -d: -f1); [ -n "$n" ] && [ -n "$2" ] && [ "$n" -ge "$2" ]' _ "$L" "$ln_fetch"
+	sh -c 'n=$(grep -nE -e "(^| |/)rl144 --render-frame" "$1" | head -n 1 | cut -d: -f1); [ -n "$n" ] && [ -n "$2" ] && [ "$n" -ge "$2" ]' _ "$L" "$ln_fetch"
 ck "R05-AC-4 (d) the builder's library/Cargo.lock is read from the image" grep -q -F -- "$LIBLOCK" "$L"
 ck "R05-AC-2 (e) a failing fetch makes the script exit non-zero" failed_ran nofetch
 ck "R05-AC-2 (e) a failing fetch stops before any --network none container" \
 	sh -c '[ -s "$1" ] && ! grep -Eq -e "$2" "$1"' _ "$tmp/nofetch.log" "$NET"
 ck "R05-AC-2 (e) a failing offline build makes the script exit non-zero" failed_ran nobuild
-ck "R05-AC-2 (e) a failing rl144 --version makes the script exit non-zero" failed_ran norl
+ck "R05-AC-2 (e) a failing rl144 --render-frame makes the script exit non-zero" failed_ran norl
 ck "R05-AC-2 (e) a failing stele smoke run makes the script exit non-zero" failed_ran nostele
+ck "R05-AC-2 (c) a stele run whose output lacks 'i486 binary live' makes the script exit non-zero" failed_ran nohello
 ck "R05-AC-4 (d) an image library/Cargo.lock that differs from the fixture fails the script" \
 	sh -c '[ "$(cat "$1")" != 0 ] && grep -q -F -- "$2" "$3" && [ "$(cat "$4")" = 0 ]' _ "$tmp/drift.rc" "$LIBLOCK" "$tmp/drift.log" "$tmp/ok.rc"
 ck "R05-AC-4 (d) the fixture scripts/fixtures/R05/library-Cargo.lock exists" test -s "$LOCK"
