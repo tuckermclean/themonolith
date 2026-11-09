@@ -2634,6 +2634,71 @@ def run_entry(child, args):
     return ok
 
 
+def parse_smoke_table(text):
+    """
+    The `run` rows of scripts/smoke-checks.txt as (atom, command, regex) tuples. A row is four
+    tab-separated fields: atom, kind, command, regex. Comments, blank lines and the `covered` and
+    `untestable` rows are skipped.
+    """
+    rows = []
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        f = raw.split("\t")
+        if len(f) >= 4 and f[1] == "run":
+            rows.append((f[0], f[2], f[3]))
+    return rows
+
+
+def smoke_validator(command, pattern):
+    """
+    regex_matches over the command's output only: the tty's echo of the typed command line is
+    dropped first, and a regex that matches the command line itself is a failure (it would pass
+    on the echo whatever the command printed).
+    """
+    compiled = re.compile(pattern, re.M)
+    def _v(exit_code, output):
+        if compiled.search(command):
+            return False, f"regex /{pattern}/ matches the command line itself"
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output).replace("\r", "")
+        shown = "\n".join(l for l in plain.split("\n") if command not in l)
+        if not compiled.search(shown):
+            return False, f"expected /{pattern}/ to match output, got: {output.strip()[-500:]}"
+        return True, "ok"
+    return _v
+
+
+def run_smoke(child, args):
+    """G01-AC-6: boot once, then run every `run` row of scripts/smoke-checks.txt in the guest."""
+    select_isolinux_label(child, "serial")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+    table = os.path.join(os.path.dirname(os.path.abspath(__file__)), "smoke-checks.txt")
+    with open(table, encoding="utf-8") as fh:
+        rows = parse_smoke_table(fh.read())
+    if not rows:
+        raise BootTestError(f"{table} has no run rows")
+    results = []
+    for atom, command, pattern in rows:
+        ok, detail = run_check(child, atom, command, smoke_validator(command, pattern), timeout=60)
+        results.append((atom, ok, detail))
+        log(f"  [{'PASS' if ok else 'FAIL'}] {atom} — {detail}")
+        if not ok and detail.startswith("timed out"):
+            # A hung command would swallow every later check: interrupt it and wait for the shell again.
+            child.sendcontrol("c")
+            wait_for_shell(child)
+    log(f"smoke: {sum(1 for r in results if r[1])} of {len(results)} rows passed")
+    ok = all(r[1] for r in results)
+    poweroff_and_wait(child)
+    return ok
+
+
 MODE_BUILDERS = {
     "bios": build_bios_cmd,
     "uefi": build_uefi_cmd,
@@ -2654,6 +2719,7 @@ MODE_BUILDERS = {
     "persist": build_persist_cmd,
     "persist-init": build_persist_init_cmd,
     "entry": build_entry_cmd,
+    "smoke": build_bios_cmd,
 }
 
 MODE_RUNNERS = {
@@ -2676,6 +2742,7 @@ MODE_RUNNERS = {
     "persist": run_persist,
     "persist-init": run_persist_init,
     "entry": run_entry,
+    "smoke": run_smoke,
 }
 
 MODE_DEFAULT_RAM = {
@@ -2698,6 +2765,7 @@ MODE_DEFAULT_RAM = {
     "persist": 128,  # BIOS/pc + one extra virtio-blk-pci disk; no networking needed
     "persist-init": 128,  # as persist; mkfs.ext4 and the swapfile run in the guest
     "entry": 512,  # the toram entry copies the squashfs into RAM; the others share the setting
+    "smoke": 256,  # as bios at 256M: perl, gdb and the like run in the guest
 }
 
 

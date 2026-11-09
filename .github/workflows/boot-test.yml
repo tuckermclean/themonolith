@@ -1,6 +1,6 @@
 name: Boot Test
 
-# Reusable workflow: boots an ISO in QEMU (TCG, -cpu 486) in 17 modes and proves each reaches a working
+# Reusable workflow: boots an ISO in QEMU (TCG, -cpu 486) in every mode of scripts/boot-test.py and proves each reaches a working
 # shell: BIOS (ISOLINUX), UEFI (GRUB + OVMF), the `toram` path (+ CD-eject survival), module-regime
 # variants, NIC and VGA models, the two-node NAT test, the clock landmine and persist continuity.
 #
@@ -717,6 +717,37 @@ jobs:
           name: boot-test-entry-${{ matrix.loader }}-${{ matrix.label }}${{ matrix.index }}-${{ github.run_id }}
           path: |
             output/boot-test-entry-*.log*
+            output/tool-versions.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # One boot, one check per row of scripts/smoke-checks.txt (a command in the guest and a regex on its output).
+  # See run_smoke in scripts/boot-test.py.
+  smoke:
+    needs: [expected-kernel, fetch-iso]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.fetch-iso.outputs.artifact }}
+          path: output/iso
+
+      - name: Boot test — smoke (one check per world atom)
+        env:
+          EXPECTED_KERNEL: ${{ needs.expected-kernel.outputs.version }}
+          MODES: ${{ inputs.modes }}
+        run: make test-boot MODE=smoke ISO=output/iso/boot-test.iso
+
+      - name: Upload serial console log and tool versions
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boot-test-smoke-${{ github.run_id }}
+          path: |
+            output/boot-test-smoke.log*
             output/tool-versions.txt
           retention-days: 14
           if-no-files-found: warn
