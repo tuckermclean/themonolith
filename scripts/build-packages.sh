@@ -529,6 +529,7 @@ elif [ "${RELEASE}" -eq 1 ]; then
             --log "${LOGFILE}" \
             --start "${RUN_START}" \
             --exceptions "${BOOTSTRAP_EXCEPTIONS}" \
+            --allowlist "${CONFIGS_DIR}/attestation/unowned-allowlist.yaml" \
             --output "${OUTPUT_DIR}/source-audit.tsv"; then
         echo "::error::Source audit failed: the sysroot holds files not built from source in this run"
         exit 1
