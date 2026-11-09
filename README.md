@@ -39,7 +39,7 @@ Milestones:
 ## What is on the disc
 
 The [world file](configs/portage/world) lists 99 top-level atoms, cross-compiled for `i486-linux-musl`.
-Every one is checked by the `smoke` boot mode against a row of `scripts/smoke-checks.txt`. Some are overlay
+Every one has a row in `scripts/smoke-checks.txt`: the `smoke` boot mode runs most, and the rest are covered by a named mode (the kernel by `bios`, the X packages by `gui`, `stele` by `stele-acid2`). Some are overlay
 ebuilds (`monolith-*`: the kernel, the base `/etc` and helper scripts, perl, sqlite, the X server, `st`, `dwm`),
 two are Rust (`rl144`, `stele`), and the rest come from the pinned Gentoo tree.
 
@@ -67,7 +67,7 @@ two are Rust (`rl144`, `stele`), and the rest come from the pinned Gentoo tree.
 | Hardware info | `sys-apps/smartmontools`, `sys-apps/hdparm`, `sys-apps/dmidecode` |
 | Console | `sys-apps/kbd`, `media-fonts/terminus-font`, `sys-libs/gpm` |
 | X (bitmap fonts only, no freetype) | `x11-base/monolith-xserver`, `x11-base/xorg-proto`, `x11-libs/libxcb`, `x11-libs/libX11`, `x11-libs/libXext`, `x11-terms/monolith-st`, `x11-wm/monolith-dwm` |
-| Browser | `www-client/stele` (no JavaScript) |
+| Browser | `www-client/stele` |
 | Amusements | `games-misc/bsd-games`, `app-misc/figlet`, `app-misc/cmatrix`, `app-misc/sl`, `games-roguelike/rl144`, `=games-roguelike/nethack-3.6.7-r1` |
 
 There is no native compiler on the disc (`sys-devel/gcc` is not in the world file).
@@ -78,19 +78,19 @@ The ISO boots by BIOS (ISOLINUX) and by 64-bit UEFI (GRUB). The `bios` mode boot
 QEMU with `-cpu 486`; the `uefi` mode boots it under OVMF.
 
 ISOLINUX labels, typed at the `boot:` prompt. The default is `fb800`. The `entry` mode
-boots each label and checks the kernel command line.
+boots each label and checks that the kernel command line has the parameters shown.
 
-| Label | Effect |
+| Label | Kernel command line (checked by `entry`) |
 |---|---|
-| `linux` | Normal boot, text console |
-| `fb` | Framebuffer, 1024x768 (`vga=791`) |
-| `fb800` | Framebuffer, 800x600 (`vga=788`), the default |
-| `fb640` | Framebuffer, 640x480 (`vga=785`) |
-| `vga` | Ask for a video mode (`vga=ask`) |
-| `serial` | Serial console, `ttyS0` at 115200n8 |
-| `debug` | Verbose boot output |
-| `persist` | Use the `MONOLITH_PERSIST` partition |
-| `rescue` | A rescue shell |
+| `linux` | No extra parameters |
+| `fb` | `quiet vga=791` (1024x768) |
+| `fb800` | `quiet vga=788` (800x600), the default |
+| `fb640` | `quiet vga=785` (640x480) |
+| `vga` | `vga=ask` |
+| `serial` | `console=ttyS0,115200n8` |
+| `debug` | `debug` |
+| `persist` | `persist` |
+| `rescue` | `rescue` |
 
 The GRUB menu has seven entries, in order: normal, framebuffer, serial, debug, rescue shell, `toram` and
 persistent. The `entry` mode boots each. The `toram` kernel parameter copies the root filesystem into RAM
@@ -100,7 +100,7 @@ so the boot medium can be ejected; the `toram` mode ejects the CD and checks tha
 
 `monolith-persist init <dev> [--swap N] [--yes]` makes `<dev>` an ext4 filesystem labelled
 `MONOLITH_PERSIST`, which erases it, and optionally creates an N MB swapfile in it. Boot with the `persist`
-label (or the GRUB persistent entry) to use it as the overlay. The swapfile is not enabled
+label to use it as the overlay. The swapfile is not enabled
 automatically: run `swapon /overlay/swapfile`. Without such a partition the overlay is in RAM and the boot
 prints a warning. The `persist-init` mode runs this whole sequence, including a file that survives an
 unclean shutdown.
@@ -112,10 +112,7 @@ The initrd's BusyBox and the packages above provide `ip`, `ifconfig`, `dhcpcd`, 
 DNS for a LAN (the `nat` mode). The `nic` mode boots with the emulated `pcnet`, `rtl8139`, `tulip`,
 `ne2k_pci` and `ne2k_isa` cards.
 
-```
-ip link set eth0 up
-dhcpcd eth0
-```
+Boot starts `dhcpcd` on `eth0` by itself; the `smoke` mode checks that `eth0` holds a DHCP lease.
 
 The `serial-net` mode joins two guests with a serial line on `ttyS1` and runs these between them. `ttyS0`
 is the console. The disc has no standalone `slattach`; use BusyBox's.
@@ -133,8 +130,7 @@ SSH: start the server with `dropbear`. The first boot creates one host key, an E
 The X stack uses bitmap fonts only: no freetype, fontconfig or Xft. `startx` starts the TinyX `Xfbdev`
 server on the framebuffer, the `dwm` window manager and an `st` terminal. Boot a framebuffer label such as
 `fb800` first. The `gui` mode runs `startx` and checks that the server and `st` run and the screen is not
-blank. `stele` is a document-web browser with no JavaScript; the `stele-acid2` mode renders the Acid2 page
-with it.
+blank. The `stele-acid2` mode renders the Acid2 page with `stele`, the document-web browser.
 
 ## Testing
 
@@ -144,8 +140,8 @@ The tests run in the [toolbox](toolbox/) (`toolbox/run`). The checks that need n
 make test-lint test-unit
 ```
 
-`test-unit` runs every `scripts/tests/*.sh`, including the one that checks this README: it fails on a
-claim the repository does not test. The ISO is booted in QEMU under TCG by `scripts/boot-test.py`:
+`test-unit` runs every `scripts/tests/*.sh`, including two that check this README. They check the platform-support wording against dated evidence and the kernel's paravirtual driver symbols, the names of the boot tests, the SLIP and PPP command lines, the SSH key type and the boot menu default. They do not check every other sentence.
+The ISO is booted in QEMU under TCG by `scripts/boot-test.py`:
 
 ```
 make test-boot MODE=<mode>
