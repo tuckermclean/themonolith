@@ -1,1 +1,4 @@
-package	reason
+# Reasons for the package differences between rc1's SBOM and this release's (scripts/rc1-diff.sh).
+# One line per difference: <added|removed><TAB><name@version><TAB><reason>
+# A version change is one removed line plus one added line. Blank lines and lines starting with # are ignored.
+# A line that matches no difference is reported as unused and does not fail.
