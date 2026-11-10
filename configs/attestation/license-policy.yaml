@@ -47,6 +47,9 @@ allowed_spdx:
   - blessing       # SQLite "blessing" (public domain-ish)
   - Unicode        # Unicode license
   - unicode        # case variant
+  - Unicode-3.0    # Unicode License v3 (OSI-approved; Rust crate unicode-ident, via LICENSE+= of rl144 and stele)
+  - Unlicense      # The Unlicense (public-domain dedication; OR-alternative of memchr and aho-corasick-style crates)
+  - Apache-2.0 WITH LLVM-exception  # Apache-2.0 with LLVM exception (OR-alternative of rustix, linux-raw-sys, wasi crates)
   - curl           # curl/MIT-style license used by curl package
   - Info-ZIP       # Info-ZIP license (permissive)
   - Vim            # Vim charityware license (permissive)
@@ -98,6 +101,8 @@ gentoo_to_spdx:
   "public-domain":  "public-domain"
   "ZLib":           "Zlib"
   "Zlib":           "Zlib"
+  "ZLIB":           "Zlib"           # Gentoo name of the zlib licence (sdl2-sys crate, rl144 and stele LICENSE+=)
+  "Apache-2.0-with-LLVM-exceptions": "Apache-2.0 WITH LLVM-exception"
   "HPND":           "HPND"
   "blessing":       "blessing"
   "Unicode":        "Unicode"
