@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| later | S01 | none | — | S |
+| later | S01 | S03 | — | S |
 
 **Owns:** the `||` handling of `_parse_alternatives` in `scripts/check-licenses.py` (change 1; S01 owns the rest of the file), `scripts/tests/check-licenses.test.sh`, `scripts/fixtures/S02/`.
 **Resolves:** #61
