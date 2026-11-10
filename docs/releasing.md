@@ -133,14 +133,19 @@ bytes. After the digest chain and before the release, the `publish` job runs
 `make push-distfiles`: it checks that the archive hashes to
 `DISTFILES_DIGEST`, pushes it with `oras push` to
 `${REGISTRY}/distfiles:<version>`, fetches the manifest back, and fails if
-the layer digest differs. `publish` is the only job of either workflow with
-`packages: write` on `release.yml`; `build.yml` gives it to `build` alone.
+the layer digest differs. In `release.yml` only `publish` has
+`packages: write`; in `build.yml` only `build` has it (for the binary package
+cache). The `attestation` job has none.
 
 To check it later:
 
 ```sh
-oras manifest fetch --descriptor ghcr.io/tuckermclean/themonolith/distfiles:0.2.0-rc1
+oras manifest fetch ghcr.io/tuckermclean/themonolith/distfiles:0.2.0-rc1 | jq -r '.layers[0].digest'
+jq -r .DISTFILES_DIGEST release-inputs.json
 ```
+
+The two digests must be equal. (`--descriptor` would print the manifest's own
+digest, not the layer's.)
 
 ## The package set and the reports
 
