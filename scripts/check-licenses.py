@@ -96,6 +96,40 @@ def parse_portage_expr(expr: str) -> list:
         return [[expr]]
 
 
+def _parse_or_items(tokens: list, pos: int) -> tuple:
+    start = pos
+    runs = []  # one list of alternatives per run of items joined by AND
+    joined = False  # an AND joins the next item onto the current run
+    while pos < len(tokens) and tokens[pos] != ")":
+        tok = tokens[pos]
+        if tok == "||" and tokens[pos + 1:pos + 2] == ["("]:
+            item, pos = _parse_or_items(tokens, pos + 2)
+        elif tok == "(":
+            inner_alts, pos = _parse_alternatives(tokens, pos + 1)
+            if pos < len(tokens) and tokens[pos] == ")":
+                pos += 1
+            flat = [lic for alt in inner_alts for lic in alt]
+            item = [flat] if flat else []  # a group with no licence adds nothing
+        elif tok in ("AND", "OR", "||"):
+            joined = tok == "AND"
+            pos += 1
+            continue
+        else:
+            item = [[tok]]
+            pos += 1
+        if item:
+            if joined and runs:
+                runs[-1] = [a + b for a in runs[-1] for b in item]
+            else:
+                runs.append(item)
+            joined = False
+    if any(tokens[i] == "||" and tokens[i + 1:i + 2] != ["("] for i in range(start, pos)):
+        return None, pos  # a stray "||": malformed
+    if pos < len(tokens):
+        pos += 1  # consume ")"
+    return [alt for run in runs for alt in run], pos
+
+
 def _parse_alternatives(tokens: list, pos: int) -> tuple:
     """
     Recursive descent parser.  Returns (alternatives, new_pos).
@@ -130,9 +164,13 @@ def _parse_alternatives(tokens: list, pos: int) -> tuple:
             if pos >= len(tokens) or tokens[pos] != "(":
                 break  # malformed; stop
             pos += 1  # consume "("
-            inner_alts, pos = _parse_alternatives(tokens, pos)
-            if pos < len(tokens) and tokens[pos] == ")":
-                pos += 1  # consume ")"
+            inner_alts, end = _parse_or_items(tokens, pos)
+            if inner_alts is None:  # a stray "||" inside: read the group as before
+                inner_alts, pos = _parse_alternatives(tokens, pos)
+                if pos < len(tokens) and tokens[pos] == ")":
+                    pos += 1  # consume ")"
+            else:
+                pos = end
 
             # Cross-product: each current conjunction × each inner alternative
             new_conjunctions = []

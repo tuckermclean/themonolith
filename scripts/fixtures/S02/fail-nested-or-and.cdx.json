@@ -1,0 +1,8 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {"type": "library", "name": "nested-or-and", "version": "1", "licenses": [{"expression": "|| ( || ( MIT NOT-A ) AND NOT-B )"}]}
+  ]
+}
