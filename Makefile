@@ -5,7 +5,7 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -60,7 +60,7 @@ ISO ?= $(DEFAULT_ISO)
 # (packages, their kernel-module check, then rootfs; iso follows as the default ISO's prerequisite) runs before the first boot test.
 # The rc1 lane builds nothing. Prerequisites run left to right, so this sits ahead of test-boot.
 test_build_dep = $(if $(filter $(ISO),$(DEFAULT_ISO)),$(if $(ISO_URL),,sync-portage build-packages verify-kernel-modules build-rootfs))
-test: test-lint test-unit test-revbump test-overlay test-rust-offline $(test_build_dep) test-boot test-artifact test-gates test-cve-canary test-static-rebuild test-repro
+test: test-lint test-unit test-revbump test-overlay test-toolbox-check test-rust-offline $(test_build_dep) test-boot test-artifact test-gates test-cve-canary test-static-rebuild test-repro
 
 # Where fetch-iso writes the verified ISO.
 ISO_OUT ?= $(DEFAULT_ISO)
@@ -225,6 +225,23 @@ pull-image:
 # before building (SPEC §6, §7). CI: toolbox-image.yml on main, with GITHUB_TOKEN; locally, log in first.
 toolbox-publish:
 	REGISTRY='$(REGISTRY)' toolbox/run --push
+
+# One job of a workflow run makes the toolbox image (pulling it, or building it with a loud notice) and saves it to
+# TOOLBOX_ARCHIVE for the run's other jobs, which load it. Both run on the host, with toolbox/run's engine.
+TOOLBOX_ARCHIVE ?= output/toolbox/toolbox.tar
+toolbox-save:
+	sh scripts/toolbox-image.sh save '$(TOOLBOX_ARCHIVE)'
+
+toolbox-load:
+	sh scripts/toolbox-image.sh load '$(TOOLBOX_ARCHIVE)'
+
+# Pull requests: fails when the toolbox inputs equal those at BASE and main has not published the image
+# (scripts/toolbox-check.sh). Runs on the host, so a missing image fails before toolbox/run builds one.
+toolbox-check:
+	BASE='$(BASE)' REGISTRY='$(REGISTRY)' sh scripts/toolbox-check.sh
+
+# The test-* entry for the toolbox check (pr-validate.yml's make step).
+test-toolbox-check: toolbox-check
 
 # Copies SRC (pinned by digest) to $(REGISTRY)/DST (<name>:<tag>) and checks the digest. CI: registry-copy.yml.
 registry-copy:
