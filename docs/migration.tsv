@@ -148,7 +148,7 @@ scripts/build-iso.sh	100755	faccf1d64a16b2fadd5ccde38f2c52f219e4d24a	B03	port	sc
 scripts/build-packages.sh	100755	5308e8c95e3633c4686f75473a6a462eddfcf481	B01	port+fix	scripts/build-packages.sh	B02 R03 G01
 scripts/build-rootfs.sh	100755	465c8539b4643e6e1d6e7db22cc30719fdcee1ad	B03	port+fix	scripts/build-rootfs.sh	P02 G01
 scripts/check-cves.sh	100755	1bf98d6b1c819e6b241aacb90e32d68860ed8d07	S01	port+fix	scripts/check-cves.sh	-
-scripts/check-licenses.py	100755	f7796e46f4b337adc94fcc6a93bd4c712fffc1d6	S01	port+fix	scripts/check-licenses.py	S02
+scripts/check-licenses.py	100755	f7796e46f4b337adc94fcc6a93bd4c712fffc1d6	S01	port+fix	scripts/check-licenses.py	S02 S03
 scripts/check-unowned.py	100755	63dc3b77d96e73dd38a877d7386dce949966a573	S01	port+fix	scripts/check-unowned.py	B01
 scripts/enrich-sbom.py	100755	1a13bab8c068f02806d74e904d2488deeb3d64dd	S01	port+fix	scripts/enrich-sbom.py	-
 scripts/extract-packages.sh	100755	48d27efd736f06c8afecccbf1c4b08a08d236689	B01	port	scripts/extract-packages.sh	R03 G01

@@ -114,7 +114,7 @@ first, before the code it tests, with only the harness and path adjustments the 
 | rc1 lane for the boot tests | — | O01 | build | |
 | Doctrine checks on the artifact: static, no loader, `EM_386`, no Python, no freetype, no X modules | `scripts/static-audit.sh` | O02 | port+fix (`scanelf`) | R03 |
 | SBOM and its enrichment | `scripts/attestation.sh`, `enrich-sbom.py`, `configs/attestation/{cpe-*,spdx-license-ids.txt,schemas/}`, `make attestation`/`attest-builder` | S01 | port+fix | P01 |
-| Licence gate | `check-licenses.py`, `license-policy.yaml` | S01 | port | S02 (Gentoo OR groups) |
+| Licence gate | `check-licenses.py`, `license-policy.yaml` | S01 | port | S02 (Gentoo OR groups), S03 (SPDX WITH and OR groups) |
 | CVE gate with expiring waivers; canary | `check-cves.sh`, `cve-policy.yaml`, `run-cve-canary.sh`, `canary-sbom.cdx.json`, `cve-gate-canary.yml`, `make grype-db-update`, `docs/cve-gate.md` | S01 | port+fix | |
 | Unowned-file gate | `check-unowned.py`, `unowned-allowlist.yaml` | S01 | port+fix | B01 |
 | README promises tested or removed; persistence, boot-entry and smoke modes in the release gate | README | G01 | build | P01 |
