@@ -196,23 +196,18 @@ for wf in sorted(entries):
 for msg in sorted(set(dry_errors)):
     print("INFO: dry run problem: " + msg)
 
-# ---- AC-2: pr-validate.yml runs make toolbox-check with BASE
+# ---- AC-2: pr-validate.yml's one make step includes toolbox-check, with BASE (F01-AC-3 keeps one make step)
 try:
     pv = docs.get("pr-validate.yml") or {}
     steps = ((pv.get("jobs") or {}).get("validate") or {}).get("steps") or []
-    ci = [i for i, s in enumerate(steps) if "toolbox-check" in str(s.get("name", ""))]
-    say(bool(ci), "F02-AC-2: pr-validate.yml validate has a step named toolbox-check")
+    ci = [i for i, s in enumerate(steps) if any("toolbox-check" in t for t, _ in makes(str(s.get("run", ""))))]
+    say(bool(ci), "F02-AC-2: pr-validate.yml validate has a run: step whose make targets include toolbox-check")
     if ci:
         st = steps[ci[0]]
-        runs = [t for t, _ in makes(st.get("run", "")) if "toolbox-check" in t]
-        say(bool(runs), "F02-AC-2: that step runs make toolbox-check")
         base = str((st.get("env") or {}).get("BASE", "")).replace(" ", "")
         say(base == "${{github.event.pull_request.base.sha}}", "F02-AC-2: that step's env BASE is the pull request's base sha (got %r)" % base)
-        later = [i for i, s in enumerate(steps) if i > ci[0] and re.search(r"test-lint|test-unit", str(s.get("run", "")))]
-        say(bool(later), "F02-AC-2: the toolbox-check step comes before the test-lint/test-unit step")
     else:
-        for m in ("that step runs make toolbox-check", "that step's env BASE is the pull request's base sha", "the toolbox-check step comes before the test-lint/test-unit step"):
-            say(False, "F02-AC-2: " + m + " (no such step)")
+        say(False, "F02-AC-2: that step's env BASE is the pull request's base sha (no such step)")
 except Exception:
     say(False, "F02-AC-2: pr-validate.yml checks crashed: " + traceback.format_exc().splitlines()[-1])
 
@@ -250,6 +245,8 @@ try:
         for e in real:
             if len(saves) == 1 and e is saves[0]:
                 continue
+            if wf == "build.yml" and e.caller is None and e.jid in ("fetch", "build-a", "build-b", "compare"):
+                continue  # F02 change 3 exemption, asserted separately below (they build their own toolbox)
             if len(saves) == 1:
                 s = saves[0]
                 if e.caller is None:
@@ -277,6 +274,30 @@ try:
         say(not bad_first, "F02-AC-3: %s: every other toolbox-running job's first run: step is make toolbox-load (lacking: %s)" % (wf, ", ".join(bad_first) or "none"))
         say(not bad_dl, "F02-AC-3: %s: ... preceded by an actions/download-artifact step (lacking: %s)" % (wf, ", ".join(bad_dl) or "none"))
         say(not bad_name and len(saves) == 1, "F02-AC-3: %s: ... of the artifact that was uploaded (name mismatch: %s)" % (wf, ", ".join(bad_name) or "none"))
+    # Exemption (F02 change 3, AC-3; owner-approved, issue #68): build.yml's P02 reproducibility jobs fetch, build-a, build-b and
+    # compare build their own toolbox and take no part in the sharing. They must exist, must not download the toolbox artifact and
+    # must not run make toolbox-load; no job but the toolbox job runs make toolbox-save.
+    bjobs = (docs.get("build.yml") or {}).get("jobs") or {}
+    bsaves = [e.jid for e in entries.get("build.yml", []) if e.save_idx is not None]
+    toolbox_art = None
+    for e in entries.get("build.yml", []):
+        if e.save_idx is not None:
+            for st in (e.job.get("steps") or [])[e.save_idx + 1:]:
+                if str(st.get("uses", "")).startswith("actions/upload-artifact@"):
+                    toolbox_art = str((st.get("with") or {}).get("name", "")).strip()
+                    break
+    say(bsaves == ["toolbox"], "F02-AC-3: build.yml: only the toolbox job runs make toolbox-save (found %s)" % (bsaves or "none"))
+    for jid in ("fetch", "build-a", "build-b", "compare"):
+        j = bjobs.get(jid)
+        say(isinstance(j, dict), "F02-AC-3: build.yml job %s exists" % jid)
+        if not isinstance(j, dict):
+            continue
+        jsteps = j.get("steps") or []
+        dl = [st for st in jsteps if str(st.get("uses", "")).startswith("actions/download-artifact@")
+              and (str((st.get("with") or {}).get("name", "")).strip() == toolbox_art or str((st.get("with") or {}).get("name", "")).strip().startswith("toolbox-"))]
+        say(not dl, "F02-AC-3: build.yml job %s does not download the toolbox artifact (%d such steps)" % (jid, len(dl)))
+        loads = [1 for st in jsteps for t, _ in makes(str(st.get("run", ""))) if "toolbox-load" in t]
+        say(not loads, "F02-AC-3: build.yml job %s runs no make toolbox-load (%d such steps)" % (jid, len(loads)))
     for wf in ("build.yml", "boot-test-rc1.yml", "artifact-checks-rc1.yml", "sbom-gates-rc1.yml", "boot-test-repeat.yml"):
         say(wf in multi, "F02-AC-3: %s is among the workflows that run the toolbox in more than one job" % wf)
     for e in [e for es in entries.values() for e in es if e.real is False and e.save_idx is None]:
