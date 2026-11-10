@@ -331,6 +331,26 @@ try:
                 else:
                     wrote.append("%s:%s" % (wf, label(e)))
     say(not wrote, "F02-AC-4: no pull_request workflow grants packages: write to a job running toolbox-save/-load/-check (found: %s)" % (", ".join(wrote) or "none"))
+    wrote2 = []
+    for wf, d in docs.items():
+        if not ({"pull_request", "pull_request_target"} & set(triggers(d))):
+            continue
+        if wf not in entries:
+            continue
+        for e in entries[wf]:
+            if not (e.targets & {"toolbox-save", "toolbox-check"}):
+                continue
+            own = perm(e.job.get("permissions"))
+            if own is None:
+                own = perm(e.doc.get("permissions"))
+            if e.caller is not None:
+                up = perm(e.caller_job.get("permissions"))
+                if up is None:
+                    up = perm(e.caller_doc.get("permissions"))
+                own = up if own is None else (own and bool(up))
+            if own:
+                wrote2.append("%s:%s" % (wf, label(e)))
+    say(not wrote2, "F02-AC-4: no pull_request workflow grants packages: write to a job running toolbox-save/-check, even with make cache-push (found: %s)" % (", ".join(wrote2) or "none"))
 except Exception:
     say(False, "F02-AC-4: checks crashed: " + traceback.format_exc().splitlines()[-1])
 
