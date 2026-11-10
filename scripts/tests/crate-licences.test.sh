@@ -264,6 +264,34 @@ json.dump({"bomFormat": "CycloneDX", "specVersion": "1.5",
 check_pkg games-roguelike/rl144
 check_pkg www-client/stele
 
+# ---- slice 2 (R05-Q3 parity): the gate case in syft's SPDX form ----
+# scripts/fixtures/R05/sbom-licences.json: the licence expressions of rl144 and
+# stele as syft wrote them into bom.cdx.json of Build run 42721213707 (artifact
+# attestation, bom.cdx.json sha256
+# 06d2a2e67c7ff632c551d999fb34c1ee22ef254326a6ce551190699c629456d2), verbatim.
+# CI reads that form, not the ebuild's Gentoo LICENSE.
+sbom_expr() { # sbom_expr NAME -> the fixture's expression for NAME
+	python3 -I -c '
+import json, sys
+for c in json.load(open(sys.argv[1])):
+    if c["name"] == sys.argv[2]:
+        print(c["licenses"][0]["expression"], end="")' "$FIX/sbom-licences.json" "$1"
+}
+check_syft_pkg() { # check_syft_pkg category/name
+	cp=$1
+	pn=${cp#*/}
+	expr=$(sbom_expr "$cp")
+	[ -n "$expr" ]
+	check "R05-Q3 $cp: fixture has syft's licence expression" $?
+	gate "$pn-syft" "$expr" "$TMP/$pn.syft"
+	check "R05-Q3 $cp: licence gate accepts syft's SPDX expression verbatim ($GATE_MSG)" $?
+	gate "$pn-syft" "$expr AND Proprietary-Nonfree-EULA" "$TMP/$pn.syftbad"
+	[ $? -ne 0 ]
+	check "R05-Q3 $cp control: the gate rejects syft's expression plus a non-free licence" $?
+}
+check_syft_pkg games-roguelike/rl144
+check_syft_pkg www-client/stele
+
 if [ "$fails" -gt 0 ]; then
 	echo "crate-licences: $fails check(s) FAILED"
 	exit 1
