@@ -39,7 +39,11 @@ else
 	same=0
 fi
 
-registry=${REGISTRY:-$(sed -n 's/^REGISTRY[[:space:]]*?=[[:space:]]*//p' Makefile 2>/dev/null | head -n 1)}
+registry=${REGISTRY:-}
+if [ -z "$registry" ]; then
+	[ -f Makefile ] || die "REGISTRY is not set and there is no Makefile"
+	registry=$(sed -n 's/^REGISTRY[[:space:]]*?=[[:space:]]*//p' Makefile | head -n 1)
+fi
 [ -n "$registry" ] || die "REGISTRY is not set and the Makefile has none"
 tag=$registry/toolbox:$head_inputs
 

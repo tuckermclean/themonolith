@@ -25,7 +25,10 @@ pre="toolbox/run: no $tag to pull; building it"
 if reason=$(git rev-parse --verify "$base^{commit}" 2>&1 >/dev/null); then
 	same=1
 	for f in $files; do
-		if ! git cat-file -e "$base:$f" 2>/dev/null || ! git show "$base:$f" | cmp -s - "$f"; then
+		if ! git cat-file -e "$base:$f"; then
+			echo "toolbox-fallback: $f cannot be read at $base (missing there, or see git's error above), so it counts as differing" >&2
+			same=0
+		elif ! git show "$base:$f" | cmp -s - "$f"; then
 			same=0
 		fi
 	done
