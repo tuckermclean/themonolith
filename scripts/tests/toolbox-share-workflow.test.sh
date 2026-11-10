@@ -1,5 +1,5 @@
 #!/bin/sh
-# F02-AC-2 (pr-validate.yml part), F02-AC-3, F02-AC-4: the toolbox is built or pulled once per workflow run and shared.
+# F02-AC-2 (pr-validate.yml part: a make target of the validate step reaches toolbox-check, as Make resolves it), F02-AC-3, F02-AC-4: the toolbox is built or pulled once per workflow run and shared.
 # Reads .github/workflows/*.yml with PyYAML; needs no history of the checkout. Which jobs run toolbox/run is decided
 # generically, so later workflows fall under it (F02 Risks): a `run:` containing `toolbox/run`, or a `make <targets...>` whose
 # dry run (`make -n -B <targets> ISO=/x ISO_URL= GITHUB_OUTPUT=/dev/null <the step's VAR=val>`, the step/job/workflow env in the
@@ -196,12 +196,46 @@ for wf in sorted(entries):
 for msg in sorted(set(dry_errors)):
     print("INFO: dry run problem: " + msg)
 
-# ---- AC-2: pr-validate.yml's one make step includes toolbox-check, with BASE (F01-AC-3 keeps one make step)
+# ---- AC-2: pr-validate.yml's one make step reaches toolbox-check (itself or through prerequisites, as Make resolves them), with BASE
+def make_db():
+    """{target: ([prereqs], recipe_text)} from Make's own database (make -p -q, no recipe runs)."""
+    e = {k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MAKELEVEL", "MFLAGS", "MAKEOVERRIDES")}
+    p = subprocess.run(["make", "-p", "-q", "-r", "BASE=x", "ISO=/x", "ISO_URL=", "GITHUB_OUTPUT=/dev/null", "no-such-target-f02"],
+                       cwd=root, env=e, capture_output=True, text=True, timeout=90)
+    db, cur = {}, None
+    for ln in p.stdout.splitlines():
+        if ln.startswith("\t"):
+            if cur is not None:
+                db[cur][1].append(ln)
+            continue
+        m = re.match(r"^([^\s#:=%]+):(?!=)\s*(.*)$", ln)
+        if m and not ln.startswith("#"):
+            cur = m.group(1)
+            pre = m.group(2).split("|")[0].split()
+            db.setdefault(cur, ([], []))[0].extend(pre)
+        elif not ln.startswith("#"):
+            cur = None
+    return db
+
+def reaches_toolbox_check(db, target):
+    seen, todo = set(), [target]
+    while todo:
+        t = todo.pop()
+        if t in seen:
+            continue
+        seen.add(t)
+        if t == "toolbox-check" and "scripts/toolbox-check.sh" in "\n".join(db.get(t, ([], []))[1]):
+            return True
+        todo.extend(db.get(t, ([], []))[0])
+    return False
+
 try:
     pv = docs.get("pr-validate.yml") or {}
     steps = ((pv.get("jobs") or {}).get("validate") or {}).get("steps") or []
-    ci = [i for i, s in enumerate(steps) if any("toolbox-check" in t for t, _ in makes(str(s.get("run", ""))))]
-    say(bool(ci), "F02-AC-2: pr-validate.yml validate has a run: step whose make targets include toolbox-check")
+    db = make_db()
+    say("toolbox-check" in db, "F02-AC-2: Make's database has the toolbox-check target (%d targets read)" % len(db))
+    ci = [i for i, s in enumerate(steps) if any(reaches_toolbox_check(db, x) for t, _ in makes(str(s.get("run", ""))) for x in t)]
+    say(bool(ci), "F02-AC-2: pr-validate.yml validate has a run: step with a make target that is toolbox-check or has it among its prerequisites (recipe runs scripts/toolbox-check.sh)")
     if ci:
         st = steps[ci[0]]
         base = str((st.get("env") or {}).get("BASE", "")).replace(" ", "")
