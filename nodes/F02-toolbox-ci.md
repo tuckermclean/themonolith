@@ -23,7 +23,7 @@ GitHub Actions workflow commands (`::warning::`) and the `GITHUB_STEP_SUMMARY` f
   - `scripts/tests/toolbox-share-workflow.test.sh` (AC-3, AC-4): reads `.github/workflows/*.yml` with PyYAML, as `build-workflow.test.sh` does.
   - `scripts/tests/toolbox-apt-retry.test.sh` (AC-5): in the toolbox, offline, `apt-get update` with the image's retry settings against a local repository served on loopback by a server that fails on purpose.
   All four run in `make test-unit`.
-- **Baseline:** against `main`, AC-1 fails (no annotation, no summary line, no expected/unexpected distinction), AC-2 fails (no check), AC-3 fails (the multi-job workflows build the toolbox in every job) and AC-4's no-push part passes; AC-5's always-failing case passes and its fail-twice case passes or fails as APT 3.0's handling of a 503 decides (see Risks).
+- **Baseline:** against `main`, AC-1 fails (no annotation, no summary line, no expected/unexpected distinction), AC-2 fails (no check), AC-3 fails (the multi-job workflows build the toolbox in every job) and AC-4's no-push part passes; AC-5 fails, since `main` has no `apt-retry` wrapper (change 4) and APT 3.0.4 asks each path once on a 503.
 
 ## Changes from the port
 Nothing is ported. These are the changes to this repository's files.
