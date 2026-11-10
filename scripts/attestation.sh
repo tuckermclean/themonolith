@@ -197,9 +197,9 @@ fi
 # (<server>/<owner>/<repo>/releases/download/<tag>/<asset-name>) — they don't
 # require the release to exist yet, only the tag name and the asset filename
 # both of which are already known at attestation time. This lets
-# .github/workflows/release.yml call build.yml (which runs this script) BEFORE
-# `gh release create` runs, and still have the enriched SBOM point at the exact
-# asset that release step will publish. GITHUB_REF/GITHUB_REPOSITORY/
+# .github/workflows/release.yml publish after build.yml (which runs this script)
+# has finished, and still have the enriched SBOM point at the exact asset that
+# the release will carry. GITHUB_REF/GITHUB_REPOSITORY/
 # GITHUB_SERVER_URL are already forwarded via Makefile's GITHUB_ENV; on
 # non-tag builds (push/schedule/dispatch) GITHUB_REF won't match refs/tags/v*
 # and this stays empty — no URL is ever fabricated.

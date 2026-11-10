@@ -1,0 +1,29 @@
+name: rc1 attestation
+
+# P01-AC-2 (b): rc1 was signed by the predecessor's workflow. Its ISO still verifies against the predecessor's
+# repository and signer workflow, and does not verify against this repository's. This runs on the pull requests that
+# change how a release is signed or verified; it signs and publishes nothing.
+on:
+  pull_request:
+    paths:
+      - Makefile
+      - .github/workflows/build.yml
+      - .github/workflows/release.yml
+      - .github/workflows/rc1-attestation.yml
+      - docs/releasing.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-rc1-attestation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify the rc1 ISO's attestation against both repositories
+        run: make verify-rc1-attestation
