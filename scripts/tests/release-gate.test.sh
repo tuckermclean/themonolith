@@ -642,10 +642,27 @@ def ac5_env(t):
     return f
 
 
+def mk_pins():
+    # The Makefile's current pins (a tree bump moves TREE_COMMIT and TREE_DIGEST; M01).
+    try:
+        text = open(os.path.join(ROOT, "Makefile")).read()
+    except OSError:
+        return []
+    vals = []
+    for k in ("TREE_COMMIT", "BUILDER_DIGEST", "TREE_DIGEST"):
+        m = re.search(r"^%s[ \t]*:=[ \t]*(\S+)[ \t]*$" % k, text, re.M)
+        if m:
+            vals.append(m.group(1).split(":")[-1])
+    return vals
+
+
 def ac5_mk(t):
     def f():
         rc, o = mkout[t]
-        return rc == 0 and not re.search(r"6e88ed01f3e97de8710efe1c333808dfbd05bf32|ab04002a13794c2ad90d821b5de535a4e4df2945346bb04d8073883ea8aab3fa|b01bbe7a886fa869a4018a5f711e11fae8fb783b30878216b0f8f408ad2a70bd", o), "the Makefile's own pins appear in make -n repro-build-%s (build reads pins from release-inputs.json)" % t
+        pins = mk_pins()
+        if len(pins) != 3:
+            return False, "TREE_COMMIT, BUILDER_DIGEST and TREE_DIGEST not all found in the Makefile"
+        return rc == 0 and not any(v in o for v in pins), "the Makefile's own pins appear in make -n repro-build-%s (build reads pins from release-inputs.json)" % t
     return f
 
 

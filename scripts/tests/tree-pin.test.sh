@@ -13,6 +13,12 @@ WF="$ROOT/.github/workflows/tree-accept.yml"
 COMMIT=6e88ed01f3e97de8710efe1c333808dfbd05bf32
 DIGEST=sha256:b01bbe7a886fa869a4018a5f711e11fae8fb783b30878216b0f8f408ad2a70bd
 REV=6622796b6162d6f41b6556041027f19e7964028e
+# docs/tree-pin.md stays the record of rc1's tree (the constants above). The Makefile's pins move with each tree
+# bump (M01), so the Makefile and make -n checks read its current pins.
+mkpin() { sed -n "s/^$1[[:space:]]*:=[[:space:]]*//p" "$MK" 2>/dev/null | tr -d " \t" | head -n 1; }
+MK_COMMIT=$(mkpin TREE_COMMIT)
+MK_DIGEST=$(mkpin TREE_DIGEST)
+MK_FILES=$(mkpin TREE_FILES)
 FAILS=0
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; FAILS=$((FAILS + 1)); }
@@ -24,9 +30,8 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 if [ -f "$DOC" ]; then
 	pass "I02-AC-1 docs/tree-pin.md exists"
 	ck "I02-AC-1 exactly one line is a bare 40-hex commit" sh -c '[ "$(grep -cE "^[0-9a-f]{40}\$" "$1")" -eq 1 ]' _ "$DOC"
-	ck "I02-AC-1 that line equals TREE_COMMIT in the Makefile" sh -c '
-		l=$(grep -E "^[0-9a-f]{40}\$" "$1"); m=$(sed -n "s/^TREE_COMMIT[[:space:]]*:\{0,1\}=[[:space:]]*//p" "$2" | tr -d " \t")
-		[ -n "$l" ] && [ "$l" = "$m" ]' _ "$DOC" "$MK"
+	ck "I02-AC-1 that line is rc1's commit $COMMIT" sh -c '
+		l=$(grep -E "^[0-9a-f]{40}\$" "$1"); [ -n "$l" ] && [ "$l" = "$2" ]' _ "$DOC" "$COMMIT"
 	ck "I02-AC-1 names the REPO_REVISIONS value $REV" grep -q "$REV" "$DOC"
 	ck "I02-AC-1 names REPO_REVISIONS" grep -q 'REPO_REVISIONS' "$DOC"
 	ck "I02-AC-1 names the matched count (152 of 152)" grep -Eq '152 of 152' "$DOC"
@@ -39,8 +44,8 @@ else
 fi
 
 # ---- ruling 1: the pins in the Makefile ----
-ck "I02 Makefile: TREE_COMMIT := $COMMIT" grep -Eq "^TREE_COMMIT[[:space:]]*:=[[:space:]]*${COMMIT}[[:space:]]*\$" "$MK"
-ck "I02 Makefile: TREE_DIGEST := $DIGEST" grep -Eq "^TREE_DIGEST[[:space:]]*:=[[:space:]]*${DIGEST}[[:space:]]*\$" "$MK"
+ck "I02 Makefile: TREE_COMMIT := <40 hex>" grep -Eq "^TREE_COMMIT[[:space:]]*:=[[:space:]]*[0-9a-f]{40}[[:space:]]*\$" "$MK"
+ck "I02 Makefile: TREE_DIGEST := sha256:<64 hex>" grep -Eq "^TREE_DIGEST[[:space:]]*:=[[:space:]]*sha256:[0-9a-f]{64}[[:space:]]*\$" "$MK"
 ck "I02 Makefile: TREE_REF built from \$(REGISTRY)" grep -Eq '^TREE_REF[[:space:]]*:=[[:space:]]*\$\(REGISTRY\)/gentoo-tree[[:space:]]*$' "$MK"
 
 # ---- ruling 5: Make targets (make -n) ----
@@ -51,15 +56,15 @@ ck "I02 Makefile: TREE_REF built from \$(REGISTRY)" grep -Eq '^TREE_REF[[:space:
 (cd "$ROOT" && make -n tree-restore-offline) >"$tmp/off.out" 2>&1
 ck "I02-AC-5 make sync-portage runs scripts/sync-portage.sh through toolbox/run" grep -Eq 'toolbox/run.*scripts/sync-portage\.sh' "$tmp/sync.out"
 ck "I02-AC-5 sync-portage passes TREE_COMMIT, TREE_DIGEST and the ref" \
-	sh -c 'grep -q "$2" "$1" && grep -q "$3" "$1" && grep -q "ghcr.io/tuckermclean/themonolith" "$1"' _ "$tmp/sync.out" "$COMMIT" "$DIGEST"
+	sh -c 'grep -q "$2" "$1" && grep -q "$3" "$1" && grep -q "ghcr.io/tuckermclean/themonolith" "$1"' _ "$tmp/sync.out" "$MK_COMMIT" "$MK_DIGEST"
 ck "I02-AC-5 sync-portage restores into output/repos/gentoo by default" grep -q 'output/repos/gentoo' "$tmp/sync.out"
 ck "I02-AC-5 TREE_DIR overrides the target directory" sh -c 'grep -q /tmp/other-tree "$1" && ! grep -q output/repos/gentoo "$1"' _ "$tmp/sync2.out"
 ck "I02-AC-3 make seed-tree runs scripts/seed-tree.sh with TREE_COMMIT through toolbox/run" \
-	grep -Eq "toolbox/run.*scripts/seed-tree\.sh.*$COMMIT|toolbox/run.*scripts/seed-tree\.sh" "$tmp/seed.out"
-ck "I02-AC-3 seed-tree passes the commit and REGISTRY" sh -c 'grep -q "$2" "$1" && grep -q "ghcr.io/tuckermclean/themonolith" "$1"' _ "$tmp/seed.out" "$COMMIT"
+	grep -Eq "toolbox/run.*scripts/seed-tree\.sh.*$MK_COMMIT|toolbox/run.*scripts/seed-tree\.sh" "$tmp/seed.out"
+ck "I02-AC-3 seed-tree passes the commit and REGISTRY" sh -c 'grep -q "$2" "$1" && grep -q "ghcr.io/tuckermclean/themonolith" "$1"' _ "$tmp/seed.out" "$MK_COMMIT"
 ck "I02-AC-3 make tree-check fetches the manifest of TREE_REF:TREE_COMMIT" \
-	sh -c 'grep -q "manifest fetch" "$1" && grep -q "gentoo-tree:$2" "$1"' _ "$tmp/check.out" "$COMMIT"
-ck "I02-AC-3 tree-check compares with TREE_DIGEST" grep -q "$DIGEST" "$tmp/check.out"
+	sh -c 'grep -q "manifest fetch" "$1" && grep -q "gentoo-tree:$2" "$1"' _ "$tmp/check.out" "$MK_COMMIT"
+ck "I02-AC-3 tree-check compares with TREE_DIGEST" grep -q "$MK_DIGEST" "$tmp/check.out"
 ck "I02-AC-3 tree-check compares file counts (wc -l)" grep -q 'wc -l' "$tmp/check.out"
 ck "I02-AC-5 make tree-restore-offline extracts in a --network none run" grep -Eq 'toolbox/run.*--network none' "$tmp/off.out"
 ck "I02-AC-5 tree-restore-offline compares with the archive (wc -l or cmp or diff)" grep -Eq 'wc -l|cmp |diff ' "$tmp/off.out"
@@ -115,9 +120,9 @@ fi
 ck "ruling 10 tree-restore-offline compares contents against TREE_DIR with tar -d / --diff / --compare" \
 	sh -c 'grep -E "(^|[ ;|(])tar +([^|;]* )?(-[a-zA-Z]*d[a-zA-Z]*|--diff|--compare)( |\$)" "$1" | grep -q output/repos/gentoo' _ "$tmp/off.out"
 # ruling 13: the pinned file count is a Make variable and tree-check compares the restored tree with it
-ck "ruling 13 Makefile: TREE_FILES := 130089" grep -Eq '^TREE_FILES[[:space:]]*:=[[:space:]]*130089[[:space:]]*$' "$MK"
-ck "ruling 13 tree-check compares the restored count with TREE_FILES (130089)" \
-	sh -c 'grep -E "130089" "$1" | grep -Eq -- "-eq|=="' _ "$tmp/check.out"
+ck "ruling 13 Makefile: TREE_FILES := <count>" grep -Eq '^TREE_FILES[[:space:]]*:=[[:space:]]*[1-9][0-9]*[[:space:]]*$' "$MK"
+ck "ruling 13 tree-check compares the restored count with TREE_FILES ($MK_FILES)" \
+	sh -c '[ -n "$2" ] && grep -E "$2" "$1" | grep -Eq -- "-eq|=="' _ "$tmp/check.out" "$MK_FILES"
 
 # ruling 11: make tree-exists. Only "not found" means absent; any other oras error fails and writes no exists=false.
 # The recipe runs on the host with TREE_RUN overridden and a stub oras on PATH.
@@ -171,7 +176,7 @@ case "\$1" in -x*|--extract*) chmod a-x "$OFW/output/repos/gentoo/run.sh";; esac
 STUB
 chmod +x "$OFW/bin/tar"
 printf '#!/bin/sh\necho hi\n' > "$OFW/src/run.sh"; chmod 755 "$OFW/src/run.sh"; echo data > "$OFW/src/data.txt"
-(cd "$OFW/src" && $REALTAR -cf - run.sh data.txt) | zstd -q > "$OFW/output/tree-archive/gentoo-tree-$COMMIT.tar.zst"
+(cd "$OFW/src" && $REALTAR -cf - run.sh data.txt) | zstd -q > "$OFW/output/tree-archive/gentoo-tree-$MK_COMMIT.tar.zst"
 ( cd "$OFW" && PATH="$OFW/bin:$PATH" make tree-restore-offline ) >"$tmp/offw.out" 2>&1
 offrc=$?
 if [ "$offrc" -ne 0 ] && grep -q 'differs' "$tmp/offw.out"; then pass "ruling 15 tree-restore-offline: a lost exec bit fails the compare"
@@ -194,7 +199,7 @@ chmod +x "$TCB/oras"
 	make tree-check TREE_RUN='env --' TREE_PULL="$tmp/tc.pull" TREE_DIR="$tmp/tc.tree" ) >"$tmp/tc.out" 2>&1
 tcrc=$?
 if [ "$tcrc" -ne 0 ] && grep -q 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' "$tmp/tc.out" \
-	&& grep -q "$DIGEST" "$tmp/tc.out" && ! grep -q 'oras pull' "$tmp/tc.calls"; then
+	&& grep -q "$MK_DIGEST" "$tmp/tc.out" && ! grep -q 'oras pull' "$tmp/tc.calls"; then
 	pass "ruling 16 tree-check: another registry digest -> non-zero, both digests named, no pull"
 else
 	fail "ruling 16 tree-check with another registry digest (rc=$tcrc; want non-zero, both digests named, no oras pull)"; sed 's/^/      | /' "$tmp/tc.out" "$tmp/tc.calls"
