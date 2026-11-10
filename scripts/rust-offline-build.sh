@@ -2,7 +2,7 @@
 # R05-AC-2 and the build half of R05-AC-4: rl144 and stele build from fetched distfiles alone, offline, in the builder.
 #   1. the builder's std lock (library/Cargo.lock) equals scripts/fixtures/R05/library-Cargo.lock, so the CRATES lists
 #      the fixture checks cover the std that the image will compile;
-#   2. a container with network runs `emerge --fetchonly` of both -r1 atoms into a host DISTDIR, the only way files get there;
+#   2. a container with network runs `emerge --fetchonly` of both -r2 atoms into a host DISTDIR, the only way files get there;
 #   3. a second container with --network none and FETCHCOMMAND=RESUMECOMMAND=/bin/false emerges both from that DISTDIR,
 #      through the cross wrapper with the build's mounts and make.conf. No binary package is used (no --usepkg/--getbinpkg),
 #      so cargo compiles the project and std (-Z build-std) from the distfiles' vendor directory;
@@ -21,7 +21,7 @@ TREE_DIR=${TREE_DIR:-$PWD/output/repos/gentoo}
 STATE=${RUST_OFFLINE_DIR:-$PWD/output/rust-offline}
 FIXTURE=$HERE/fixtures/R05/library-Cargo.lock
 LIBLOCK=/opt/rustup/toolchains/nightly-2026-07-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/Cargo.lock
-ATOMS='=games-roguelike/rl144-0.1.0_p20260805-r1 =www-client/stele-0.1.0_p20260821-r1'
+ATOMS='=games-roguelike/rl144-0.1.0_p20260805-r2 =www-client/stele-0.1.0_p20260821-r2'
 JOBS=${JOBS:-$(nproc)}
 LOAD_AVG=${LOAD_AVG:-$JOBS}
 

@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | critical | B03 | P01 | — | M |
 
-**Owns:** `configs/overlay/games-roguelike/rl144/` (new revision), `configs/overlay/www-client/stele/` (new revision), their Manifests, their `world` and `versions.lock` lines, the `stele-acid2` entry in B03's boot-mode list, `scripts/tests/no-network-ebuilds.test.sh`, `scripts/tests/rust-offline.test.sh`, `scripts/fixtures/R05/`, the AC-2 job (`.github/workflows/rust-offline.yml`, `scripts/rust-offline-build.sh`, the `test-rust-offline` Make target), the two packages' accepted warnings in `docs/overlay-qa.md`, the bundled crates' licence entries in `configs/attestation/license-policy.yaml` (`allowed_spdx` and `gentoo_to_spdx`).
+**Owns:** `configs/overlay/games-roguelike/rl144/` (new revision), `configs/overlay/www-client/stele/` (new revision), their Manifests, their `world` and `versions.lock` lines, the `stele-acid2` entry in B03's boot-mode list, `scripts/tests/no-network-ebuilds.test.sh`, `scripts/tests/rust-offline.test.sh`, `scripts/tests/crate-licences.test.sh`, `scripts/fixtures/R05/`, the AC-2 job (`.github/workflows/rust-offline.yml`, `scripts/rust-offline-build.sh`, the `test-rust-offline` Make target), the two packages' accepted warnings in `docs/overlay-qa.md`, the bundled crates' licence entries in `configs/attestation/license-policy.yaml` (`allowed_spdx` and `gentoo_to_spdx`).
 **Ports from linux-live-iso-factory@b9f533b:** `rl144-0.1.0_p20260805.ebuild` with `files/i486-unknown-linux-musl.json`, `stele-0.1.0_p20260821.ebuild`, unchanged apart from the crate handling; their `world` lines (`world:253-256`, `:295-300`).
 **Study refs:** D-supply-chain-honesty, D-revbump-on-overlay-change; SPEC §1 "Reproducibility", §5 "Distfiles".
 

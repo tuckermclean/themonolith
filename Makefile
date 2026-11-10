@@ -5,7 +5,7 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -15,8 +15,9 @@ test-unit:
 
 # Compare two ISOs by sha256 (P02); fails on any difference. On a mismatch diffoscope's HTML report goes to DIFFOSCOPE_HTML.
 DIFFOSCOPE_HTML ?= output/diffoscope.html
+COMPARE_LOG ?= output/compare.log
 compare:
-	toolbox/run --network none -- env DIFFOSCOPE_HTML='$(DIFFOSCOPE_HTML)' sh scripts/compare-isos.sh '$(ISO_A)' '$(ISO_B)'
+	toolbox/run --network none -- env DIFFOSCOPE_HTML='$(DIFFOSCOPE_HTML)' COMPARE_LOG='$(COMPARE_LOG)' sh -c 'mkdir -p "$$(dirname "$$COMPARE_LOG")"; sh scripts/compare-isos.sh "$$@" > "$$COMPARE_LOG"; rc=$$?; cat "$$COMPARE_LOG"; exit $$rc' compare '$(ISO_A)' '$(ISO_B)'
 
 # pkgcheck scan of the overlay against the pinned tree (needs the network for sync-portage).
 test-overlay: sync-portage
@@ -364,6 +365,108 @@ sbom_diff = toolbox/run --network none -- sh scripts/sbom-diff.sh $(SBOM_DIFF_LI
 
 fetch-rc1-sbom:
 	$(fetch_rc1_sbom)
+
+# Size of the ISO against the budget (OD-10: the 74-minute CD-R); fails when the ISO is over. The report is kept in SIZES_MD.
+ISO_BUDGET_BYTES ?= 681984000
+RELEASE_DIR ?= output/release
+SIZES_MD ?= $(RELEASE_DIR)/sizes.md
+size-report:
+	toolbox/run --network none -- env ISO_BUDGET_BYTES='$(ISO_BUDGET_BYTES)' SIZES_MD='$(SIZES_MD)' sh -c 'mkdir -p "$$(dirname "$$SIZES_MD")"; sh scripts/size-report.sh "$$@" > "$$SIZES_MD"; rc=$$?; cat "$$SIZES_MD"; exit $$rc' size-report '$(ISO)' $(if $(SQUASHFS),'$(SQUASHFS)',-) $(if $(KERNEL),'$(KERNEL)',-) $(if $(INITRD),'$(INITRD)',-)
+
+# The kernel and initrd of ISO, for size-report.
+ISO_PARTS ?= output/iso-parts
+iso-parts:
+	toolbox/run --network none -- sh -c 'set -eu; mkdir -p "$(ISO_PARTS)"; xorriso -osirrox on -indev "$(ISO)" -extract /boot/vmlinuz "$(ISO_PARTS)/vmlinuz" -extract /boot/initrd.img "$(ISO_PARTS)/initrd.img"'
+
+# rc1's ISO, downloaded only when RC1_ISO is absent; callers check its sha256.
+RC1_ISO ?= output/rc1/themonolith-0.1.0-rc1.iso
+RC1_ISO_URL ?= https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso
+fetch-rc1-iso:
+	@+if [ -f '$(RC1_ISO)' ]; then echo "==> $(RC1_ISO) exists"; else $(MAKE) --no-print-directory fetch-iso ISO_URL='$(RC1_ISO_URL)' ISO_SHA256='$(RC1_SHA256)' ISO_OUT='$(RC1_ISO)'; fi
+
+# The package and file differences from rc1 (rc1-diff.md): every package added or removed needs a reason line in
+# docs/rc1-diff-reasons.tsv, else this fails (the report is still written). The file differences are the squashfs path lists.
+RC1_DIFF_REASONS ?= docs/rc1-diff-reasons.tsv
+RC1_DIFF_MD ?= $(RELEASE_DIR)/rc1-diff.md
+NEW_SBOM ?= $(ATTEST_OUT)/bom.cdx.json
+NEW_SQUASHFS ?= $(ARTIFACT_OUT)/rootfs.squashfs
+RC1_SQUASHFS ?= output/rc1/rootfs.squashfs
+rc1-diff: fetch-rc1-sbom fetch-rc1-iso
+	toolbox/run --network none -- sh -c 'set -eu; mkdir -p "$$(dirname "$(RC1_DIFF_MD)")"; echo "$(RC1_SHA256)  $(RC1_ISO)" | sha256sum -c -; rm -f "$(RC1_SQUASHFS)"; xorriso -osirrox on -indev "$(RC1_ISO)" -extract /rootfs.squashfs "$(RC1_SQUASHFS)"; rc=0; sh scripts/rc1-diff.sh "$(RC1_SBOM)" "$(NEW_SBOM)" "$(RC1_DIFF_REASONS)" > "$(RC1_DIFF_MD)" || rc=$$?; echo >> "$(RC1_DIFF_MD)"; sh scripts/squashfs-diff.sh "$(RC1_SQUASHFS)" "$(NEW_SQUASHFS)" >> "$(RC1_DIFF_MD)"; cat "$(RC1_DIFF_MD)"; exit $$rc'
+
+# O02's dynamic-binary allowlist with its entry count.
+DYNAMIC_ALLOWLIST_REPORT ?= $(RELEASE_DIR)/dynamic-allowlist.txt
+allowlist-report:
+	toolbox/run --network none -- sh -c 'set -eu; mkdir -p "$$(dirname "$(DYNAMIC_ALLOWLIST_REPORT)")"; sh scripts/allowlist-report.sh "$(ARTIFACT_ALLOWLIST)" > "$(DYNAMIC_ALLOWLIST_REPORT)"; tail -n 1 "$(DYNAMIC_ALLOWLIST_REPORT)"'
+
+# The tag's world, the rootfs VDB and source-audit.tsv hold all 99 atoms of the predecessor's world.
+WORLD ?= configs/portage/world
+ROOTFS ?= $(ARTIFACT_ROOTFS)
+AUDIT ?= output/source-audit.tsv
+release-package-set:
+	toolbox/run --network none -- sh scripts/release-package-set.sh --world '$(WORLD)' --rootfs '$(ROOTFS)' --audit '$(AUDIT)'
+
+# rootfs-provenance.tsv, in release mode: every owning package must be built-this-run in AUDIT (needs PACKAGE_TREE and make test-gates).
+rootfs-provenance:
+	$(ATTEST_RUN) python3 /scripts/check-unowned.py --syft-json /output/attestation/sbom.syft.json --sysroot /output/rootfs \
+		--output /output/attestation/unowned-report-release.json --allowlist /configs/attestation/unowned-allowlist.yaml \
+		--bootstrap-exceptions /configs/attestation/bootstrap-exceptions.txt --provenance --package-tree /output/sysroot \
+		--source-audit /$(AUDIT) --provenance-report /output/attestation/rootfs-provenance.tsv
+
+# The digest chain of the publish job: ISO, SUMS entry, SBOM hash, both compare digests and the attestation subject. Creates nothing.
+SUMS ?= $(RELEASE_DIR)/SHA256SUMS
+BOM ?= $(NEW_SBOM)
+release-digest-chain:
+	toolbox/run -e GH_TOKEN -e GITHUB_TOKEN -e GITHUB_REPOSITORY -- sh -c 'exec sh scripts/release-digest-chain.sh "$$@" "$$GITHUB_REPOSITORY" "$$GITHUB_REPOSITORY/.github/workflows/build.yml"' release-digest-chain '$(ISO)' '$(SUMS)' '$(BOM)' '$(COMPARE_LOG)'
+
+# Every file named in SUMS is as recorded.
+release-sums-check:
+	toolbox/run --network none -- sh -c 'set -eu; cd "$$(dirname "$(SUMS)")"; sha256sum -c "$$(basename "$(SUMS)")"'
+
+# The release directory: the ISO under its release name and the assets, with SHA256SUMS over all of them (before signing).
+release-assets:
+	mkdir -p '$(RELEASE_DIR)'
+	cp '$(ISO)' '$(RELEASE_DIR)/themonolith-$(BUILD_VERSION).iso'
+	cp '$(NEW_SBOM)' '$(RELEASE_DIR)/bom.cdx.json'
+	cp '$(RELEASE_INPUTS)' '$(RELEASE_DIR)/release-inputs.json'
+	cp '$(AUDIT)' '$(RELEASE_DIR)/source-audit.tsv'
+	cp '$(ATTEST_OUT)/rootfs-provenance.tsv' '$(RELEASE_DIR)/rootfs-provenance.tsv'
+	toolbox/run --network none -- sh scripts/release-sums.sh '$(RELEASE_DIR)'
+
+# The publish job's steps; values from the environment (TAG, BUILT_SHA, BUILD_VERSION, PREV_TAG, ISO, GH_TOKEN). The two
+# that read the Git history run on the runner, which has the checkout's tags.
+release-resolve:
+	sh scripts/release-resolve.sh
+
+release-notes:
+	sh scripts/release-notes.sh
+
+release-create:
+	toolbox/run -e TAG -e BUILD_VERSION -e GH_TOKEN -e GITHUB_REPOSITORY -- env RELEASE_DIR='$(RELEASE_DIR)' sh scripts/release-create.sh
+
+# The CycloneDX document BOM against the vendored schema of its specVersion (no network).
+CDX_SCHEMAS ?= configs/attestation/schemas
+check-cyclonedx:
+	toolbox/run --network none -- sh -c 'set -eu; v=$$(jq -r ".specVersion // \"1.6\"" "$(BOM)"); s="$(CDX_SCHEMAS)/bom-$$v.schema.json"; [ -f "$$s" ] || { echo "check-cyclonedx: no vendored schema for specVersion $$v"; exit 1; }; check-jsonschema --base-uri "file://$$PWD/$(CDX_SCHEMAS)/" --schemafile "$$s" "$(BOM)"'
+
+# The distfiles archive of RELEASE_INPUTS, pushed to $(REGISTRY)/distfiles:<VERSION>; fails unless the pushed layer digest is DISTFILES_DIGEST.
+push-distfiles:
+	toolbox/run -e GITHUB_TOKEN -e GITHUB_ACTOR -- env REGISTRY='$(REGISTRY)' sh -c 'set -eu; $(tree_login); \
+		want=$$(jq -r .DISTFILES_DIGEST "$(RELEASE_INPUTS)"); ver=$$(jq -r .VERSION "$(RELEASE_INPUTS)"); \
+		[ -n "$$want" ] && [ -n "$$ver" ] || { echo "push-distfiles: $(RELEASE_INPUTS) lacks DISTFILES_DIGEST or VERSION"; exit 1; }; \
+		have=sha256:$$(sha256sum "$(DISTFILES_ARCHIVE)" | cut -d" " -f1); \
+		[ "$$have" = "$$want" ] || { echo "push-distfiles: $(DISTFILES_ARCHIVE) is $$have, not DISTFILES_DIGEST $$want"; exit 1; }; \
+		ref=$$REGISTRY/distfiles:$$ver; \
+		(cd "$$(dirname "$(DISTFILES_ARCHIVE)")" && oras push "$$ref" "$$(basename "$(DISTFILES_ARCHIVE)"):application/x-tar"); \
+		got=$$(oras manifest fetch "$$ref" | jq -r ".layers[0].digest"); \
+		[ "$$got" = "$$want" ] || { echo "push-distfiles: the layer of $$ref is $$got, not DISTFILES_DIGEST $$want"; exit 1; }; \
+		echo "push-distfiles: $$ref holds $$got"'
+
+# P01-AC-2 (b): a 404 from the attestations endpoint (no attestation for the digest) counts as "does not verify"; other HTTP statuses and network/auth errors fail. rc1's ISO still verifies against the predecessor's workflow and not against this repository's.
+RC1_REPO ?= tuckermclean/linux-live-iso-factory
+THIS_REPO ?= tuckermclean/themonolith
+verify-rc1-attestation: fetch-rc1-iso
+	toolbox/run -e GH_TOKEN -- sh -c 'set -u; echo "$(RC1_SHA256)  $(RC1_ISO)" | sha256sum -c - || exit 1; gh attestation verify "$(RC1_ISO)" --repo $(RC1_REPO) --signer-workflow $(RC1_REPO)/.github/workflows/build.yml || { echo "verify-rc1-attestation: rc1 does not verify against $(RC1_REPO)"; exit 1; }; e=$$(mktemp); if gh attestation verify "$(RC1_ISO)" --repo $(THIS_REPO) --signer-workflow $(THIS_REPO)/.github/workflows/build.yml 2> "$$e"; then cat "$$e" >&2; echo "verify-rc1-attestation: rc1 verifies against $(THIS_REPO), which did not sign it"; exit 1; fi; cat "$$e" >&2; if grep -Eiv "^Error: HTTP 404[: ]" "$$e" | grep -Eiq "HTTP [0-9]{3}|rate limit|dial tcp|no such host|i/o timeout|timed out|connection (refused|reset)|authenticat|gh auth login|GH_TOKEN|TLS|certificate"; then echo "verify-rc1-attestation: the check against $(THIS_REPO) failed for a reason other than verification"; exit 1; fi; echo "verify-rc1-attestation: rc1 verifies against $(RC1_REPO) only"'
 
 # Compares the SBOM test-gates regenerated with rc1's.
 sbom-diff-rc1: fetch-rc1-sbom
