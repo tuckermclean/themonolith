@@ -1,0 +1,4 @@
+# The "*/*" entry in package.env (static.conf) is applied as global configuration; a
+# package-specific entry such as this one is applied on top of it, so this env
+# file's EXTRA_ECONF replaces static.conf's (Portage's config.py, package.env handling).
+sys-fs/e2fsprogs   e2fsprogs-static-tools.conf

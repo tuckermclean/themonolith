@@ -1,0 +1,7 @@
+# parse_smoke_table sample: only run rows come back
+	
+sys-apps/busybox	run	busybox --help	BusyBox v
+net-misc/iperf:3	covered	mode:nat
+
+<sys-fs/ncdu-2	untestable	nothing on the disc
+=games-roguelike/nethack-3.6.7-r1	run	ls /usr/games | head -1	nethack
