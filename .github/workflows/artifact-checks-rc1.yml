@@ -26,13 +26,44 @@ permissions:
   contents: read
 
 jobs:
+  # Pulls or builds the toolbox image once for this run and shares it with the jobs that run toolbox/run.
+  toolbox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pull or build the toolbox image
+        run: make toolbox-save
+
+      - name: Upload the toolbox image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox/toolbox.tar
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
   # The right digest, on the pull request.
   test-artifact:
+    needs: toolbox
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the toolbox image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox
+
+      - name: Load the toolbox image
+        run: make toolbox-load
 
       - name: Fetch the rc1 ISO and check its sha256
         env:
@@ -57,11 +88,21 @@ jobs:
 
   # The digest of the dispatch, right or wrong: a wrong one fails the fetch before the audit.
   test-artifact-dispatch:
+    needs: toolbox
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the toolbox image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox
+
+      - name: Load the toolbox image
+        run: make toolbox-load
 
       - name: Fetch the rc1 ISO and check its sha256
         env:

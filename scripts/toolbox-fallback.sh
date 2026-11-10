@@ -12,9 +12,10 @@ if [ -n "${BASE:-}" ]; then
 elif [ -n "${GITHUB_BASE_REF:-}" ]; then
 	base=origin/$GITHUB_BASE_REF
 	if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-		git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF" || true
-		# Without a tracking refspec the fetch only sets FETCH_HEAD.
-		git rev-parse --verify --quiet "$base^{commit}" >/dev/null || base=FETCH_HEAD
+		if git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"; then
+			# Without a tracking refspec the fetch only sets FETCH_HEAD.
+			git rev-parse --verify --quiet "$base^{commit}" >/dev/null || base=FETCH_HEAD
+		fi
 	fi
 else
 	base=origin/main

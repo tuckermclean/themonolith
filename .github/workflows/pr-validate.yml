@@ -23,6 +23,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: toolbox-check
+        run: make toolbox-check
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+
       - name: Lint, unit tests, revbump check and overlay QA
         run: make test-lint test-unit test-revbump test-overlay
         env:
