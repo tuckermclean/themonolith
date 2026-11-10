@@ -1,9 +1,11 @@
 #!/bin/sh
 # Creates the GitHub Release for TAG from RELEASE_DIR and release-notes.md.
 # A hyphenated tag (v0.2.0-rc1, -beta.2) is a prerelease and never Latest: the API refuses a prerelease as Latest.
-# Env: TAG, RELEASE_DIR, BUILD_VERSION, GH_TOKEN.
+# Env: TAG, RELEASE_DIR, BUILD_VERSION, GH_TOKEN, GITHUB_REPOSITORY (passed to gh as GH_REPO).
 set -eu
-: "${TAG:?}" "${RELEASE_DIR:?}" "${BUILD_VERSION:?}"
+: "${TAG:?}" "${RELEASE_DIR:?}" "${BUILD_VERSION:?}" "${GITHUB_REPOSITORY:?}"
+GH_REPO=$GITHUB_REPOSITORY
+export GH_REPO
 flags=
 case "${TAG#v}" in
 *-*)

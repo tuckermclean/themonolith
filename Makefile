@@ -428,7 +428,7 @@ release-notes:
 	sh scripts/release-notes.sh
 
 release-create:
-	toolbox/run -e TAG -e BUILD_VERSION -e GH_TOKEN -- env RELEASE_DIR='$(RELEASE_DIR)' sh scripts/release-create.sh
+	toolbox/run -e TAG -e BUILD_VERSION -e GH_TOKEN -e GITHUB_REPOSITORY -- env RELEASE_DIR='$(RELEASE_DIR)' sh scripts/release-create.sh
 
 # The CycloneDX document BOM against the vendored schema of its specVersion (no network).
 CDX_SCHEMAS ?= configs/attestation/schemas
@@ -452,7 +452,7 @@ push-distfiles:
 RC1_REPO ?= tuckermclean/linux-live-iso-factory
 THIS_REPO ?= tuckermclean/themonolith
 verify-rc1-attestation: fetch-rc1-iso
-	toolbox/run -e GH_TOKEN -- sh -c 'set -u; echo "$(RC1_SHA256)  $(RC1_ISO)" | sha256sum -c - || exit 1; gh attestation verify "$(RC1_ISO)" --repo $(RC1_REPO) --signer-workflow $(RC1_REPO)/.github/workflows/build.yml || { echo "verify-rc1-attestation: rc1 does not verify against $(RC1_REPO)"; exit 1; }; if gh attestation verify "$(RC1_ISO)" --repo $(THIS_REPO) --signer-workflow $(THIS_REPO)/.github/workflows/build.yml; then echo "verify-rc1-attestation: rc1 verifies against $(THIS_REPO), which did not sign it"; exit 1; fi; echo "verify-rc1-attestation: rc1 verifies against $(RC1_REPO) only"'
+	toolbox/run -e GH_TOKEN -- sh -c 'set -u; echo "$(RC1_SHA256)  $(RC1_ISO)" | sha256sum -c - || exit 1; gh attestation verify "$(RC1_ISO)" --repo $(RC1_REPO) --signer-workflow $(RC1_REPO)/.github/workflows/build.yml || { echo "verify-rc1-attestation: rc1 does not verify against $(RC1_REPO)"; exit 1; }; e=$$(mktemp); if gh attestation verify "$(RC1_ISO)" --repo $(THIS_REPO) --signer-workflow $(THIS_REPO)/.github/workflows/build.yml 2> "$$e"; then cat "$$e" >&2; echo "verify-rc1-attestation: rc1 verifies against $(THIS_REPO), which did not sign it"; exit 1; fi; cat "$$e" >&2; if grep -Eiq "HTTP [0-9]{3}|rate limit|dial tcp|no such host|i/o timeout|timed out|connection (refused|reset)|authenticat|gh auth login|GH_TOKEN|TLS|certificate" "$$e"; then echo "verify-rc1-attestation: the check against $(THIS_REPO) failed for a reason other than verification"; exit 1; fi; echo "verify-rc1-attestation: rc1 verifies against $(RC1_REPO) only"'
 
 # Compares the SBOM test-gates regenerated with rc1's.
 sbom-diff-rc1: fetch-rc1-sbom

@@ -181,8 +181,21 @@ gh attestation verify themonolith-0.1.0-rc1.iso \
 ```
 
 `make verify-rc1-attestation` runs both against rc1's ISO and passes only if
-the first verifies and the second fails; `build.yml` runs it on every pull
-request.
+the first verifies and the second fails with a verification error (a network,
+rate-limit or authentication error fails the target too); `rc1-attestation.yml`
+runs it on pull requests that touch the release or signing paths, and on
+`workflow_dispatch`.
+
+**GitHub Release URL in the SBOM:** GitHub Release asset download URLs are
+deterministic: `<server>/<owner>/<repo>/releases/download/<tag>/<asset>`.
+`scripts/attestation.sh` computes
+`https://github.com/tuckermclean/themonolith/releases/download/v<version>/themonolith-<version>.iso`
+from `GITHUB_REF`/`GITHUB_REPOSITORY` alone, *before* `gh release create`
+ever runs, and passes it to `enrich-sbom.py --release-url`. This is why the
+SBOM can point at the release asset without an ordering dependency on the
+release existing yet: by the time `gh release create` runs and makes that URL
+resolve, the SBOM already named it correctly. On a build that is not a tag
+the URL stays empty; none is fabricated.
 
 ## Permissions
 
