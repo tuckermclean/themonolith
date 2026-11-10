@@ -397,6 +397,15 @@ jobs:
       - name: Compare the ISOs
         run: make compare
 
+      # The release job reads the two digests back from this log (P01 digest chain).
+      - name: Upload the compare log
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compare-log-${{ github.run_id }}
+          path: output/compare.log
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Upload the diffoscope report
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -425,6 +434,25 @@ jobs:
       - name: Test the static rebuild
         run: make test-static-rebuild
 
+  # R02: pkgcheck over the overlay at the pinned tree, on the tagged commit. The attestation job needs it.
+  overlay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: changes
+    permissions:
+      contents: read
+      # read: make test-overlay logs in to GHCR to pull the pinned portage tree (make sync-portage).
+      packages: read
+    if: needs.changes.outputs.build == 'true'
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Scan the overlay
+        run: make test-overlay
+
   # Boots the ISO of this run in every mode (the list of boot-test-workflow.test.sh); see
   # .github/workflows/boot-test.yml and scripts/boot-test.py. The ISO comes from the artifact of this run,
   # so a re-run whose artifact is gone fails at download-artifact.
@@ -436,15 +464,19 @@ jobs:
       iso-artifact: iso-${{ github.run_id }}
       modes: bios uefi toram ahci nvme usb virtio nicless nic vga fbdev-modprobe nat gui stele-acid2 clock-epoch clock-1996 persist persist-init entry serial-net smoke
 
-  # The O02 artifact checks and the S01 gates on the same ISO. The signing step (P01) and any publishing step
-  # are added to this job, after these, and need the same jobs.
+  # The O02 artifact checks and the S01 gates on the same ISO, then (P01) the checks only a release needs, the
+  # report files, SHA256SUMS, and on a tag the platform attestations of the ISO and its SBOM. It needs everything
+  # that can fail a release: compare, every boot mode (persist-init, every entry leg, smoke included), the static
+  # rebuild and the overlay scan. Nothing is signed or published before they have passed.
   attestation:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    needs: [build, build-a, compare, static-rebuild, boot-test]
+    needs: [changes, build, build-a, compare, static-rebuild, overlay, boot-test]
     # The iteration path needs its build; the gate path needs compare, which needs both builds.
-    if: "!cancelled() && needs.build.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success' || !cancelled() && needs.compare.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success'"
+    if: "!cancelled() && needs.build.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success' && needs.overlay.result == 'success' || !cancelled() && needs.compare.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success' && needs.overlay.result == 'success'"
     permissions:
+      id-token: write
+      attestations: write
       contents: read
       packages: read
     env:
@@ -466,6 +498,21 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sysroot-${{ github.run_id }}
+          path: output
+
+      # Only the gate path (a tag or a gate dispatch) ran build A: it wrote the source audit and the fetch job wrote release-inputs.json.
+      - name: Download the source audit
+        if: needs.changes.outputs.gate == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-audit-${{ github.run_id }}
+          path: output
+
+      - name: Download release-inputs.json
+        if: needs.changes.outputs.gate == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-inputs-${{ github.run_id }}
           path: output
 
       - name: Unpack the sysroot
@@ -492,6 +539,92 @@ jobs:
           BUILD_TAG: ${{ env.BUILD_VERSION }}
           PACKAGE_TREE: output/sysroot
         run: make test-gates
+
+      # The release steps that neither sign nor publish run on the gate path too, so a gate dispatch rehearses them.
+      # A release ships all 99 atoms of the predecessor's world; an iteration ISO may lack some (B01 change 11).
+      - name: Check the package set
+        if: needs.changes.outputs.gate == 'true'
+        env:
+          ISO: output/iso/boot-test.iso
+        run: make release-package-set
+
+      - name: Check that the rootfs provenance holds in release mode
+        if: needs.changes.outputs.gate == 'true'
+        env:
+          ISO: output/iso/boot-test.iso
+        run: make rootfs-provenance
+
+      - name: Validate the SBOM against the CycloneDX schema
+        env:
+          BOM: output/attestation/bom.cdx.json
+        run: make check-cyclonedx
+
+      - name: Extract the kernel and initrd
+        env:
+          ISO: output/iso/boot-test.iso
+        run: make iso-parts
+
+      - name: Report the sizes (sizes.md) against the budget
+        env:
+          ISO: output/iso/boot-test.iso
+          SQUASHFS: output/rootfs.squashfs
+          KERNEL: output/iso-parts/vmlinuz
+          INITRD: output/iso-parts/initrd.img
+        run: make size-report
+
+      - name: Report the differences from rc1 (rc1-diff.md)
+        if: needs.changes.outputs.gate == 'true'
+        run: make rc1-diff
+
+      - name: Copy the dynamic-binary allowlist with its count (dynamic-allowlist.txt)
+        if: needs.changes.outputs.gate == 'true'
+        run: make allowlist-report
+
+      # SHA256SUMS is written once, here, over the ISO and every other asset, before signing.
+      - name: Collect the release assets and write SHA256SUMS
+        if: needs.changes.outputs.gate == 'true'
+        env:
+          ISO: output/iso/boot-test.iso
+        run: make release-assets
+
+      - name: Upload the release ISO
+        if: needs.changes.outputs.gate == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-iso-${{ github.run_id }}
+          path: output/release/themonolith-${{ env.BUILD_VERSION }}.iso
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+
+      # release-inputs.json and source-audit.tsv are their own artifacts; the release job takes them from there.
+      - name: Upload the SBOM, SHA256SUMS and the reports
+        if: needs.changes.outputs.gate == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets-${{ github.run_id }}
+          path: |
+            output/release/SHA256SUMS
+            output/release/bom.cdx.json
+            output/release/rootfs-provenance.tsv
+            output/release/rc1-diff.md
+            output/release/sizes.md
+            output/release/dynamic-allowlist.txt
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Attest the build provenance of the ISO
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: output/release/themonolith-${{ env.BUILD_VERSION }}.iso
+
+      - name: Attest the SBOM of the ISO
+        if: github.ref_type == 'tag'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: output/release/themonolith-${{ env.BUILD_VERSION }}.iso
+          sbom-path: output/release/bom.cdx.json
 
       - name: Upload the attestation reports
         if: always()

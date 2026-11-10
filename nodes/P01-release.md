@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | critical | P02, R05, G01, R02, O03 | M01, P03, X01 | MS2 | L |
 
-**Owns:** `.github/workflows/release.yml`, the `attestation` job of `build.yml`'s tag path (after P02's gate), `scripts/rc1-diff.sh`, `scripts/size-report.sh`, `docs/rc1-diff-reasons.tsv`, `docs/releasing.md`, `scripts/tests/release-*.test.sh`.
+**Owns:** `.github/workflows/release.yml`, the `attestation` job of `build.yml`'s tag path (after P02's gate), `scripts/rc1-diff.sh`, `scripts/size-report.sh`, `docs/rc1-diff-reasons.tsv`, `docs/releasing.md`, `.github/workflows/rc1-attestation.yml` (AC-2 (b)), `scripts/release-*.sh` (the digest chain, the package set and the publish steps release.yml calls), `scripts/squashfs-diff.sh`, `scripts/allowlist-report.sh`, `configs/release/world-b9f533b.txt` (the 99 atoms), `scripts/tests/release-*.test.sh`, `scripts/tests/rc1-diff.test.sh`, `scripts/tests/size-report.test.sh`, `scripts/tests/fixtures/P01/`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/release.yml` (278 lines), `docs/releasing.md`. Removed: `scripts/generate-provenance.py` and its call in `scripts/attestation.sh`.
 **Study refs:** `configs/portage/world` at b9f533b (99 atoms); T-attest-entry-workflow, T-prerelease-never-latest, D-supply-chain-honesty, D-tag-builds-from-source; Principle 7; OD-4, OD-10.
 
