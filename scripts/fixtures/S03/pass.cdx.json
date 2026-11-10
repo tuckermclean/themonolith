@@ -1,0 +1,47 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {
+      "type": "library",
+      "name": "llvm-alone",
+      "version": "1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "nota-or-llvm",
+      "version": "1",
+      "licenses": [
+        {
+          "expression": "NOT-A OR Apache-2.0 WITH LLVM-exception"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "mit-and-group-apache",
+      "version": "1",
+      "licenses": [
+        {
+          "expression": "MIT AND (NOT-A OR Apache-2.0)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "mit-and-group-llvm",
+      "version": "1",
+      "licenses": [
+        {
+          "expression": "MIT AND (NOT-A OR Apache-2.0 WITH LLVM-exception)"
+        }
+      ]
+    }
+  ]
+}

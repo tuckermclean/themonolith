@@ -1,0 +1,8 @@
+# S03 fixture policy (AC-3): policy-rl144.yaml without Unicode-3.0.
+allowed_spdx:
+  - MIT
+  - BSD-3-Clause
+  - MPL-2.0
+  - Zlib
+denied_spdx: []
+gentoo_to_spdx: {}
