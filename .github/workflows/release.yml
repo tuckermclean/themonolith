@@ -1,0 +1,170 @@
+name: Release
+
+# Publish-only pipeline. It runs AFTER the Build workflow finishes on a version
+# tag and turns that build's already-attested artifacts into a GitHub Release.
+# Pushing a `vMAJOR.MINOR.PATCH` tag (optionally with a pre-release suffix like
+# `-rc1`) is still the ONLY operator action that cuts a release; see
+# docs/releasing.md.
+#
+# WHY workflow_run, and not `push: tags` calling build.yml: GitHub binds a
+# Sigstore attestation to the workflow that TRIGGERED the run. build.yml owns
+# the tag trigger and signs the ISO itself (its `attestation` job), so the
+# certificate names build.yml. This workflow waits for that Build run to
+# complete, then publishes. It never builds or signs anything.
+#
+# The files come from the Build run's artifacts (download-artifact with the
+# run id and a token), not from a bucket. Before anything is written to a
+# public place, the publish job checks that sha256(ISO) == its SHA256SUMS
+# entry == the SBOM's metadata.component hash == both digests in the compare
+# log of the reproducibility gate == the digest of the platform attestation's
+# subject (gh attestation verify). Then it pushes the distfiles archive to
+# the registry and creates the release. See docs/releasing.md.
+
+on:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+
+# One release per tag; never cancel an in-flight publish.
+concurrency:
+  group: release-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+# Creating the release needs contents: write; the artifact downloads from the
+# Build run need actions: read. packages: write is on the publish job only.
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  # workflow_run fires for EVERY Build completion (main pushes, 'full-ci' PRs,
+  # the weekly schedule, workflow_dispatch). Only a successful Build run that a
+  # push started can be a release; this job tells a version tag from the rest.
+  # For a tag push, github.event.workflow_run.head_branch carries the tag name
+  # (e.g. `v0.2.0-rc1`). scripts/release-resolve.sh then checks that
+  # refs/tags/<tag> exists and points at the exact commit the Build ran on
+  # (github.event.workflow_run.head_sha); a mismatch refuses to publish. The
+  # previous tag, for the changelog, is `git describe --tags --abbrev=0 <tag>^`.
+  resolve:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      publish: ${{ steps.version.outputs.publish }}
+      tag: ${{ steps.version.outputs.tag }}
+      build-version: ${{ steps.version.outputs.build-version }}
+      prev-tag: ${{ steps.version.outputs.prev-tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Resolve the tag, its commit and the previous tag
+        id: version
+        env:
+          TAG: ${{ github.event.workflow_run.head_branch }}
+          BUILT_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: make release-resolve
+
+  # Publishes ONLY for a SUCCESSFUL Build run triggered by a version tag. If a
+  # job of that run failed (a boot mode, the compare, an artifact check, a
+  # gate, the package set, the signing), its conclusion is not 'success' and
+  # nothing is published.
+  publish:
+    needs: resolve
+    if: github.event.workflow_run.conclusion == 'success' && needs.resolve.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      actions: read
+      # write: this job pushes the distfiles archive to GHCR.
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      BUILD_VERSION: ${{ needs.resolve.outputs.build-version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          # The exact commit the Build ran on, so the changelog and the versions read below are the released tree's.
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Download the ISO
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-iso-${{ github.event.workflow_run.id }}
+          path: output/release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download the SBOM, SHA256SUMS and the reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets-${{ github.event.workflow_run.id }}
+          path: output/release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download release-inputs.json
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-inputs-${{ github.event.workflow_run.id }}
+          path: output/release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download the source audit
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-audit-${{ github.event.workflow_run.id }}
+          path: output/release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download the distfiles archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: distfiles-${{ github.event.workflow_run.id }}
+          path: output/release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download the compare log
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: compare-log-${{ github.event.workflow_run.id }}
+          path: output
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Check every file against SHA256SUMS
+        run: make release-sums-check
+
+      - name: Check the digest chain
+        env:
+          ISO: output/release/themonolith-${{ needs.resolve.outputs.build-version }}.iso
+          BOM: output/release/bom.cdx.json
+        run: make release-digest-chain
+
+      - name: Push the distfiles archive
+        env:
+          RELEASE_INPUTS: output/release/release-inputs.json
+        run: make push-distfiles
+
+      - name: Assemble the release notes
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          PREV_TAG: ${{ needs.resolve.outputs.prev-tag }}
+          ISO: output/release/themonolith-${{ needs.resolve.outputs.build-version }}.iso
+        run: make release-notes
+
+      - name: Create the GitHub release
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: make release-create
