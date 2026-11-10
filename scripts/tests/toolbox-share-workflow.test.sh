@@ -409,6 +409,63 @@ try:
 except Exception:
     say(False, "F02-AC-4: checks crashed: " + traceback.format_exc().splitlines()[-1])
 
+# ---- AC-4 (through prerequisites): a job counts as running toolbox-save/-load/-check, or make cache-push, when a make target of any of its
+# run: steps is that target or has it among its prerequisites as Make resolves them (pr-validate.yml's validate runs test-toolbox-check).
+try:
+    db4 = make_db()
+    def closure4(target):
+        seen, todo = set(), [target]
+        while todo:
+            t = todo.pop()
+            if t in seen:
+                continue
+            seen.add(t)
+            todo.extend(db4.get(t, ([], []))[0])
+        return seen
+    def reached4(e):
+        r = set()
+        for st in e.job.get("steps") or []:
+            if isinstance(st.get("run"), str):
+                for tg, _ in makes(st["run"]):
+                    for x in tg:
+                        r |= closure4(x)
+        return r
+    def pkgwrite4(p):
+        if p is None:
+            return None
+        if isinstance(p, str):
+            return p == "write-all"
+        return p.get("packages") == "write"
+    found4, bad4 = [], []
+    for wf, d in sorted(docs.items()):
+        if not ({"pull_request", "pull_request_target"} & set(triggers(d))) or wf not in entries:
+            continue
+        for e in entries[wf]:
+            r = reached4(e)
+            kinds = sorted(r & TOOLBOX_TARGETS)
+            if not kinds:
+                continue
+            found4.append("%s:%s(%s)" % (wf, label(e), ",".join(kinds)))
+            own = pkgwrite4(e.job.get("permissions"))
+            if own is None:
+                own = pkgwrite4(e.doc.get("permissions"))
+            if e.caller is not None:
+                up = pkgwrite4(e.caller_job.get("permissions"))
+                if up is None:
+                    up = pkgwrite4(e.caller_doc.get("permissions"))
+                own = up if own is None else (own and bool(up))
+            if own:
+                if kinds == ["toolbox-load"] and "cache-push" in r:
+                    print("INFO: %s %s holds packages: write for make cache-push (exempt, through prerequisites)" % (wf, label(e)))
+                else:
+                    bad4.append("%s:%s" % (wf, label(e)))
+    print("INFO: F02-AC-4 jobs reaching toolbox-save/-load/-check through make prerequisites in pull_request workflows: %s" % (", ".join(found4) or "(none)"))
+    say(any(x.startswith("pr-validate.yml:validate(") and "toolbox-check" in x for x in found4),
+        "F02-AC-4: pr-validate.yml's validate job is among the jobs reaching toolbox-check through make prerequisites")
+    say(not bad4, "F02-AC-4: no pull_request workflow grants packages: write to a job reaching toolbox-save/-load/-check through make prerequisites (found: %s)" % (", ".join(bad4) or "none"))
+except Exception:
+    say(False, "F02-AC-4: prerequisite-reaching checks crashed: " + traceback.format_exc().splitlines()[-1])
+
 print("RESULT: %d failure(s)" % nfail)
 PYEOF
 )
