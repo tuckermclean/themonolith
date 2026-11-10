@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | none | I01, O01, O02, R01, R04, S01 | — | S |
+| critical | none | F02, I01, O01, O02, R01, R04, S01 | — | S |
 
 **Owns:** `Makefile` (created, with the `test`, `test-lint` and `test-unit` targets and their file lists), `scripts/test-lint.sh` (the lint checks behind `test-lint`), `.github/workflows/pr-validate.yml`, `.github/dependabot.yml`, `.github/CODEOWNERS`, `.gitignore`, the predecessor's section of `AGENTS.md`, the architecture line of `CLAUDE.md`, `scripts/tests/make-test.test.sh` and its fixtures.
 **Ports from linux-live-iso-factory@b9f533b:** the checks of `.github/workflows/pr-validate.yml:23-69`, `.gitignore`, `AGENTS.md` (the predecessor's guide), the architecture line of `CLAUDE.md:8-9`.
