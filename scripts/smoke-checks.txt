@@ -1,0 +1,105 @@
+# One row per atom of configs/portage/world, tab-separated, in world order:
+#   atom<TAB>run<TAB>command<TAB>regex      the smoke mode (scripts/boot-test.py) runs the command in the guest
+#                                           shell as root and the regex (Python re, multiline) must match its output
+#   atom<TAB>covered<TAB>mode:<mode>|test:<scripts/tests file>|atom:<atom with a run row>
+#   atom<TAB>untestable<TAB>reason
+# The tty echoes the command line, so a regex that matches the command line itself fails the row.
+sys-kernel/monolith-kernel	covered	mode:bios
+app-misc/monolith-base	run	which monolith-persist monolith-router monolith-net	/monolith-router
+sys-apps/busybox	run	busybox | head -n 1	BusyBox v
+app-shells/bash	run	bash --version | head -n 1	GNU bash, version
+app-shells/dash	run	dash -c 'echo dash_$((6*7))'	dash_42
+sys-apps/sysvinit	run	readlink /sbin/poweroff && test -x /sbin/bootlogd && test -x /sbin/init	^halt
+sys-apps/coreutils	run	ls --version | head -n 1	GNU coreutils
+sys-apps/util-linux	run	mount --version	util-linux
+sys-apps/findutils	run	find --version | head -n 1	GNU findutils
+sys-apps/grep	run	grep --version | head -n 1	GNU grep
+sys-apps/sed	run	sed --version | head -n 1	GNU sed
+sys-apps/gawk	run	gawk --version | head -n 1	GNU Awk
+sys-apps/diffutils	run	diff --version | head -n 1	GNU diffutils
+app-arch/tar	run	tar --version | head -n 1	GNU tar
+app-text/tree	run	tree --version	^tree v
+sys-libs/readline	run	test -f /usr/lib/libreadline.a && echo has_readline_$((6*7))	has_readline_42
+sys-libs/ncurses	run	infocmp linux | head -n 3	^linux\|Linux console
+sys-libs/zlib	run	test -f /usr/lib/libz.a && echo has_zlib_$((6*7))	has_zlib_42
+dev-libs/libpcre2	run	pcre2grep --version	^pcre2grep version
+dev-libs/openssl	run	openssl version	^OpenSSL \d
+sys-apps/file	run	file -L /bin/dash	ELF 32-bit LSB.*Intel i386
+sys-apps/less	run	less --version | head -n 1	^less \d
+app-editors/vim	run	vim --version | head -n 1	VIM - Vi IMproved
+app-editors/nano	run	nano --version | head -n 1	GNU nano
+sys-apps/man-pages	run	ls /usr/share/man/man2/open.2* && echo has_man2_$((6*7))	has_man2_42
+app-text/mandoc	run	printf '.TH T 1\n.SH NAME\nt \\- x\n' | mandoc -T ascii | grep -c General	^1$
+sys-devel/binutils	run	ld --version | head -n 1	GNU ld
+dev-build/make	run	make --version | head -n 1	GNU Make
+dev-debug/strace	run	strace -V | head -n 1	strace -- version
+sys-devel/patch	run	patch --version | head -n 1	GNU patch
+dev-debug/gdb	run	gdb --version | head -n 1	GNU gdb
+dev-lang/lua	run	lua5.4 -v	^Lua 5\.4
+dev-lang/monolith-perl	run	perl -MCGI -e 'print "cgi_", CGI->VERSION, "\n"'	cgi_4\.10
+app-arch/xz-utils	run	xz --version | head -n 1	\(XZ Utils\)
+app-arch/bzip2	run	bzip2 --help 2>&1 | head -n 1	bzip2, a block
+app-arch/gzip	run	gzip --version | head -n 1	^gzip \d
+sys-apps/iproute2	run	ip -V	ip utility
+sys-apps/net-tools	run	netstat -V | head -n 1	net-tools
+net-misc/iputils	run	ping -V	iputils
+net-misc/dhcpcd	run	dhcpcd --version | head -n 1	^dhcpcd \d
+sys-apps/ethtool	run	ethtool --version	^ethtool version
+net-firewall/nftables	run	nft --version	^nftables v
+net-dns/dnsmasq	run	dnsmasq --version | head -n 1	^Dnsmasq version
+net-misc/dropbear	run	dropbear -V 2>&1	^Dropbear v
+net-misc/curl	run	curl --version | head -n 1	^curl \d
+net-misc/wget	run	wget --version | head -n 1	GNU Wget
+net-misc/whois	run	whois --help 2>&1 | head -n 2	^Usage: whois
+net-analyzer/netcat	run	nc -h 2>&1 | head -n 1	^\[v1\.10\]
+net-analyzer/traceroute	run	traceroute --version	^Modern traceroute
+net-misc/iperf:3	run	iperf3 --version	^iperf 3
+net-dialup/ppp	run	pppd --version 2>&1 | head -n 1	^pppd version
+www-client/lynx	run	lynx -version | head -n 1	^Lynx Version
+mail-client/mutt	run	mutt -v | head -n 1	^Mutt \d
+net-irc/irssi	run	irssi --version	^irssi \d
+app-misc/tmux	run	tmux -V	^tmux \d
+sys-apps/shadow	run	useradd -M -N smoketest && id -gn smoketest; userdel smoketest	^users$
+sys-process/procps	run	ps --version	procps-ng
+sys-process/htop	run	htop --version	^htop \d
+sys-process/lsof	run	lsof -v 2>&1 | head -n 2	lsof version
+app-admin/sysklogd	run	syslogd -v 2>&1 | head -n 1	^sysklogd v\d
+sys-process/psmisc	run	pstree -V 2>&1 | head -n 1	\(PSmisc\)
+app-arch/cpio	run	cpio --version | head -n 1	GNU cpio
+<sys-fs/ncdu-2	run	ncdu -v	^ncdu 1\.
+sys-apps/pv	run	pv --version | head -n 1	^pv \d
+sys-fs/e2fsprogs	run	mkfs.ext4 -V 2>&1 | head -n 1	^mke2fs \d
+sys-fs/dosfstools	run	mkfs.fat --help 2>&1 | head -n 1	^mkfs\.fat \d
+sys-fs/squashfs-tools	run	mksquashfs -version | head -n 1	mksquashfs version
+app-shells/zsh	run	zsh --version	^zsh \d
+app-shells/bash-completion	run	test -f /usr/share/bash-completion/bash_completion && echo has_bashcomp_$((6*7))	has_bashcomp_42
+net-misc/rsync	run	rsync --version | head -n 1	^rsync  version
+sys-apps/the_silver_searcher	run	ag --version | head -n 1	^ag version
+app-arch/zip	run	zip -v | head -n 2	This is Zip
+app-arch/unzip	run	unzip -v | head -n 1	^UnZip \d
+net-misc/socat	run	socat -V | head -n 2	socat version
+net-analyzer/iftop	run	iftop -h 2>&1 | head -n 1	display bandwidth usage
+net-analyzer/tcpdump	run	tcpdump --version 2>&1 | head -n 1	^tcpdump version
+net-analyzer/mtr	run	mtr --version	^mtr 0\.
+sys-apps/smartmontools	run	smartctl --version | head -n 1	^smartctl \d
+sys-apps/hdparm	run	hdparm -V	^hdparm v
+sys-apps/dmidecode	run	dmidecode --version	^\d+\.\d+
+sys-apps/kbd	run	setfont -V 2>&1 | head -n 1	kbd \d
+media-fonts/terminus-font	run	test -f /usr/share/fonts/terminus/ter-x16n.pcf.gz && echo has_terminus_$((6*7))	has_terminus_42
+dev-db/monolith-sqlite	run	sqlite3 -list :memory: 'select 6*7'	^42
+sys-libs/gpm	run	gpm -v 2>&1 | head -n 1	^gpm \d
+games-misc/bsd-games	run	echo abc | caesar 1	^bcd
+app-misc/figlet	run	figlet -v | head -n 1	FIGlet Copyright
+app-misc/cmatrix	run	cmatrix -V | head -n 1	CMatrix version
+app-misc/sl	run	TERM=linux timeout 3 sl | od -c | head -n 1	^0000000\s+033
+games-roguelike/rl144	run	timeout 20 rl144 --dump --seed 1 | head -n 2	^seed=1
+x11-base/monolith-xserver	covered	mode:gui
+x11-base/xorg-proto	run	test -f /usr/share/pkgconfig/xproto.pc && echo has_xproto_$((6*7))	has_xproto_42
+x11-libs/libxcb	run	test -f /usr/lib/libxcb.a && echo has_xcb_$((6*7))	has_xcb_42
+x11-libs/libX11	run	test -f /usr/lib/libX11.a && echo has_x11_$((6*7))	has_x11_42
+x11-libs/libXext	run	test -f /usr/lib/libXext.a && echo has_xext_$((6*7))	has_xext_42
+x11-terms/monolith-st	covered	mode:gui
+x11-wm/monolith-dwm	covered	mode:gui
+www-client/stele	covered	mode:stele-acid2
+=games-roguelike/nethack-3.6.7-r1	run	nethack --version 2>&1 | head -n 1	NetHack Version
+sys-apps/kmod	run	kmod --version | head -n 1	^kmod version

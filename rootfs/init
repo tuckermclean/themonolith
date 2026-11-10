@@ -101,6 +101,45 @@ wait_for_device() {
 # not via PATH). May be "/bin/kmod modprobe" — used unquoted so it word-splits.
 MODPROBE=
 
+persist_is_blk() { [ -b "$1" ]; }
+
+# Print the device carrying the MONOLITH_PERSIST label, or nothing. Partitions
+# are tried before whole disks, and a whole disk that has partitions is skipped:
+# a partition's superblock label also appears inside its parent disk's bytes.
+# An unpartitioned labelled disk (the `persist` mode) is still found.
+persist_scan() {
+    _ps_root="${DEV_ROOT:-/dev}"
+    _ps_pass=1
+    while [ "$_ps_pass" -le 2 ]; do
+        for _ps_dev in "$_ps_root"/vd* "$_ps_root"/sd* "$_ps_root"/nvme*n* "$_ps_root"/mmcblk* "$_ps_root"/hd*; do
+            persist_is_blk "$_ps_dev" || continue
+            _ps_name="${_ps_dev##*/}"
+            case "$_ps_name" in
+                nvme*p[0-9]*|mmcblk*p[0-9]*) _ps_part=1 ;;
+                nvme*|mmcblk*)               _ps_part=0 ;;
+                *[0-9])                      _ps_part=1 ;;
+                *)                           _ps_part=0 ;;
+            esac
+            if [ "$_ps_pass" -eq 1 ]; then
+                [ "$_ps_part" -eq 1 ] || continue
+            else
+                [ "$_ps_part" -eq 0 ] || continue
+                _ps_has=0
+                for _ps_p in "$_ps_dev"[0-9]* "$_ps_dev"p[0-9]*; do
+                    if persist_is_blk "$_ps_p"; then _ps_has=1; break; fi
+                done
+                [ "$_ps_has" -eq 0 ] || continue
+            fi
+            if cat "$_ps_dev" 2>/dev/null | tr -d '\000' 2>/dev/null | grep -q MONOLITH_PERSIST 2>/dev/null; then
+                echo "$_ps_dev"
+                return 0
+            fi
+        done
+        _ps_pass=$((_ps_pass + 1))
+    done
+    return 0
+}
+
 coldplug_once() {
     [ -n "$MODPROBE" ] || return 0
     find /sys -name modalias -type f 2>/dev/null | while read -r _ma; do
@@ -459,14 +498,11 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             #     cat closed, so a matching disk is read only up to the label, not
             #     slurped whole. A fresh persist disk carries the string only in
             #     its (backup) superblock label, so a hit means the right disk.
+            #   * persist_scan tries partitions before whole disks and skips a whole
+            #     disk that has partitions: a partition's label also sits inside
+            #     its parent disk, which cannot be mounted as the filesystem.
             if [ -z "$PERSIST_DEV" ]; then
-                for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
-                    [ -b "$dev" ] || continue
-                    if cat "$dev" 2>/dev/null | tr -d '\000' 2>/dev/null | grep -q MONOLITH_PERSIST 2>/dev/null; then
-                        PERSIST_DEV="$dev"
-                        break
-                    fi
-                done
+                PERSIST_DEV=$(persist_scan)
             fi
             [ -n "$PERSIST_DEV" ] && break
             _persist_tries=$((_persist_tries + 1))
@@ -479,9 +515,17 @@ if [ "$OVERLAY_MODE" = "1" ]; then
         # and what label each superblock actually read — instead of a guess.
         if [ -z "$PERSIST_DEV" ]; then
             for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
-                [ -b "$dev" ] || continue
+                persist_is_blk "$dev" || continue
                 if cat "$dev" 2>/dev/null | tr -d '\000' 2>/dev/null | grep -q MONOLITH_PERSIST 2>/dev/null; then
-                    msg "persist DIAG: $dev DID contain MONOLITH_PERSIST (but was not selected?!)"
+                    _dg_has=0
+                    for _dg_p in "$dev"[0-9]* "$dev"p[0-9]*; do
+                        if persist_is_blk "$_dg_p"; then _dg_has=1; break; fi
+                    done
+                    if [ "$_dg_has" -eq 1 ]; then
+                        msg "persist DIAG: $dev contains MONOLITH_PERSIST but was skipped: a whole disk with partitions"
+                    else
+                        msg "persist DIAG: $dev contains MONOLITH_PERSIST"
+                    fi
                 else
                     msg "persist DIAG: $dev scanned, no MONOLITH_PERSIST label"
                 fi

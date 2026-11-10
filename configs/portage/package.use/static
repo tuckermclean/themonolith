@@ -241,9 +241,12 @@ app-admin/sysklogd static
 # dcron - minimal cron daemon
 sys-process/dcron static
 
-# e2fsprogs - ext2/3/4 tools (mkfs, fsck, tune2fs)
-# tools USE flag builds static exes linked against libext2fs.so → linker error; drop it
-sys-fs/e2fsprogs static static-libs -nls
+# e2fsprogs - ext2/3/4 tools (mkfs.ext4, mke2fs, e2fsck, tune2fs)
+# tools is on so the disc carries mke2fs and e2fsck. The ebuild enables
+# --enable-elf-shlibs, which would link the tools against libext2fs.so; the
+# env file e2fsprogs-static-tools.conf (package.env/e2fsprogs) adds
+# --disable-elf-shlibs so they link against libext2fs.a, statically.
+sys-fs/e2fsprogs static tools static-libs -nls
 
 # shadow - passwd, useradd, etc.; libsubid install location fixed via shadow-libdir.conf
 sys-apps/shadow static -static-libs -pam -cracklib

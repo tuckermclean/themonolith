@@ -1,0 +1,7 @@
+# fixture smoke table
+sys-apps/busybox	run	busybox --help	BusyBox v
+net-misc/iperf:3	run	iperf3 --version	iperf 3
+<sys-fs/ncdu-2	covered	mode:bios
+=games-roguelike/nethack-3.6.7-r1	covered	test:scripts/tests/monolith.test.sh
+sys-libs/zlib	covered	atom:sys-apps/busybox
+app-misc/foo	untestable	

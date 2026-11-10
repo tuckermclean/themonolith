@@ -473,7 +473,16 @@ mkdir -p "${SYSROOT_DIR}"
 # Exclude crossdev build infrastructure — these are toolchain inputs, not runtime content:
 #   usr/include/         kernel UAPI + musl + package dev headers (linux-headers, musl crossdev pkgs)
 #   usr/i486-linux-musl/ nested crossdev sysroot created by some packages (e.g. binutils)
-#   usr/bin/i486-linux-musl-* crossdev wrapper symlinks (binutils-config eselect, not runtime tools)
+#   usr/bin/i486-linux-musl-* crossdev wrapper symlinks (binutils-config eselect)
+# Kept, because the disc ships binutils (the 16 tools listed below). Their link chain is
+#   /usr/bin/<tool> -> i486-linux-musl-<tool> -> /usr/i486-linux-musl/bin/<tool>
+#     -> /usr/i486-linux-musl/binutils-bin/<ver>/<tool>
+# so the export keeps usr/i486-linux-musl/binutils-bin/ whole, usr/i486-linux-musl/bin/<tool> and
+# usr/bin/i486-linux-musl-<tool>. rsync takes the first matching rule and never descends into an
+# excluded directory, so the includes come first, each parent directory before what is below it
+# (binutils-bin/*** is the directory and everything below it); the excludes of the rest of
+# usr/i486-linux-musl/ and usr/bin/i486-linux-musl-* follow (a single * does not cross a slash).
+# Keep this list in sync with extract-packages.sh. Also excluded:
 #   etc/portage/         portage build config synced into crossdev sysroot by build-packages.sh
 #   etc/passwd, etc/group  seeded accounts for the install phases; build-rootfs.sh writes both in full
 #   usr/lib/pkgconfig/   .pc files — needed to compile against libs, not to run them
@@ -482,7 +491,43 @@ mkdir -p "${SYSROOT_DIR}"
 #   lib/libssp_nonshared.a  GCC stack-smashing protection static lib (crossdev GCC artifact)
 rsync -a \
     --exclude='/usr/include/' \
-    --exclude='/usr/i486-linux-musl/' \
+    --include='/usr/i486-linux-musl/' \
+    --include='/usr/i486-linux-musl/binutils-bin/***' \
+    --include='/usr/i486-linux-musl/bin/' \
+    --include='/usr/i486-linux-musl/bin/addr2line' \
+    --include='/usr/i486-linux-musl/bin/ar' \
+    --include='/usr/i486-linux-musl/bin/as' \
+    --include='/usr/i486-linux-musl/bin/c++filt' \
+    --include='/usr/i486-linux-musl/bin/elfedit' \
+    --include='/usr/i486-linux-musl/bin/gprof' \
+    --include='/usr/i486-linux-musl/bin/ld' \
+    --include='/usr/i486-linux-musl/bin/ld.bfd' \
+    --include='/usr/i486-linux-musl/bin/nm' \
+    --include='/usr/i486-linux-musl/bin/objcopy' \
+    --include='/usr/i486-linux-musl/bin/objdump' \
+    --include='/usr/i486-linux-musl/bin/ranlib' \
+    --include='/usr/i486-linux-musl/bin/readelf' \
+    --include='/usr/i486-linux-musl/bin/size' \
+    --include='/usr/i486-linux-musl/bin/strings' \
+    --include='/usr/i486-linux-musl/bin/strip' \
+    --include='/usr/bin/i486-linux-musl-addr2line' \
+    --include='/usr/bin/i486-linux-musl-ar' \
+    --include='/usr/bin/i486-linux-musl-as' \
+    --include='/usr/bin/i486-linux-musl-c++filt' \
+    --include='/usr/bin/i486-linux-musl-elfedit' \
+    --include='/usr/bin/i486-linux-musl-gprof' \
+    --include='/usr/bin/i486-linux-musl-ld' \
+    --include='/usr/bin/i486-linux-musl-ld.bfd' \
+    --include='/usr/bin/i486-linux-musl-nm' \
+    --include='/usr/bin/i486-linux-musl-objcopy' \
+    --include='/usr/bin/i486-linux-musl-objdump' \
+    --include='/usr/bin/i486-linux-musl-ranlib' \
+    --include='/usr/bin/i486-linux-musl-readelf' \
+    --include='/usr/bin/i486-linux-musl-size' \
+    --include='/usr/bin/i486-linux-musl-strings' \
+    --include='/usr/bin/i486-linux-musl-strip' \
+    --exclude='/usr/i486-linux-musl/bin/*' \
+    --exclude='/usr/i486-linux-musl/*' \
     --exclude='/usr/bin/i486-linux-musl-*' \
     --exclude='/etc/portage/' \
     --exclude='/etc/passwd' \

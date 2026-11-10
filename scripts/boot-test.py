@@ -27,6 +27,13 @@ was coldplug-loaded from the initrd before the squashfs was mounted:
           coldplug loads modules for hardware that's present, not
           unconditionally.
 
+Serial networking (G01) — see build_serial_net_cmd / run_serial_net:
+  serial-net  Two guests joined by a -chardev socket serial link on ttyS1: SLIP
+              (slattach) and PPP (pppd, dialled through chat against a fake modem)
+              each carry a ping across the link; a chat expecting a string that
+              never arrives fails; guest A runs dropbear on request and a host
+              `ssh -i key ... id` over a forwarded port logs in, with an ECDSA host key.
+
 THE CLOCK LANDMINE (Monolith UX Pass Task 2) — both directions of the
 /etc/init.d/S45monolith-time boot hook, via QEMU's `-rtc base=<date>`
 (--rtc-date; see build_clock_epoch_cmd/build_clock_1996_cmd):
@@ -729,7 +736,7 @@ def build_persist_cmd(args):
 # Boot-loader navigation
 # ---------------------------------------------------------------------------
 
-def select_isolinux_label(child, label_line, prompt_timeout=90):
+def select_isolinux_label(child, label_line, prompt_timeout=90, pace=0):
     """
     Wait for ISOLINUX's `boot:` prompt (visible over serial thanks to
     SeaBIOS's -nographic VGA-text-to-serial mirroring, which covers the
@@ -738,6 +745,9 @@ def select_isolinux_label(child, label_line, prompt_timeout=90):
     `label_line` may be "serial" or "serial toram" — SYSLINUX appends any
     text after the label name to that label's own APPEND line, which is how
     we exercise `toram` even though isolinux.cfg has no `toram` LABEL.
+
+    `pace` (seconds) sends the line one character at a time: ISOLINUX polls the
+    emulated UART slowly under TCG and drops the tail of a long line sent at once.
     """
     try:
         child.expect_exact(ISOLINUX_PROMPT, timeout=prompt_timeout)
@@ -747,7 +757,13 @@ def select_isolinux_label(child, label_line, prompt_timeout=90):
             f"WARNING: did not see ISOLINUX '{ISOLINUX_PROMPT}' prompt within "
             f"{prompt_timeout}s — sending label blindly as a fallback"
         )
-    child.sendline(label_line)
+    if pace:
+        for ch in label_line:
+            child.send(ch)
+            time.sleep(pace)
+        child.send("\r")
+    else:
+        child.sendline(label_line)
 
 
 def select_grub_serial_entry(child):
@@ -2226,6 +2242,208 @@ def run_nat(child, args):
     return ok
 
 
+# serial-net: two guests joined by a serial link, plus dropbear on a forwarded port.
+# Both guests have the link on ttyS1 (a -chardev socket; ttyS0 stays the console). The
+# link joins two guests rather than a pty pair in one: with both ends in one guest every
+# link address is local, Linux routes a ping to a local address through lo, and no packet
+# would cross the link. Guest A (the child main spawns) also has a user-mode NIC whose
+# host port forwards to guest port 22.
+def _serial_net_state(args):
+    """The scratch directory (link socket, ssh key) and the forwarded port, made once per args."""
+    st = getattr(args, "_serial_net_state", None)
+    if st is None:
+        import tempfile
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        st = {"dir": tempfile.mkdtemp(prefix="serial-net."), "port": port}
+        args._serial_net_state = st
+    return st
+
+
+def build_serial_net_cmd(args):
+    # Guest A: build_bios_cmd's guest, plus the link server on ttyS1 and one e1000 user-net NIC with
+    # 127.0.0.1:PORT -> guest :22 (the host ssh login).
+    st = _serial_net_state(args)
+    return build_bios_cmd(args) + [
+        "-chardev", f"socket,id=link,path={st['dir']}/link.sock,server=on,wait=off",
+        "-serial", "chardev:link",
+        "-nic", f"user,model=e1000,hostfwd=tcp:127.0.0.1:{st['port']}-:22",
+    ]
+
+
+def build_serial_net_peer_cmd(args):
+    # Guest B: build_bios_cmd's guest, plus the link client on ttyS1 and no NIC.
+    st = _serial_net_state(args)
+    return build_bios_cmd(args) + [
+        "-chardev", f"socket,id=link,path={st['dir']}/link.sock",
+        "-serial", "chardev:link",
+        "-nic", "none",
+    ]
+
+
+def _serial_net_drain(child):
+    # An idle guest's console output backs up in its pexpect pty and can stall QEMU (as in run_nat).
+    try:
+        while True:
+            child.read_nonblocking(size=65536, timeout=0)
+    except Exception:
+        pass
+
+
+def _serial_net_ping_ok(peer_addr):
+    """A ping that got a reply from the peer and every reply it sent for."""
+    return regex_matches(rf"(?s)64 bytes from {re.escape(peer_addr)}.*3 packets transmitted, 3 (packets )?received")
+
+
+def _serial_net_host(cmd, timeout):
+    """Run a command on the host (the toolbox): (exit_code, output)."""
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           timeout=timeout, text=True, errors="replace")
+        return r.returncode, r.stdout
+    except FileNotFoundError as exc:
+        return 127, str(exc)
+    except subprocess.TimeoutExpired:
+        return 124, f"timed out after {timeout}s"
+
+
+def run_serial_net(child, args):
+    # child == guest A (spawned by main via build_serial_net_cmd).
+    results = []
+    st = _serial_net_state(args)
+    peer = None
+    try:
+        _boot_isolinux_to_shell(child, args)
+
+        # ---- dropbear on request, host `ssh -i ... id`, ECDSA host key (G01-AC-5) ----
+        key = os.path.join(st["dir"], "id_ecdsa")
+        rc, out = _serial_net_host(["ssh-keygen", "-q", "-t", "ecdsa", "-b", "256", "-N", "", "-f", key], 60)
+        if rc != 0:
+            results.append(("host: ssh-keygen makes a client key", False, f"exit {rc}: {out.strip()[-300:]}"))
+        else:
+            pub = open(key + ".pub").read().strip()
+            results.append(("guest: eth0 has its user-net address", *run_check(
+                child, "eth0 address",
+                "for i in $(seq 1 60); do ip -4 -o addr show dev eth0 | grep -q 10.0.2. && break; sleep 1; done; "
+                "ip -4 -o addr show dev eth0 | grep -o 'inet [0-9.]*'", regex_matches(r"inet 10\.0\.2\.\d+"), timeout=90)))
+            results.append(("guest: root authorizes the host's key", *run_check(
+                child, "authorized_keys",
+                f"mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo '{pub}' > /root/.ssh/authorized_keys "
+                "&& chmod 600 /root/.ssh/authorized_keys && echo keys=$(wc -l < /root/.ssh/authorized_keys)", regex_matches(r"keys=1\b"))))
+            results.append(("guest: the host key on disk is ECDSA", *run_check(
+                child, "host key files", "ls /etc/dropbear; dropbearkey -y -f /etc/dropbear/dropbear_ecdsa_host_key",
+                regex_matches(r"dropbear_ecdsa_host_key[\s\S]*ecdsa-sha2-nistp256"))))
+            results.append(("guest: no RSA or ed25519 host key (the README names ECDSA)", *run_check(
+                child, "other host keys", "ls /etc/dropbear", regex_absent(r"dropbear_(rsa|ed25519|dss)_host_key"))))
+            results.append(("guest: dropbear starts on request", *run_check(
+                child, "dropbear",
+                "echo before=$(netstat -ltn | grep -c ':22 '); dropbear; for i in $(seq 1 20); do netstat -ltn | grep -q ':22 ' && break; sleep 1; done; "
+                "netstat -ltn | grep ':22 '", regex_matches(r"before=0\b[\s\S]*(0\.0\.0\.0:22\s.*LISTEN|:::22\s.*LISTEN)"), timeout=60)))
+            _serial_net_drain(child)
+            known = os.path.join(st["dir"], "known_hosts")
+            ssh = ["ssh", "-i", key, "-p", str(st["port"]), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+                   "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={known}",
+                   "-o", "HostKeyAlgorithms=ecdsa-sha2-nistp256", "-o", "ConnectTimeout=120",
+                   "root@127.0.0.1", "id"]
+            log("host: " + " ".join(ssh))
+            rc, out = 1, ""
+            for _ in range(3):
+                rc, out = _serial_net_host(ssh, 240)
+                if rc == 0:
+                    break
+                time.sleep(5)
+                _serial_net_drain(child)
+            results.append(("host: ssh -i key root@guest id runs", rc == 0 and "uid=0(root)" in out,
+                            f"exit {rc}: {out.strip()[-400:]}"))
+
+        # ---- guest B: the other end of the serial link ----
+        # B's addresses (10.1.1.2 for SLIP, 10.2.2.2 for PPP) are not A's, so a reply to A's ping can only have
+        # crossed the serial link.
+        peer_cmd = build_serial_net_peer_cmd(args)
+        peer = pexpect.spawn(peer_cmd[0], peer_cmd[1:], timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace")
+        if args.log_file:
+            peer.logfile = open(args.log_file + ".peer", "w", encoding="utf-8", errors="replace")
+        _boot_isolinux_to_shell(peer, args)
+        _serial_net_drain(child)
+
+        # SLIP: slattach (busybox's applet) binds sl0 to ttyS1 on each guest; A pings B across it.
+        results.append(("B: slattach brings up sl0", *run_check(
+            peer, "B slattach",
+            "busybox slattach -p slip /dev/ttyS1 > /tmp/slattach.log 2>&1 & echo $! > /tmp/slattach.pid; "
+            "for i in $(seq 1 20); do ifconfig sl0 10.1.1.2 pointopoint 10.1.1.1 up 2>/dev/null && break; sleep 1; done; "
+            "ifconfig sl0 | grep -o 'inet [0-9.]*'", regex_matches(r"inet 10\.1\.1\.2\b"), timeout=60)))
+        results.append(("A: slattach brings up sl0", *run_check(
+            child, "A slattach",
+            "busybox slattach -p slip /dev/ttyS1 > /tmp/slattach.log 2>&1 & echo $! > /tmp/slattach.pid; "
+            "for i in $(seq 1 20); do ifconfig sl0 10.1.1.1 pointopoint 10.1.1.2 up 2>/dev/null && break; sleep 1; done; "
+            "ifconfig sl0 | grep -o 'inet [0-9.]*'", regex_matches(r"inet 10\.1\.1\.1\b"), timeout=60)))
+        _serial_net_drain(peer)
+        results.append(("A: ping across SLIP reaches B (10.1.1.2 is not an address of A)", *run_check(
+            child, "SLIP ping",
+            "! ip -4 -o addr | grep -qE 'inet 10\\.1\\.1\\.2[ /]' && ping -c 3 -W 5 10.1.1.2",
+            _serial_net_ping_ok("10.1.1.2"), timeout=60)))
+        results.append(("A: sl0 carried the packets (TX counter)", *run_check(
+            child, "SLIP counters", "echo txpackets=$(cat /sys/class/net/sl0/statistics/tx_packets)",
+            regex_matches(r"txpackets=[1-9][0-9]*"))))
+        for node in (peer, child):
+            run_check(node, "SLIP down", "kill $(cat /tmp/slattach.pid); sleep 1; ifconfig sl0 down; true", exit_code_only(), timeout=30)
+        _serial_net_drain(peer)
+
+        # chat expecting a string that never arrives must FAIL: the check passes only when chat exits non-zero
+        # (not 126 or 127) after really waiting out its timeout on the quiet serial line (it sends nothing before
+        # the string arrives, so the peer's line stays clean for the PPP dial below). chat's exit 3 is its timeout.
+        def chat_fails(exit_code, output):
+            m = re.search(r"chat_rc=(\d+) waited=(\d+)", output)
+            if not m:
+                return False, f"no result line from the chat run: {output.strip()[-300:]}"
+            rc, waited = int(m.group(1)), int(m.group(2))
+            if rc in (0, 126, 127):
+                return False, f"expected chat to fail on a string that never arrives; exit {rc}, output: {output.strip()[-300:]}"
+            if rc != 3 or waited < 3:
+                return False, f"expected chat's timeout (exit 3 after 3s), got exit {rc} after {waited}s: {output.strip()[-300:]}"
+            return True, f"chat exited {rc} after {waited}s"
+        results.append(("A: chat expecting a string that never arrives fails (non-zero exit)", *run_check(
+            child, "chat never",
+            "t0=$(date +%s); chat -t 3 NEVER x < /dev/ttyS1 > /dev/ttyS1 2> /tmp/chat-never.err; rc=$?; "
+            "cat /tmp/chat-never.err; echo chat_rc=$rc waited=$(( $(date +%s) - t0 ))",
+            chat_fails, timeout=40)))
+
+        # PPP through chat against a fake modem. B plays the modem on ttyS1: answers AT with OK and ATD with
+        # CONNECT, then runs pppd on the line. A dials with pppd, whose connect script is chat.
+        modem = ("( stty -F /dev/ttyS1 115200 raw -echo icrnl; exec 3<>/dev/ttyS1; read -r l <&3; printf 'OK\\r\\n' >&3; "
+                 "read -r l <&3; printf 'CONNECT\\r\\n' >&3; exec 3>&-; "
+                 "exec pppd /dev/ttyS1 115200 noauth local nodetach 10.2.2.2:10.2.2.1 logfile /tmp/pppd.log ) "
+                 "> /tmp/modem.log 2>&1 &")
+        run_check(peer, "B fake modem", modem + " sleep 1; true", exit_code_only(), timeout=30)
+        results.append(("A: pppd dials through chat and brings up ppp0", *run_check(
+            child, "A pppd",
+            "pppd /dev/ttyS1 115200 noauth local logfile /tmp/pppd.log 10.2.2.1:10.2.2.2 "
+            "connect \"chat -t 60 '' AT OK ATD5551212 CONNECT\"; "
+            "for i in $(seq 1 90); do ifconfig ppp0 2>/dev/null | grep -q 10.2.2.2 && break; sleep 1; done; "
+            "ifconfig ppp0 | grep -o 'destination [0-9.]*' || tail -n 30 /tmp/pppd.log", regex_matches(r"destination 10\.2\.2\.2\b"), timeout=150)))
+        _serial_net_drain(peer)
+        results.append(("A: ping across PPP reaches B (10.2.2.2 is not an address of A)", *run_check(
+            child, "PPP ping",
+            "! ip -4 -o addr | grep -qE 'inet 10\\.2\\.2\\.2[ /]' && ping -c 3 -W 5 10.2.2.2",
+            _serial_net_ping_ok("10.2.2.2"), timeout=60)))
+        results.append(("B: ppp0 is up with its own address", *run_check(
+            peer, "B ppp0", "ifconfig ppp0 | grep -o 'inet [0-9.]*'", regex_matches(r"inet 10\.2\.2\.2\b"))))
+    finally:
+        if peer is not None:
+            try:
+                peer.close(force=True)
+            except Exception:
+                pass
+        shutil.rmtree(st["dir"], ignore_errors=True)
+        args._serial_net_state = None  # a launch retry gets a fresh scratch dir and link socket
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
 def _persist_boot_to_shell(child, args, suffix=""):
     """Shared milestone sequence for both persist-mode boots."""
     select_isolinux_label(child, "serial persist")
@@ -2344,6 +2562,352 @@ def run_persist(child, args):
     return ok1 and ok2
 
 
+# ---------------------------------------------------------------------------
+# persist-init: the three-boot life of a blank disk (host sfdisk, in-guest
+# `monolith-persist init`, persist, unclean kill, persist again, no disk)
+# ---------------------------------------------------------------------------
+
+PERSIST_INIT_CMD = "monolith-persist init --yes /dev/vda1 --swap 16"
+PERSIST_FALLBACK_WARNING = "no MONOLITH_PERSIST partition found"
+
+
+def make_blank_partitioned_disk(path, size_mb=PERSIST_DISK_SIZE_MB):
+    """
+    A blank raw disk with one Linux partition (a DOS label, partition 1 spanning
+    the disk) made host-side with sfdisk: what a user has before the first
+    `monolith-persist init`. The partition holds no filesystem.
+    """
+    sfdisk = require_binary("sfdisk")
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "wb") as f:
+        f.truncate(size_mb * 1024 * 1024)
+    log(f"Partitioning persist-init scratch disk: {path} ({size_mb}M, one Linux partition)")
+    subprocess.run([sfdisk, "-q", path], input="label: dos\n,,L\n", text=True, check=True)
+
+
+def build_persist_init_cmd(args):
+    make_blank_partitioned_disk(args.persist_disk)
+    return _persist_qemu_argv(args)
+
+
+def _persist_init_argv_without_disk(args):
+    argv = _persist_qemu_argv(args)
+    i = argv.index("-drive")
+    return argv[:i] + argv[i + 4:]
+
+
+def _spawn_boot(args, argv, suffix):
+    child = pexpect.spawn(
+        argv[0], argv[1:], timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace"
+    )
+    if args.log_file:
+        child.logfile = open(args.log_file + suffix, "w", encoding="utf-8", errors="replace")
+    return child
+
+
+def _close_boot(child, args):
+    if child.isalive():
+        try:
+            child.close(force=True)
+        except Exception:
+            pass
+    if args.log_file and getattr(child, "logfile", None):
+        try:
+            child.logfile.close()
+        except Exception:
+            pass
+
+
+def _boot_to_shell(child, args, label_line, note):
+    select_isolinux_label(child, label_line)
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, f"initramfs /init started ({note})")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, f"squashfs+overlay mounted ({note})")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, f"pivot_root complete ({note})")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, f"sysvinit rcS started ({note})")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, f"sysvinit rcS completed ({note})")
+    wait_for_shell(child)
+
+
+def run_persist_init(child, args):
+    """
+    Boot 1 (`child`, label serial, no persist): the disk is a blank partition
+    /dev/vda1; `monolith-persist init --yes /dev/vda1 --swap 16` makes it the
+    MONOLITH_PERSIST ext4 filesystem with a 16 MB swapfile; clean poweroff.
+    Boot 2 (label serial persist): /overlay is ext4 on /dev/vda1, a marker is
+    written there, `swapon /overlay/swapfile` works, then QEMU is SIGKILLed.
+    Boot 3 (same disk): the marker survived. Boot 4 (no disk): init prints its
+    fallback warning and /overlay is tmpfs.
+    """
+    results = []
+    _boot_to_shell(child, args, "serial", "boot 1")
+    results.append(("boot 1: monolith-persist init succeeds on the blank partition",
+                    *run_check(child, "persist init", PERSIST_INIT_CMD + " && echo INIT\"\"_DONE",
+                               contains("INIT_DONE"), timeout=180)))
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    if not ok:
+        return False
+
+    marker = f"MONOLITH_PERSIST_INIT_{uuid.uuid4().hex[:8]}"
+    results = []
+    child2 = _spawn_boot(args, _persist_qemu_argv(args), ".boot2")
+    try:
+        _boot_to_shell(child2, args, "serial persist", "boot 2")
+        results.append(("boot 2: /overlay is ext4 on /dev/vda1",
+                        *run_check(child2, "overlay device",
+                                   '_d=; _t=; while read -r _a _m _f _r; do [ "$_m" = /overlay ] && { _d=$_a; _t=$_f; }; done '
+                                   '< /proc/mounts; echo "overlay_dev=$_d overlay_fstype=$_t"',
+                                   regex_matches(r"overlay_dev=/dev/vda1 overlay_fstype=ext4"))))
+        results.append(("boot 2: a marker is written to /overlay",
+                        *run_check(child2, "write marker",
+                                   f"echo {marker} > /overlay/g01-marker && sync && echo WROTE\"\"_{marker}",
+                                   contains(f"WROTE_{marker}"))))
+        results.append(("boot 2: swapon /overlay/swapfile succeeds",
+                        *run_check(child2, "swapon", "swapon /overlay/swapfile && grep -q '^/overlay/swapfile ' /proc/swaps && echo SWAP\"\"ON_OK",
+                                   contains("SWAPON_OK"), timeout=60)))
+        ok = report_results(results)
+        log("persist-init: killing QEMU uncleanly (SIGKILL, no poweroff)")
+    finally:
+        _close_boot(child2, args)
+    if not ok:
+        return False
+
+    results = []
+    child3 = _spawn_boot(args, _persist_qemu_argv(args), ".boot3")
+    try:
+        _boot_to_shell(child3, args, "serial persist", "boot 3")
+        results.append(("boot 3: the marker survived the unclean kill",
+                        *run_check(child3, "read marker", "cat /overlay/g01-marker",
+                                   contains(marker))))
+        ok = report_results(results)
+        poweroff_and_wait(child3)
+    finally:
+        _close_boot(child3, args)
+    if not ok:
+        return False
+
+    results = []
+    child4 = _spawn_boot(args, _persist_init_argv_without_disk(args), ".boot4")
+    try:
+        select_isolinux_label(child4, "serial persist")
+        expect_milestone(child4, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started (boot 4)")
+        expect_milestone(child4, PERSIST_FALLBACK_WARNING, args.boot_timeout,
+                         "persist fallback warning (boot 4, no disk)")
+        expect_milestone(child4, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed (boot 4)")
+        wait_for_shell(child4)
+        results.append(("boot 4: without the disk /overlay is tmpfs",
+                        *run_check(child4, "overlay fstype (no disk)", OVERLAY_FSTYPE_CMD,
+                                   contains("overlay_fstype=tmpfs"))))
+        ok = report_results(results)
+        poweroff_and_wait(child4)
+    finally:
+        _close_boot(child4, args)
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# entry: every ISOLINUX label and every GRUB menu entry boots to a shell with
+# its own parameters in /proc/cmdline
+# ---------------------------------------------------------------------------
+
+ENTRY_SERIAL_ARG = "console=ttyS0,115200n8"
+
+# Parameters each ISOLINUX label's APPEND line passes besides initrd= (scripts/build-iso.sh isolinux.cfg).
+ENTRY_ISOLINUX = {
+    "linux": [],
+    "fb": ["quiet", "vga=791"],
+    "fb800": ["quiet", "vga=788"],
+    "fb640": ["quiet", "vga=785"],
+    "vga": ["vga=ask"],
+    "serial": [ENTRY_SERIAL_ARG],
+    "debug": ["debug"],
+    "persist": ["persist"],
+    "rescue": ["rescue"],
+}
+
+# GRUB menu entries by index (scripts/build-iso.sh grub.cfg) with the parameters their linux line passes.
+ENTRY_GRUB = [
+    [],
+    ["video=efifb"],
+    [ENTRY_SERIAL_ARG],
+    ["debug"],
+    ["rescue"],
+    ["toram"],
+    ["persist"],
+]
+
+
+def build_entry_cmd(args):
+    if args.loader == "grub":
+        return build_uefi_cmd(args)
+    return build_bios_cmd(args)
+
+
+def _entry_check_cmdline(child, wanted):
+    def _v(exit_code, output):
+        m = re.search(r"[\r\n]CMDLINE=([^\r\n]*)", output)
+        if exit_code != 0 or not m:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        have = m.group(1).split()
+        missing = [w for w in wanted if w not in have]
+        if missing:
+            return False, f"/proc/cmdline lacks {missing}: {m.group(1)!r}"
+        return True, f"/proc/cmdline: {m.group(1)}"
+    return run_check(child, "/proc/cmdline", 'echo "CMDLINE=$(cat /proc/cmdline)"', _v)
+
+
+def _entry_boot_milestones(child, args, params):
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    if "rescue" in params:
+        # init hands the console to a rescue shell instead of running /sbin/init.
+        return
+    if "toram" in params:
+        expect_milestone(child, MILESTONE_TORAM_EJECTABLE, args.boot_timeout,
+                         "squashfs copied to RAM (toram engaged)")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+
+
+def _select_grub_entry(child, index, add_serial):
+    """
+    Wait for the GRUB menu on serial, move down `index` entries from the default
+    (entry 0) and boot it. An entry with no serial console is edited first:
+    `e`, down two lines to the linux line, its end, the console argument, Ctrl-X to boot.
+    """
+    down = "\x1b[B"
+    try:
+        child.expect_exact("(serial)", timeout=180)
+        log(f"GRUB menu visible on serial; selecting entry {index}")
+    except (pexpect.TIMEOUT, pexpect.EOF):
+        log("WARNING: GRUB menu not observed on serial within 180s; navigating blind")
+    time.sleep(0.5)
+    if index:
+        child.send(down * index)
+        time.sleep(0.5)
+    if not add_serial:
+        child.send("\r")
+        return
+    child.send("e")
+    time.sleep(1.5)
+    # The editor opens on the setparams line; a blank line follows it, then the linux command.
+    child.send(down * 2)
+    time.sleep(0.5)
+    child.send("\x05")  # Ctrl-E: end of the linux line
+    time.sleep(0.5)
+    child.send(" " + ENTRY_SERIAL_ARG)
+    time.sleep(0.5)
+    child.send("\x18")  # Ctrl-X: boot the edited entry
+
+
+def run_entry(child, args):
+    if args.loader == "grub":
+        if args.index is None:
+            raise BootTestError("--mode entry --loader grub needs --index")
+        params = ENTRY_GRUB[args.index]
+        name = f"GRUB entry {args.index}"
+        add_serial = ENTRY_SERIAL_ARG not in params
+        _select_grub_entry(child, args.index, add_serial)
+    elif args.loader == "isolinux":
+        if args.label is None:
+            raise BootTestError("--mode entry --loader isolinux needs --label")
+        params = ENTRY_ISOLINUX[args.label]
+        name = f"ISOLINUX label {args.label}"
+        add_serial = ENTRY_SERIAL_ARG not in params
+        select_isolinux_label(child, args.label + (" " + ENTRY_SERIAL_ARG if add_serial else ""), pace=0.1)
+        if "vga=ask" in params:
+            try:
+                child.expect_exact("SPACE", timeout=90)
+                log("vga=ask prompt seen, sending SPACE")
+                child.send(" ")
+            except (pexpect.TIMEOUT, pexpect.EOF):
+                log("WARNING: no vga=ask prompt seen; the kernel continues after its own timeout")
+    else:
+        raise BootTestError("--mode entry needs --loader isolinux|grub")
+
+    _entry_boot_milestones(child, args, params)
+    wait_for_shell(child)
+    wanted = list(params) + ([ENTRY_SERIAL_ARG] if add_serial else [])
+    results = [(f"{name}: /proc/cmdline holds {' '.join(wanted) or '(nothing extra)'}",
+                *_entry_check_cmdline(child, wanted))]
+    ok = report_results(results)
+    if "toram" in params:
+        eject_ok, eject_detail = eject_cd_and_verify(child, args.cdrom_monitor_id)
+        log(f"  [{'PASS' if eject_ok else 'FAIL'}] media ejected, system survives (toram) - {eject_detail}")
+        ok = ok and eject_ok
+    if "rescue" in params:
+        # No sysvinit runs in the rescue shell, so there is nothing to power off: QEMU is killed.
+        return ok
+    poweroff_and_wait(child)
+    return ok
+
+
+def parse_smoke_table(text):
+    """
+    The `run` rows of scripts/smoke-checks.txt as (atom, command, regex) tuples. A row is four
+    tab-separated fields: atom, kind, command, regex. Comments, blank lines and the `covered` and
+    `untestable` rows are skipped.
+    """
+    rows = []
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        f = raw.split("\t")
+        if len(f) >= 4 and f[1] == "run":
+            rows.append((f[0], f[2], f[3]))
+    return rows
+
+
+def smoke_validator(command, pattern):
+    """
+    regex_matches over the command's output only: the tty's echo of the typed command line is
+    dropped first, and a regex that matches the command line itself is a failure (it would pass
+    on the echo whatever the command printed).
+    """
+    compiled = re.compile(pattern, re.M)
+    def _v(exit_code, output):
+        if compiled.search(command):
+            return False, f"regex /{pattern}/ matches the command line itself"
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output).replace("\r", "")
+        shown = "\n".join(l for l in plain.split("\n") if command not in l)
+        if not compiled.search(shown):
+            return False, f"expected /{pattern}/ to match output, got: {output.strip()[-500:]}"
+        return True, "ok"
+    return _v
+
+
+def run_smoke(child, args):
+    """G01-AC-6: boot once, then run every `run` row of scripts/smoke-checks.txt in the guest."""
+    select_isolinux_label(child, "serial")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+    table = os.path.join(os.path.dirname(os.path.abspath(__file__)), "smoke-checks.txt")
+    with open(table, encoding="utf-8") as fh:
+        rows = parse_smoke_table(fh.read())
+    if not rows:
+        raise BootTestError(f"{table} has no run rows")
+    results = []
+    for atom, command, pattern in rows:
+        ok, detail = run_check(child, atom, command, smoke_validator(command, pattern), timeout=60)
+        results.append((atom, ok, detail))
+        log(f"  [{'PASS' if ok else 'FAIL'}] {atom} — {detail}")
+        if not ok and detail.startswith("timed out"):
+            # A hung command would swallow every later check: interrupt it and wait for the shell again.
+            child.sendcontrol("c")
+            wait_for_shell(child)
+    log(f"smoke: {sum(1 for r in results if r[1])} of {len(results)} rows passed")
+    ok = all(r[1] for r in results)
+    poweroff_and_wait(child)
+    return ok
+
+
 MODE_BUILDERS = {
     "bios": build_bios_cmd,
     "uefi": build_uefi_cmd,
@@ -2362,6 +2926,10 @@ MODE_BUILDERS = {
     "clock-epoch": build_clock_epoch_cmd,
     "clock-1996": build_clock_1996_cmd,
     "persist": build_persist_cmd,
+    "persist-init": build_persist_init_cmd,
+    "entry": build_entry_cmd,
+    "serial-net": build_serial_net_cmd,
+    "smoke": build_bios_cmd,
 }
 
 MODE_RUNNERS = {
@@ -2382,6 +2950,10 @@ MODE_RUNNERS = {
     "clock-epoch": run_clock_epoch,
     "clock-1996": run_clock_1996,
     "persist": run_persist,
+    "persist-init": run_persist_init,
+    "entry": run_entry,
+    "serial-net": run_serial_net,
+    "smoke": run_smoke,
 }
 
 MODE_DEFAULT_RAM = {
@@ -2402,6 +2974,10 @@ MODE_DEFAULT_RAM = {
     "clock-epoch": 64,  # same bios/pc machine as "bios", no extra RAM pressure
     "clock-1996": 64,
     "persist": 128,  # BIOS/pc + one extra virtio-blk-pci disk; no networking needed
+    "persist-init": 128,  # as persist; mkfs.ext4 and the swapfile run in the guest
+    "entry": 512,  # the toram entry copies the squashfs into RAM; the others share the setting
+    "serial-net": 256,  # two guests at this size, as nat; dropbear's key exchange and pppd run in them
+    "smoke": 256,  # as bios at 256M: perl, gdb and the like run in the guest
 }
 
 
@@ -2458,6 +3034,12 @@ def parse_args():
              "Created fresh (truncated + mkfs.ext4 -L MONOLITH_PERSIST) by build_persist_cmd "
              "before boot 1; both boots in run_persist attach this same file.",
     )
+    p.add_argument("--loader", choices=["isolinux", "grub"], default=None,
+                   help="Boot loader whose entry --mode entry boots (isolinux: BIOS, grub: UEFI)")
+    p.add_argument("--label", choices=sorted(ENTRY_ISOLINUX), default=None,
+                   help="ISOLINUX label for --mode entry --loader isolinux")
+    p.add_argument("--index", type=int, choices=range(len(ENTRY_GRUB)), default=None,
+                   help="GRUB menu entry index (0-based) for --mode entry --loader grub")
     return p.parse_args()
 
 
