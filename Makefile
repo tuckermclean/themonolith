@@ -448,11 +448,11 @@ push-distfiles:
 		[ "$$got" = "$$want" ] || { echo "push-distfiles: the layer of $$ref is $$got, not DISTFILES_DIGEST $$want"; exit 1; }; \
 		echo "push-distfiles: $$ref holds $$got"'
 
-# P01-AC-2 (b): rc1's ISO still verifies against the predecessor's workflow and not against this repository's.
+# P01-AC-2 (b): a 404 from the attestations endpoint (no attestation for the digest) counts as "does not verify"; other HTTP statuses and network/auth errors fail. rc1's ISO still verifies against the predecessor's workflow and not against this repository's.
 RC1_REPO ?= tuckermclean/linux-live-iso-factory
 THIS_REPO ?= tuckermclean/themonolith
 verify-rc1-attestation: fetch-rc1-iso
-	toolbox/run -e GH_TOKEN -- sh -c 'set -u; echo "$(RC1_SHA256)  $(RC1_ISO)" | sha256sum -c - || exit 1; gh attestation verify "$(RC1_ISO)" --repo $(RC1_REPO) --signer-workflow $(RC1_REPO)/.github/workflows/build.yml || { echo "verify-rc1-attestation: rc1 does not verify against $(RC1_REPO)"; exit 1; }; e=$$(mktemp); if gh attestation verify "$(RC1_ISO)" --repo $(THIS_REPO) --signer-workflow $(THIS_REPO)/.github/workflows/build.yml 2> "$$e"; then cat "$$e" >&2; echo "verify-rc1-attestation: rc1 verifies against $(THIS_REPO), which did not sign it"; exit 1; fi; cat "$$e" >&2; if grep -Eiq "HTTP [0-9]{3}|rate limit|dial tcp|no such host|i/o timeout|timed out|connection (refused|reset)|authenticat|gh auth login|GH_TOKEN|TLS|certificate" "$$e"; then echo "verify-rc1-attestation: the check against $(THIS_REPO) failed for a reason other than verification"; exit 1; fi; echo "verify-rc1-attestation: rc1 verifies against $(RC1_REPO) only"'
+	toolbox/run -e GH_TOKEN -- sh -c 'set -u; echo "$(RC1_SHA256)  $(RC1_ISO)" | sha256sum -c - || exit 1; gh attestation verify "$(RC1_ISO)" --repo $(RC1_REPO) --signer-workflow $(RC1_REPO)/.github/workflows/build.yml || { echo "verify-rc1-attestation: rc1 does not verify against $(RC1_REPO)"; exit 1; }; e=$$(mktemp); if gh attestation verify "$(RC1_ISO)" --repo $(THIS_REPO) --signer-workflow $(THIS_REPO)/.github/workflows/build.yml 2> "$$e"; then cat "$$e" >&2; echo "verify-rc1-attestation: rc1 verifies against $(THIS_REPO), which did not sign it"; exit 1; fi; cat "$$e" >&2; if grep -Eiv "^Error: HTTP 404[: ]" "$$e" | grep -Eiq "HTTP [0-9]{3}|rate limit|dial tcp|no such host|i/o timeout|timed out|connection (refused|reset)|authenticat|gh auth login|GH_TOKEN|TLS|certificate"; then echo "verify-rc1-attestation: the check against $(THIS_REPO) failed for a reason other than verification"; exit 1; fi; echo "verify-rc1-attestation: rc1 verifies against $(RC1_REPO) only"'
 
 # Compares the SBOM test-gates regenerated with rc1's.
 sbom-diff-rc1: fetch-rc1-sbom
