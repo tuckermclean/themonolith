@@ -306,6 +306,46 @@ else fail "P03-AC-4 the corrupt SBOM's pre-existing file is unchanged"; fi
 if [ "$a" = revoked ] && [ "$c" = clean ]; then ok "P03-AC-4 the other two files are updated (tagA revoked, tagC clean, new checked time)"
 else fail "P03-AC-4 the other two files are updated (tagA '$a', tagC '$c')"; fi
 
+# ---- review follow-up: unreadable prior state and a policy that did not load -------------------------
+# An unreadable prior file must never read as "no prior state" (which would write clean).
+prior_case() { # NAME ID PRIOR-FILE-CONTENT DESCRIPTION
+    dd="$TMP/$1"; mk_sbom "$dd" tagA; mk_sbom "$dd" tagB; mk_sbom "$dd" tagC
+    night tagA E; night tagB E; night tagC E
+    mkdir -p "$dd/status"
+    for t in tagA tagC; do
+        printf '{"build_tag": "%s", "status": "clean", "checked": "%s"}\n' "$t" "$OLD" > "$dd/status/$t.json"
+    done
+    printf '%s' "$3" > "$dd/status/tagB.json"; cp "$dd/status/tagB.json" "$TMP/$1.orig"
+    runmon "$dd" --policy "$POL" --base-url "$BASE"
+    a=$(jget "$(sfile "$dd" tagA)" 'd.get("checked") != "'"$OLD"'" and d.get("status")')
+    c=$(jget "$(sfile "$dd" tagC)" 'd.get("checked") != "'"$OLD"'" and d.get("status")')
+    if [ "$rc_ctl" -eq 0 ] && [ "$RC" -ne 0 ]; then ok "P03-AC-4 $4 exits non-zero (a clean run exits 0)"
+    else fail "P03-AC-4 $4 exits non-zero (rc=$RC, control rc=$rc_ctl)"; fi
+    if cmp -s "$dd/status/tagB.json" "$TMP/$1.orig" && ! grep -q '"clean"' "$dd/status/tagB.json"; then
+        ok "P03-AC-1 $4: the tag's file is left unchanged, no clean written"
+    else fail "P03-AC-1 $4: the tag's file is left unchanged, no clean written"; fi
+    if [ "$a" = clean ] && [ "$c" = clean ]; then ok "P03-AC-4 $4: the other tags are still processed"
+    else fail "P03-AC-4 $4: the other tags are still processed (tagA '$a', tagC '$c')"; fi
+    if ! grep -q 'Traceback' "$dd.out"; then ok "P03-AC-4 $4: no traceback"
+    else fail "P03-AC-4 $4: no traceback"; fi
+}
+prior_case ac1-trunc ac1 '{"build_tag": "tagB", "status": "revok' "a truncated prior file"
+prior_case ac1-array ac1 '["revoked"]' "a prior file that is JSON but not an object"
+
+# A policy that did not load must not produce clean files (check-cves.sh falls back to a default).
+policy_case() { # NAME POLICY-FILE DESCRIPTION
+    dd="$TMP/$1"; mk_sbom "$dd" tagA; mk_sbom "$dd" tagB; night tagA E; night tagB E
+    runmon "$dd" --policy "$2" --base-url "$BASE"
+    n=$(grep -l '"clean"' "$dd"/status/*.json 2>/dev/null | wc -l)
+    if [ "$rc_ctl" -eq 0 ] && [ "$RC" -ne 0 ]; then ok "P03-AC-3 $3 exits non-zero"
+    else fail "P03-AC-3 $3 exits non-zero (rc=$RC, control rc=$rc_ctl)"; fi
+    if [ "$n" -eq 0 ]; then ok "P03-AC-3 $3 writes no clean file"
+    else fail "P03-AC-3 $3 writes no clean file ($n written)"; fi
+}
+printf 'gating_severities: [Critical\n  allowlist: : {{\n' > "$TMP/pol-broken.yaml"
+policy_case ac3-broken "$TMP/pol-broken.yaml" "a --policy file that does not parse as YAML"
+policy_case ac3-missing "$TMP/no-such-policy.yaml" "a --policy file that does not exist"
+
 # ---- no other status value ever appeared ------------------------------------------------------
 nseen=$(wc -l < "$SEEN")
 bad=$(grep -v -x -e clean -e revoked "$SEEN" | sort -u | tr '\n' ' ')
