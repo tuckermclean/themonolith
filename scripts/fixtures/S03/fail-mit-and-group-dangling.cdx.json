@@ -1,0 +1,17 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {
+      "type": "library",
+      "name": "mit-and-group-dangling",
+      "version": "1",
+      "licenses": [
+        {
+          "expression": "MIT AND (NOT-A OR)"
+        }
+      ]
+    }
+  ]
+}

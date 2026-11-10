@@ -1,0 +1,9 @@
+# S03 fixture policy (AC-3): exactly MIT, BSD-3-Clause, MPL-2.0, Unicode-3.0, Zlib.
+allowed_spdx:
+  - MIT
+  - BSD-3-Clause
+  - MPL-2.0
+  - Unicode-3.0
+  - Zlib
+denied_spdx: []
+gentoo_to_spdx: {}
