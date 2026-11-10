@@ -1,0 +1,17 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {
+      "type": "application",
+      "name": "games-roguelike/rl144",
+      "version": "0.1.0_p20260805-r2",
+      "licenses": [
+        {
+          "expression": "MIT AND BSD-3-Clause AND MIT AND MPL-2.0 AND Unicode-3.0 AND Zlib AND (0BSD OR Apache-2.0 OR MIT OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT OR Apache-2.0 OR LGPL-2.1-or-later OR MIT OR Apache-2.0 OR MIT OR Apache-2.0 OR MIT OR Zlib OR MIT OR Unlicense)"
+        }
+      ]
+    }
+  ]
+}

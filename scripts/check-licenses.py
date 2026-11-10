@@ -68,9 +68,11 @@ def parse_portage_expr(expr: str) -> list:
     licenses allowed (disjunctive normal form).
 
     Portage grammar (relevant subset):
-      expr     := term+
+      expr     := term+          -- terms may be joined by AND / OR
       term     := '||' '(' expr ')'    -- disjunctive group
+               |  '(' expr ')'         -- bare group, crossed with its siblings
                |  identifier           -- single license (conjunctive with siblings)
+                                       -- 'A WITH B' is one identifier
 
     Examples:
       "MIT"                     → [["MIT"]]
@@ -87,6 +89,20 @@ def parse_portage_expr(expr: str) -> list:
     tokens = re.findall(r"\|\||[()]|[^\s()|]+", expr)
     if not tokens:
         return [[expr]]
+
+    # SPDX "A WITH B" is one licence: join it into a single token.
+    ops = ("(", ")", "||", "AND", "OR", "WITH")
+    joined = []
+    i = 0
+    while i < len(tokens):
+        if (tokens[i] not in ops and tokens[i + 1:i + 2] == ["WITH"]
+                and i + 2 < len(tokens) and tokens[i + 2] not in ops):
+            joined.append(f"{tokens[i]} WITH {tokens[i + 2]}")
+            i += 3
+        else:
+            joined.append(tokens[i])
+            i += 1
+    tokens = joined
 
     try:
         result = _parse_alternatives(tokens, 0)
@@ -152,6 +168,7 @@ def _parse_alternatives(tokens: list, pos: int) -> tuple:
     # Start with one empty conjunction (the "current" running conjunction)
     current_conjunctions = [[]]  # list of running conjunctions
     completed_alternatives = []  # alternatives finished by OR operators
+    saw_or = False  # an OR was seen: empty alternatives are dropped at the end
 
     while pos < len(tokens):
         tok = tokens[pos]
@@ -184,9 +201,9 @@ def _parse_alternatives(tokens: list, pos: int) -> tuple:
             inner_alts, pos = _parse_alternatives(tokens, pos)
             if pos < len(tokens) and tokens[pos] == ")":
                 pos += 1  # consume ")"
-            # Bare group — treat as conjunctive (flatten all inner licenses)
-            inner_flat = [lic for alt in inner_alts for lic in alt]
-            current_conjunctions = [cur + inner_flat for cur in current_conjunctions]
+            # Bare group — cross its alternatives with the running conjunctions
+            current_conjunctions = [cur + inner for cur in current_conjunctions
+                                    for inner in (inner_alts or [[]])]
 
         elif tok == "AND":
             # SPDX conjunctive operator — same semantics as a space; skip it
@@ -197,6 +214,7 @@ def _parse_alternatives(tokens: list, pos: int) -> tuple:
             # alternatives and start a fresh conjunction set
             completed_alternatives.extend(current_conjunctions)
             current_conjunctions = [[]]
+            saw_or = True
             pos += 1
 
         else:
@@ -204,7 +222,10 @@ def _parse_alternatives(tokens: list, pos: int) -> tuple:
             current_conjunctions = [cur + [tok] for cur in current_conjunctions]
             pos += 1
 
-    return completed_alternatives + current_conjunctions, pos
+    result = completed_alternatives + current_conjunctions
+    if saw_or:
+        result = [alt for alt in result if alt]  # a dangling OR adds nothing
+    return result, pos
 
 
 def extract_license_string(component: dict):

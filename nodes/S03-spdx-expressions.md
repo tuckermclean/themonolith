@@ -28,7 +28,7 @@ The grammar is SPDX's license expression syntax (SPDX specification, Annex D): `
 - **Kept:** `scripts/tests/check-licenses.test.sh` (S02) passes unchanged.
 - **Added:** `scripts/tests/check-licenses-spdx.test.sh` (AC-1 to AC-3), offline in the toolbox. It imports `check-licenses.py` for `parse_portage_expr` (AC-1), and runs the script on small CycloneDX SBOMs and policies under `scripts/fixtures/S03/` (AC-2, AC-3). One of those SBOMs holds rl144's expression from Build run 42721213707, copied verbatim.
 - **Baseline:** against `main`'s `check-licenses.py` (S02's):
-  - the `WITH`, bare-group `OR` and dangling-`OR` cases of AC-1 fail; its "as before" cases pass;
+  - the `WITH`, bare-group `OR` and dangling-`OR` cases of AC-1 fail, except `MIT AND (NOT-A OR)`, which main's flattening of bare groups already reads as `[["MIT", "NOT-A"]]` (the case guards change 2 against bringing change 3's defect into groups); its "as before" cases pass;
   - in AC-2, every pass case fails, and every fail case fails except `NOT-A OR`, which passes through its empty alternative (change 3's defect);
   - in AC-3, the expression fails with both policies.
 

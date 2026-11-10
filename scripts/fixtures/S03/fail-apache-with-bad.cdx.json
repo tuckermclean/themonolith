@@ -1,0 +1,17 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {
+      "type": "library",
+      "name": "apache-with-bad",
+      "version": "1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH NOT-AN-EXCEPTION"
+        }
+      ]
+    }
+  ]
+}
