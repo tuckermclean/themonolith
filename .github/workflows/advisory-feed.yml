@@ -1,0 +1,55 @@
+name: Advisory feed
+
+# Re-scans every release SBOM against the latest Grype vulnerability database and publishes
+# status/<tag>.json on GitHub Pages, so a release that was clean at publish time but has since
+# acquired a gating CVE is marked revoked for the boot-time advisory check.
+#
+# scripts/advisory-feed.sh gathers the inputs and runs scripts/nightly-cve-monitor.py. Pages replaces
+# the whole site on each deploy, so the scan job's tree holds every status file, changed or not.
+# The deploy job runs only when the scan succeeded: a scan that could not run publishes nothing.
+
+on:
+  schedule:
+    # 04:00 UTC daily, after the nightly Grype DB publishes settle.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: advisory-feed
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GRYPE_VERSION: '0.117.0'
+      # sha256 of grype_0.117.0_linux_amd64.tar.gz, from the release's checksums file
+      GRYPE_SHA256: '38525dab1e06f162ebaa02f94d82d1f807076b011a44180cf2777edf1a7b9c26'
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Scan the releases
+        run: make advisory-feed
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: output/advisory-feed/site
+
+  deploy:
+    needs: scan
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
