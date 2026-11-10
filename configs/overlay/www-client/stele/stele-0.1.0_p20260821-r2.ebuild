@@ -92,6 +92,21 @@ S="${WORKDIR}/stele-browser-${COMMIT}"
 # legal correctness + the dodoc below); until it lands, dodoc LICENSE is guarded.
 # The compiled-in 8x8 glyph atlas (src/text/glyphs.rs) is separately public-domain.
 LICENSE="GPL-3"
+
+# Licences of the crates linked into the binary (CRATES above, project and std).
+# Names are Gentoo names; each dependency's choice of licence is an || group.
+LICENSE+="
+	MIT
+	MPL-2.0
+	Unicode-3.0
+	ZLIB
+	|| ( 0BSD Apache-2.0 MIT )
+	|| ( Apache-2.0 Apache-2.0-with-LLVM-exceptions MIT )
+	|| ( Apache-2.0 LGPL-2.1+ MIT )
+	|| ( Apache-2.0 MIT )
+	|| ( Apache-2.0 MIT ZLIB )
+	|| ( MIT Unlicense )
+"
 SLOT="0"
 KEYWORDS="~amd64"
 
