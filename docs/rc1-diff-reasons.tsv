@@ -6,7 +6,7 @@ removed	app-misc/monolith-base@0.1.0-r6	replaced by -r7 in R01 (e608188): the ad
 added	app-misc/monolith-base@0.1.0-r7	R01 (e608188): the advisory check fails closed at the OD-1 URL and sanitises details_url
 removed	games-roguelike/rl144@0.1.0_p20260805	replaced by -r2 in R05 follow-up (26ae0d9): crate licences in LICENSE (owner Q3); built offline from CRATES since R05 (0b782ba)
 added	games-roguelike/rl144@0.1.0_p20260805-r2	R05 follow-up (26ae0d9): LICENSE covers the crate licences (owner Q3); builds offline from CRATES (R05, 0b782ba)
-removed	sys-kernel/monolith-kernel@6.12.80-r6	replaced by -r10: B02 (a2f9b3c) moved the config to savedconfig at r9, P02 (5332452) added the KBUILD_BUILD_* exports at r10
-added	sys-kernel/monolith-kernel@6.12.80-r10	B02 (a2f9b3c) kernel config as savedconfig (r9); P02 (5332452) KBUILD_BUILD_TIMESTAMP/USER/HOST/VERSION exports for reproducible builds (r10)
+removed	sys-kernel/monolith-kernel@6.12.80-r6	replaced by -r10: r7 (a53272f) legacy fbdev drivers as Tier-2 =m modules, r8 (982b50d, via B01 a617582) resolved kernel config shipped as package content, r9 B02 (a2f9b3c) savedconfig, r10 P02 (5332452) KBUILD_BUILD_* exports
+added	sys-kernel/monolith-kernel@6.12.80-r10	r7 (a53272f) legacy fbdev drivers as Tier-2 =m modules, which changes what is on the disc; r8 (982b50d, via B01 a617582) resolved kernel config shipped as package content; r9 B02 (a2f9b3c) kernel config as savedconfig; r10 P02 (5332452) KBUILD_BUILD_TIMESTAMP/USER/HOST/VERSION exports for reproducible builds
 removed	www-client/stele@0.1.0_p20260821	replaced by -r2 in R05 follow-up (26ae0d9): crate licences in LICENSE (owner Q3); built offline from CRATES since R05 (0b782ba)
 added	www-client/stele@0.1.0_p20260821-r2	R05 follow-up (26ae0d9): LICENSE covers the crate licences (owner Q3); builds offline from CRATES (R05, 0b782ba)

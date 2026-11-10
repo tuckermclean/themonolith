@@ -60,6 +60,12 @@ the same SHA-256. Only then are the checks only a release needs run, the
 files written, and the ISO and SBOM attested. The ISO is named
 `themonolith-<version>.iso` (e.g. `themonolith-0.2.0-rc1.iso`).
 
+A `workflow_dispatch` with gate=true takes the gate path (fetch, two offline
+builds, compare) and runs the non-signing release steps (package set,
+release-mode rootfs provenance, rc1-diff, allowlist report, release assets and
+SHA256SUMS). Nothing is signed (the attest steps are tag-only) and nothing is
+published (`release.yml` acts only on a tag push).
+
 ## How `build.yml` builds and `release.yml` publishes
 
 `build.yml` is the single definition of how The Monolith is built, gated and
@@ -181,8 +187,10 @@ gh attestation verify themonolith-0.1.0-rc1.iso \
 ```
 
 `make verify-rc1-attestation` runs both against rc1's ISO and passes only if
-the first verifies and the second fails with a verification error (a network,
-rate-limit or authentication error fails the target too); `rc1-attestation.yml`
+the first verifies and the second fails. The negative check passes when `gh`
+reports a verification failure or an HTTP 404 from the attestations lookup (no
+attestation in this repository); any other HTTP, network or authentication
+error fails the target; `rc1-attestation.yml`
 runs it on pull requests that touch the release or signing paths, and on
 `workflow_dispatch`.
 
