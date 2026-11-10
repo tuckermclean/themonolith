@@ -11,7 +11,7 @@ pk "$1" > "$TMP/old" || { echo "rc1-diff: invalid SBOM $1" >&2; exit 2; }
 pk "$2" > "$TMP/new" || { echo "rc1-diff: invalid SBOM $2" >&2; exit 2; }
 comm -13 "$TMP/old" "$TMP/new" | sed 's/^/added\t/' > "$TMP/diff"
 comm -23 "$TMP/old" "$TMP/new" | sed 's/^/removed\t/' >> "$TMP/diff"
-awk -F'\t' '/^#/ || NF < 2 {next} {print $1 "\t" $2 "\t" $3}' "$3" | sort -u > "$TMP/reasons"
+awk -F'\t' '/^#/ || NF < 2 || $3 ~ /^[ \t]*$/ {next} {print $1 "\t" $2 "\t" $3}' "$3" | sort -u > "$TMP/reasons"
 echo "# Package differences from rc1"
 rc=0
 for kind in added removed; do

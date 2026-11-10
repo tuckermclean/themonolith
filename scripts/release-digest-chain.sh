@@ -14,10 +14,12 @@ got=$(awk -v n="$name" '{f=$2; sub(/^\*/, "", f); if (f == n) {print $1; exit}}'
 [ "$got" = "$want" ] || bad "SHA256SUMS entry for $name (${got:-absent})"
 got=$(jq -r '.metadata.component.hashes[0].content // empty' "$bom") || exit 2
 [ "$got" = "$want" ] || bad "SBOM component hash (${got:-absent})"
-for n in 1 2; do
-	got=$(sed -n "${n}p" "$log" | cut -d' ' -f1)
-	[ "$got" = "$want" ] || bad "compare log digest $n (${got:-absent})"
-done
+digs=$(grep -E '^[0-9a-f]{64}  ' "$log" | cut -d' ' -f1)
+if [ -z "$digs" ] || [ "$(printf '%s\n' "$digs" | wc -l | tr -d ' ')" -ne 2 ]; then
+	echo "release-digest-chain: compare log $log does not hold exactly two digest lines" >&2; rc=1
+else
+	for got in $digs; do [ "$got" = "$want" ] || bad "compare log digest ($got)"; done
+fi
 json=$(gh attestation verify "$iso" --repo "$repo" --signer-workflow "$wf" --format json) \
 	|| { echo "release-digest-chain: gh attestation verify failed" >&2; exit 1; }
 subs=$(printf '%s\n' "$json" | jq -r '.[].verificationResult.statement.subject[].digest.sha256') || { echo "release-digest-chain: unreadable attestation JSON" >&2; exit 1; }

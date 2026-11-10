@@ -19,7 +19,7 @@ done
 TMP=$(mktemp -d) || exit 2
 trap 'rm -rf "$TMP"' EXIT
 # category/package from an atom or a cpv: operators, slot and version stripped
-norm() { sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' -e 's/^[<>=~!]*//' -e 's/:.*//' -e 's/-[0-9][^/]*$//' | sort -u; }
+norm() { sed -E -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' -e 's/^[<>=~!]*//' -e 's/:.*//' -e 's/-[0-9]+(\.[0-9]+)*[a-z]?((_alpha|_beta|_pre|_rc|_p)[0-9]*)*(-r[0-9]+)?$//' | sort -u; }
 
 norm < "$world" > "$TMP/world"
 ( cd "$rootfs/var/db/pkg" && for d in */*; do [ -d "$d" ] && echo "$d"; done ) | norm > "$TMP/vdb"
