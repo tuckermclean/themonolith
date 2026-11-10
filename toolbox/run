@@ -62,6 +62,10 @@ if [ $build = 0 ] && ! $eng image inspect "$image" >/dev/null 2>&1; then
 		echo "toolbox/run: pulled $remote" >&2
 	else
 		echo "toolbox/run: no ${remote:-registry image} to pull; building" >&2
+		# In Actions, say loudly whether this build was expected (scripts/toolbox-fallback.sh).
+		if [ "${GITHUB_ACTIONS:-}" = true ] && [ -f "$root/scripts/toolbox-fallback.sh" ]; then
+			(cd "$root" && sh scripts/toolbox-fallback.sh "${remote:-registry image}") || true
+		fi
 		build=1
 	fi
 fi
