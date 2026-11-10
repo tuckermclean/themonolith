@@ -11,6 +11,7 @@ on:
       - .github/workflows/release.yml
       - .github/workflows/rc1-attestation.yml
       - docs/releasing.md
+      - toolbox/**
   workflow_dispatch:
 
 permissions:

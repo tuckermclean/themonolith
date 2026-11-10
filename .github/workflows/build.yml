@@ -471,7 +471,7 @@ jobs:
   attestation:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    needs: [build, build-a, compare, static-rebuild, overlay, boot-test]
+    needs: [changes, build, build-a, compare, static-rebuild, overlay, boot-test]
     # The iteration path needs its build; the gate path needs compare, which needs both builds.
     if: "!cancelled() && needs.build.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success' && needs.overlay.result == 'success' || !cancelled() && needs.compare.result == 'success' && needs.boot-test.result == 'success' && needs.static-rebuild.result == 'success' && needs.overlay.result == 'success'"
     permissions:
@@ -500,16 +500,16 @@ jobs:
           name: sysroot-${{ github.run_id }}
           path: output
 
-      # Only the tag path ran build A: it wrote the source audit and the fetch job wrote release-inputs.json.
+      # Only the gate path (a tag or a gate dispatch) ran build A: it wrote the source audit and the fetch job wrote release-inputs.json.
       - name: Download the source audit
-        if: github.ref_type == 'tag'
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: source-audit-${{ github.run_id }}
           path: output
 
       - name: Download release-inputs.json
-        if: github.ref_type == 'tag'
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-inputs-${{ github.run_id }}
@@ -540,15 +540,16 @@ jobs:
           PACKAGE_TREE: output/sysroot
         run: make test-gates
 
+      # The release steps that neither sign nor publish run on the gate path too, so a gate dispatch rehearses them.
       # A release ships all 99 atoms of the predecessor's world; an iteration ISO may lack some (B01 change 11).
       - name: Check the package set
-        if: github.ref_type == 'tag'
+        if: needs.changes.outputs.gate == 'true'
         env:
           ISO: output/iso/boot-test.iso
         run: make release-package-set
 
       - name: Check that the rootfs provenance holds in release mode
-        if: github.ref_type == 'tag'
+        if: needs.changes.outputs.gate == 'true'
         env:
           ISO: output/iso/boot-test.iso
         run: make rootfs-provenance
@@ -572,22 +573,22 @@ jobs:
         run: make size-report
 
       - name: Report the differences from rc1 (rc1-diff.md)
-        if: github.ref_type == 'tag'
+        if: needs.changes.outputs.gate == 'true'
         run: make rc1-diff
 
       - name: Copy the dynamic-binary allowlist with its count (dynamic-allowlist.txt)
-        if: github.ref_type == 'tag'
+        if: needs.changes.outputs.gate == 'true'
         run: make allowlist-report
 
       # SHA256SUMS is written once, here, over the ISO and every other asset, before signing.
       - name: Collect the release assets and write SHA256SUMS
-        if: github.ref_type == 'tag'
+        if: needs.changes.outputs.gate == 'true'
         env:
           ISO: output/iso/boot-test.iso
         run: make release-assets
 
       - name: Upload the release ISO
-        if: github.ref_type == 'tag'
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-iso-${{ github.run_id }}
@@ -598,7 +599,7 @@ jobs:
 
       # release-inputs.json and source-audit.tsv are their own artifacts; the release job takes them from there.
       - name: Upload the SBOM, SHA256SUMS and the reports
-        if: github.ref_type == 'tag'
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets-${{ github.run_id }}
