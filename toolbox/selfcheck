@@ -7,7 +7,7 @@ fail() { echo "toolbox-selfcheck: $*" >&2; rc=1; }
 
 for cmd in sh bash make git curl jq zstd cpio file python3 shellcheck actionlint oras \
            qemu-system-i386 qemu-system-x86_64 unsquashfs mksquashfs xorriso mcopy mkfs.vfat \
-           scanelf modinfo mkfs.ext4 sfdisk ssh ssh-keygen pkgcheck diffoscope; do
+           scanelf modinfo mkfs.ext4 sfdisk ssh ssh-keygen pkgcheck diffoscope gh check-jsonschema; do
 	command -v "$cmd" >/dev/null 2>&1 || fail "missing: $cmd"
 done
 python3 -c 'import yaml, pexpect' 2>/dev/null || fail "python3 cannot import yaml and pexpect"
@@ -19,6 +19,11 @@ v=$(oras version 2>/dev/null | sed -n 's/^Version: *//p')
 [ "$v" = "${ORAS_VERSION:-unset}" ] || fail "oras is '$v', pinned ${ORAS_VERSION:-unset}"
 v=$(pkgcheck --version 2>/dev/null | sed -n 's/^pkgcheck \([^ ]*\).*/\1/p')
 [ "$v" = "${PKGCHECK_VERSION:-unset}" ] || fail "pkgcheck is '$v', pinned ${PKGCHECK_VERSION:-unset}"
+v=$(gh --version 2>/dev/null | sed -n 's/^gh version \([^ ]*\).*/\1/p')
+[ "$v" = "${GH_VERSION:-unset}" ] || fail "gh is '$v', pinned ${GH_VERSION:-unset}"
+gh attestation verify --help >/dev/null 2>&1 || fail "gh has no attestation verify"
+v=$(check-jsonschema --version 2>/dev/null | sed -n 's/.*version \([^ ]*\).*/\1/p')
+[ "$v" = "${CHECK_JSONSCHEMA_VERSION:-unset}" ] || fail "check-jsonschema is '$v', pinned ${CHECK_JSONSCHEMA_VERSION:-unset}"
 
 [ $rc -eq 0 ] && echo "toolbox-selfcheck: ok"
 exit $rc

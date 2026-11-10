@@ -10,11 +10,15 @@ ARG ACTIONLINT_SHA256=023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e
 ARG ORAS_VERSION=1.2.0
 ARG ORAS_SHA256=5b3f1cbb86d869eee68120b9b45b9be983f3738442f87ee5f06b00edd0bab336
 ARG PKGCHECK_VERSION=0.10.49
+ARG GH_VERSION=2.103.3
+ARG GH_SHA256=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
+ARG CHECK_JSONSCHEMA_VERSION=0.38.0
 
 # Fast tier: sh, bash, python3 + PyYAML, zstd (pr-validate.yml); shellcheck; jq.
 # Slow tier: qemu-system-x86 + ovmf + pexpect (boot-test.yml), kmod (its module check),
 # squashfs-tools, xorriso, mtools, dosfstools, cpio (ISO and rootfs inspection), pax-utils (scanelf, O02),
-# python3-venv (pkgcheck, R02), diffoscope-minimal (the reproducibility gate's report on a mismatch, P02).
+# python3-venv (pkgcheck, R02), diffoscope-minimal (the reproducibility gate's report on a mismatch, P02),
+# python3-jsonschema, -click, -requests, -ruamel.yaml (check-jsonschema's dependencies, P01).
 RUN set -eu; \
     rm -f /etc/apt/sources.list.d/debian.sources; \
     printf '%s\n' \
@@ -35,7 +39,7 @@ RUN set -eu; \
     apt-get -o Acquire::Retries=5 update; \
     DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
       bash ca-certificates cpio curl diffoscope-minimal diffutils dosfstools e2fsprogs fdisk file git jq kmod make mtools openssh-client ovmf \
-      pax-utils python3 python3-pexpect python3-venv python3-yaml qemu-system-x86 shellcheck squashfs-tools \
+      pax-utils python3 python3-click python3-jsonschema python3-pexpect python3-requests python3-ruamel.yaml python3-venv python3-yaml qemu-system-x86 shellcheck squashfs-tools \
       xorriso zstd; \
     rm -rf /var/lib/apt/lists/*
 
@@ -51,7 +55,12 @@ RUN set -eu; \
     echo "${ORAS_SHA256}  oras.tar.gz" | sha256sum -c -; \
     tar -xzf oras.tar.gz oras; \
     install -m 0755 oras /usr/local/bin/oras; \
-    rm -f /tmp/*
+    curl -fsSL --retry 3 -o gh.tar.gz \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"; \
+    echo "${GH_SHA256}  gh.tar.gz" | sha256sum -c -; \
+    tar -xzf gh.tar.gz "gh_${GH_VERSION}_linux_amd64/bin/gh"; \
+    install -m 0755 "gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/*
 
 # pkgcheck (R02) and its dependencies from PyPI, every wheel pinned by sha256; Debian does not package it.
 # pkgcore reads /etc/portage (repos.conf, make.profile); it points into HOME=/tmp so a run can write them.
@@ -73,7 +82,21 @@ RUN set -eu; \
     ln -s /tmp/portage /etc/portage; \
     rm -f /tmp/pkgcheck.txt
 
+# check-jsonschema (P01 change 11, the CycloneDX schema check) from PyPI, pinned by sha256; Debian does not package it.
+# Its dependencies come from Debian (above) except regress, which Debian does not package either.
+RUN set -eu; \
+    printf '%s\n' \
+      "check-jsonschema==${CHECK_JSONSCHEMA_VERSION} --hash=sha256:a4fa877ae92b1df812c601b68fec75fe10d1f7d827a7e7f6b218f6712deead2d" \
+      'regress==2026.9.1 --hash=sha256:c6c38738d973ee4680da9884c11bbd473841be6d660dbd00142192c279b01789' \
+      > /tmp/check-jsonschema.txt; \
+    python3 -m venv --system-site-packages /opt/check-jsonschema; \
+    /opt/check-jsonschema/bin/pip install --no-cache-dir --no-deps --only-binary=:all: --require-hashes -r /tmp/check-jsonschema.txt; \
+    /opt/check-jsonschema/bin/pip check; \
+    ln -s /opt/check-jsonschema/bin/check-jsonschema /usr/local/bin/check-jsonschema; \
+    rm -f /tmp/check-jsonschema.txt
+
 COPY selfcheck /usr/local/bin/toolbox-selfcheck
 ENV TZ=UTC LC_ALL=C.UTF-8 TOOLBOX=1 \
-    ACTIONLINT_VERSION=${ACTIONLINT_VERSION} ORAS_VERSION=${ORAS_VERSION} PKGCHECK_VERSION=${PKGCHECK_VERSION}
+    ACTIONLINT_VERSION=${ACTIONLINT_VERSION} ORAS_VERSION=${ORAS_VERSION} PKGCHECK_VERSION=${PKGCHECK_VERSION} \
+    GH_VERSION=${GH_VERSION} CHECK_JSONSCHEMA_VERSION=${CHECK_JSONSCHEMA_VERSION}
 RUN toolbox-selfcheck
