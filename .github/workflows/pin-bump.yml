@@ -38,7 +38,7 @@ permissions:
   contents: read
 
 env:
-  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  REGISTRY: ghcr.io/tuckermclean/themonolith
 
 jobs:
   # Resolves the commit and archives its tree. The only job that writes to the registry.

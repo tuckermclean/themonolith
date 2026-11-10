@@ -720,7 +720,7 @@ iso-stage:
 NEW_COMMIT ?=
 OLD_COMMIT ?=
 TARGET_COMMIT ?=
-need_new_commit = $(if $(NEW_COMMIT),,$(error NEW_COMMIT is empty))
+need_new_commit = test -n '$(NEW_COMMIT)' || { echo 'NEW_COMMIT is empty'; exit 1; }
 
 # Resolves the newest commit (or TARGET_COMMIT); writes update_available, commit and current to $GITHUB_OUTPUT, and says NO-OP
 # in the job summary when it is TREE_COMMIT.
@@ -729,12 +729,12 @@ pin-check:
 
 # Writes exists=true|false to $GITHUB_OUTPUT: whether gentoo-tree:NEW_COMMIT is in the registry.
 pin-tree-exists:
-	$(need_new_commit)
+	@$(need_new_commit)
 	$(MAKE) tree-exists TREE_COMMIT=$(NEW_COMMIT)
 
 # Archives NEW_COMMIT as gentoo-tree:NEW_COMMIT (scripts/seed-tree.sh refuses an existing tag).
 pin-seed:
-	$(need_new_commit)
+	@$(need_new_commit)
 	$(MAKE) seed-tree TREE_COMMIT=$(NEW_COMMIT)
 
 # Rewrites the four tree pin lines for NEW_COMMIT, which must already be archived (the script refuses an empty one).
