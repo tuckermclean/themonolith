@@ -18,11 +18,22 @@ if ! git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null; then
 fi
 
 # The inputs, as toolbox/run hashes them (cat Containerfile selfcheck | sha256sum | cut -c1-12), read at a commit.
+# missing_at <commit>: prints the first toolbox input that does not exist at the commit and returns 0; returns 1 if both exist.
+missing_at() {
+	for f in toolbox/Containerfile toolbox/selfcheck; do
+		git cat-file -e "$1:$f" || { echo "$f"; return 0; }
+	done
+	return 1
+}
 inputs_at() {
 	{ git show "$1:toolbox/Containerfile" && git show "$1:toolbox/selfcheck"; } | sha256sum | cut -c1-12
 }
-head_inputs=$(inputs_at HEAD) || die "cannot read toolbox/Containerfile and toolbox/selfcheck at HEAD"
-if base_inputs=$(inputs_at "$BASE" 2>/dev/null) && [ "$base_inputs" = "$head_inputs" ]; then
+if m=$(missing_at HEAD); then die "cannot read $m at HEAD"; fi
+head_inputs=$(inputs_at HEAD)
+if m=$(missing_at "$BASE"); then
+	echo "toolbox-check: $m does not exist at BASE $BASE, so the inputs differ" >&2
+	same=0
+elif [ "$(inputs_at "$BASE")" = "$head_inputs" ]; then
 	same=1
 else
 	same=0
