@@ -19,7 +19,22 @@ ARG CHECK_JSONSCHEMA_VERSION=0.38.0
 # squashfs-tools, xorriso, mtools, dosfstools, cpio (ISO and rootfs inspection), pax-utils (scanelf, O02),
 # python3-venv (pkgcheck, R02), diffoscope-minimal (the reproducibility gate's report on a mismatch, P02),
 # python3-jsonschema, -click, -requests, -ruamel.yaml (check-jsonschema's dependencies, P01).
+# apt-retry runs an apt command again after a bounded wait when it fails: APT does not retry an HTTP 503,
+# which snapshot.debian.org answers when it is overloaded. Four attempts, 2, 4 and 8 s apart.
 RUN set -eu; \
+    printf '%s\n' \
+      '#!/bin/sh' \
+      '# apt-retry <command> [args...]: run an apt command; when it fails, wait and run it again (4 attempts).' \
+      'n=4; i=1; wait=2' \
+      'while :; do' \
+      '    "$@" && exit 0' \
+      '    rc=$?' \
+      '    [ "$i" -lt "$n" ] || exit "$rc"' \
+      '    echo "apt-retry: attempt $i/$n failed (exit $rc); retrying in ${wait}s" >&2' \
+      '    sleep "$wait"; i=$((i + 1)); wait=$((wait * 2))' \
+      'done' \
+      > /usr/local/bin/apt-retry; \
+    chmod 0755 /usr/local/bin/apt-retry; \
     rm -f /etc/apt/sources.list.d/debian.sources; \
     printf '%s\n' \
       'Types: deb' \
@@ -36,8 +51,8 @@ RUN set -eu; \
       'Check-Valid-Until: no' \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/snapshot.sources; \
-    apt-get -o Acquire::Retries=5 update; \
-    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+    apt-retry apt-get -o Acquire::Retries=5 update; \
+    DEBIAN_FRONTEND=noninteractive apt-retry apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
       bash ca-certificates cpio curl diffoscope-minimal diffutils dosfstools e2fsprogs fdisk file git jq kmod make mtools openssh-client ovmf \
       pax-utils python3 python3-click python3-jsonschema python3-pexpect python3-requests python3-ruamel.yaml python3-venv python3-yaml qemu-system-x86 shellcheck squashfs-tools \
       xorriso zstd; \
