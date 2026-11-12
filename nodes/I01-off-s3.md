@@ -46,7 +46,7 @@ Three overlay ebuild comments say "own S3" (`rl144`, `monolith-xserver`, `stele`
 ## Gate
 - **I01-AC-1** — No tracked file outside the spec paths of change 2 and the test itself matches `(^|[^[:alnum:]_])aws |aws-actions|AWS_|amazonaws|s3://|S3_BUCKET|s3-gc`, and the test fails on a fixture file that does. *Verify:* `scripts/tests/no-aws.test.sh` (`git ls-files` plus `grep -E`).
 - **I01-AC-2** — The registry location is assigned once in the Makefile and once in the `env:` of each workflow that names it (forwarding `${{ env.REGISTRY }}` is not an assignment), and `ghcr.io/` appears in no file under `scripts/` outside `scripts/tests/`. *Verify:* `scripts/tests/no-aws.test.sh`.
-- **I01-AC-3** — No workflow requires a secret other than `GITHUB_TOKEN`. *Verify:* `scripts/tests/no-aws.test.sh` (`grep -rn 'secrets\.' .github/workflows` shows only `secrets.GITHUB_TOKEN`).
+- **I01-AC-3** — No workflow requires a secret other than `GITHUB_TOKEN`, except `PIN_BUMP_APP_PRIVATE_KEY` in `pin-bump.yml` (the GitHub App key, OD-6; M01). *Verify:* `scripts/tests/no-aws.test.sh` (`grep -rn 'secrets\.' .github/workflows` shows only `secrets.GITHUB_TOKEN`, and `secrets.PIN_BUMP_APP_PRIVATE_KEY` in `pin-bump.yml` only).
 - **I01-AC-4** — Anonymous pull works for each package under `${REGISTRY}` that exists when this node lands (after Step 0, `builder` and `rc1-binpkgs`): `oras manifest fetch` without credentials exits 0. *Verify:* `toolbox/run -- oras manifest fetch …` with no login, log kept under `out/node/I01/`.
 
 ## Risks
