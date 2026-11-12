@@ -43,6 +43,7 @@ ACTIONS = {
     "actions/cache/restore": "need",
     "actions/attest-build-provenance": "ci-only",
     "actions/attest-sbom": "ci-only",
+    "actions/create-github-app-token": "ci-only",
     "docker/login-action": "ci-only",
     "softprops/action-gh-release": "ci-only",
     "actions/upload-pages-artifact": "ci-only",

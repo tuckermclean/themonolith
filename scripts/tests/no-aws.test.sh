@@ -92,7 +92,7 @@ check_ac2() { # check_ac2 <root>
 check_ac3() { # check_ac3 <root>
 	[ -d "$1/.github/workflows" ] || return 0
 	cd "$1" || { echo "check_ac3: cannot cd to $1"; return 1; }
-	grep -rnoE 'secrets\.[A-Za-z_0-9]*|secrets[[:space:]]*\[|toJSON\([[:space:]]*secrets' .github/workflows | grep -v 'secrets\.GITHUB_TOKEN$' >"$tmp/sec.$$"
+	grep -rnoE 'secrets\.[A-Za-z_0-9]*|secrets[[:space:]]*\[|toJSON\([[:space:]]*secrets' .github/workflows | grep -v 'secrets\.GITHUB_TOKEN$' | grep -v '^\.github/workflows/pin-bump\.yml:[0-9]*:secrets\.PIN_BUMP_APP_PRIVATE_KEY$' >"$tmp/sec.$$"
 	cat "$tmp/sec.$$"
 	[ ! -s "$tmp/sec.$$" ]
 }
@@ -235,6 +235,8 @@ r=$(mkrepo ac3-json); printf 'jobs:\n  a:\n    steps:\n      - run: echo ${{ toJ
 expect "I01-AC-3 toJSON(secrets) fails" fail check_ac3 "$r"
 r=$(mkrepo ac3-yaml); good_workflow "$r"; echo '      - run: echo ${{ secrets.OTHER }}' >>"$r/.github/workflows/a.yml"; mv "$r/.github/workflows/a.yml" "$r/.github/workflows/a.yaml"; commit_all "$r"
 expect "I01-AC-3 .yaml workflow using another secret fails" fail check_ac3 "$r"
+r=$(mkrepo ac3-appkey); good_workflow "$r"; echo '      - run: echo ${{ secrets.PIN_BUMP_APP_PRIVATE_KEY }}' >>"$r/.github/workflows/a.yml"; commit_all "$r"
+expect "I01-AC-3 PIN_BUMP_APP_PRIVATE_KEY outside pin-bump.yml fails" fail check_ac3 "$r"
 if out=$(check_ac3 "$root" 2>&1); then pass "I01-AC-3 no workflow requires a secret other than GITHUB_TOKEN"
 else fail "I01-AC-3 workflows use other secrets:"; printf '%s\n' "$out" | sed 's/^/  /'; fi
 
