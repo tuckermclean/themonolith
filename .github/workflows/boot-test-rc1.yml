@@ -25,8 +25,30 @@ permissions:
   contents: read
 
 jobs:
+  # Pulls or builds the toolbox image once for this run and shares it with the jobs that run toolbox/run.
+  toolbox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pull or build the toolbox image
+        run: make toolbox-save
+
+      - name: Upload the toolbox image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox/toolbox.tar
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
   # The right digest, on the pull request.
   boot-test:
+    needs: toolbox
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/boot-test.yml
     with:
@@ -37,6 +59,7 @@ jobs:
 
   # The digest of the dispatch, right or wrong.
   boot-test-dispatch:
+    needs: toolbox
     if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/boot-test.yml
     with:
