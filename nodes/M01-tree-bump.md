@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | later | P01 | M02, X01 | — | M |
 
-**Owns:** `.github/workflows/pin-bump.yml`, `scripts/update-build-pins.sh`, `scripts/update-versions.sh`, `scripts/tests/pin-bump.test.sh`, `toolbox/ci`.
+**Owns:** `.github/workflows/pin-bump.yml`, `scripts/update-build-pins.sh`, `scripts/update-versions.sh`, `scripts/pin-bump-pr.sh`, `scripts/tests/pin-bump.test.sh`, `toolbox/ci`.
 **Ports from linux-live-iso-factory@b9f533b:** `.github/workflows/pin-bump.yml` (396 lines), `scripts/update-build-pins.sh` (400), `scripts/update-versions.sh` (221), `docs/version-pinning.md`.
 **Study refs:** workflows.yaml `wf.pin-bump`; T-pin-bump-root-owned-locks, T-workflow-push-needs-pat, D-two-epoch-pin-model; Principle 9; SPEC §8.
 
