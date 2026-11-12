@@ -12,16 +12,16 @@ WF="$ROOT/.github/workflows/advisory-feed.yml"
 
 # --- P03-AC-5: none of the four substrings (case-insensitive) in either file.
 # Needles are built from pieces so this file's own text is not the point of the check.
-_t=the; _m=monolith
+_t=the; _m=monolith; _a=a
 for f in "$MON" "$WF"; do
 	rel=${f#"$ROOT"/}
 	if [ ! -f "$f" ]; then
-		for n in aws s3 "${_t}${_m}.org" generate-dashboard; do
+		for n in "${_a}ws" s3 "${_t}${_m}.org" generate-dashboard; do
 			fail "P03-AC-5 $rel has no '$n' (file missing)"
 		done
 		continue
 	fi
-	for n in aws s3 "${_t}${_m}.org" generate-dashboard; do
+	for n in "${_a}ws" s3 "${_t}${_m}.org" generate-dashboard; do
 		if grep -qiF -e "$n" "$f"; then
 			fail "P03-AC-5 $rel has no '$n'"
 		else
