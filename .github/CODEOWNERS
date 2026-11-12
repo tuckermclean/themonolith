@@ -1,3 +1,6 @@
+# Every change to main needs the owner's approval: the main ruleset requires a code owner's review.
+* @tuckermclean
+
 /.github/** @tuckermclean
 /SPEC.md @tuckermclean
 /docs/graph.yaml @tuckermclean
