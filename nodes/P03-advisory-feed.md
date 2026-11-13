@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | later | P01, S01 | X01 | — | M |
 
-**Owns:** `scripts/nightly-cve-monitor.py` (modified), `.github/workflows/advisory-feed.yml` (replaces `nightly-cve-scan.yml`), `scripts/tests/advisory-feed.test.sh`, `scripts/tests/advisory-feed-workflow.test.sh`.
+**Owns:** `scripts/nightly-cve-monitor.py` (modified), `.github/workflows/advisory-feed.yml` (replaces `nightly-cve-scan.yml`), `scripts/tests/advisory-feed.test.sh`, `scripts/tests/advisory-feed-workflow.test.sh`, `scripts/advisory-feed.sh` (the feed run the workflow calls), `Makefile` (target `advisory-feed`).
 **Ports from linux-live-iso-factory@b9f533b:** `scripts/nightly-cve-monitor.py` (359 lines), `.github/workflows/nightly-cve-scan.yml`. The disc side (`monolith-advisory-check` and its URL) is R01's and is read here, not changed. Not ported: `generate-dashboard.py`.
 **Study refs:** supplychain.yaml `script.nightly-cve-monitor`; contradictions: the monitor revokes on any grype match of any severity and ignores `cve-policy.yaml`; a revoked build becomes `fail` the next night; the DB update failure is ignored; `details_url` names `themonolith.org`, a third party's domain (OD-1); T-cve-gate-unfalsifiable, T-canary-silence; OD-1.
 

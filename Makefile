@@ -5,7 +5,7 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline pin-check pin-tree-exists pin-seed update-build-pins update-all pin-labels pin-branch pin-commit pin-pr cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create advisory-feed advisory-feed-check check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline pin-check pin-tree-exists pin-seed update-build-pins update-all pin-labels pin-branch pin-commit pin-pr cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -446,6 +446,16 @@ release-notes:
 
 release-create:
 	toolbox/run -e TAG -e BUILD_VERSION -e GH_TOKEN -e GITHUB_REPOSITORY -- env RELEASE_DIR='$(RELEASE_DIR)' sh scripts/release-create.sh
+
+# The advisory feed (P03). GRYPE_VERSION and GRYPE_SHA256 (the release tarball) come from advisory-feed.yml's env.
+RC1_TAG ?= v0.1.0-rc1
+ADVISORY_BASE_URL ?= https://monolith.technomantics.com
+advisory-feed:
+	toolbox/run -e GH_TOKEN -e GITHUB_REPOSITORY -e GRYPE_VERSION -e GRYPE_SHA256 -- env RC1_TAG='$(RC1_TAG)' RC1_SBOM_URL='$(RC1_SBOM_URL)' RC1_SBOM_SHA256='$(RC1_SBOM_SHA256)' BASE_URL='$(ADVISORY_BASE_URL)' sh scripts/advisory-feed.sh
+
+# Fails when the last advisory-feed run could not refresh every build (it still published the rest).
+advisory-feed-check:
+	toolbox/run -- sh -c 'test "$$(cat output/advisory-feed/result)" = ok'
 
 # The CycloneDX document BOM against the vendored schema of its specVersion (no network).
 CDX_SCHEMAS ?= configs/attestation/schemas
