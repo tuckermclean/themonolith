@@ -16,3 +16,6 @@ __pycache__
 # configs/overlay/**/files/ are tracked and unaffected by this root-only glob)
 /*.patch
 /*.diff
+
+# The toolchain tree make build-image restores for the Dockerfile COPY
+/tree/

@@ -1,0 +1,229 @@
+name: Toolchain Bump
+
+# Rebuilds the builder image and proposes it as a pull request (docs/version-pinning.md, "two-pin model"). The pins it
+# moves are the Dockerfile's TOOLCHAIN_EPOCH, the Makefile's TREE_COMMIT_TOOLCHAIN, TREE_DIGEST_TOOLCHAIN and
+# BUILDER_DIGEST, and configs/portage/crossdev.lock. A toolchain bump compiles a new cross toolchain from scratch, unlike
+# the cheap tree bump of pin-bump.yml.
+#
+# Manual dispatch only: someone decides when a rebuild is worth its cost. There is no schedule.
+#
+# This:
+#   1. archive job: archives the tree_commit input as gentoo-tree:<commit> (scripts/seed-tree.sh) unless that tag exists.
+#      The only job that writes a tree to the registry.
+#   2. bump job: pulls the current builder by BUILDER_DIGEST, writes the pins (scripts/update-build-pins.sh
+#      update-toolchain: it verifies the tree artifact and fails when the lookup is empty or errors), rebuilds and pushes
+#      the image (make push-image), pins its digest, pushes a branch, dispatches build.yml on it and opens a PR.
+#      The first_rebuild input rebuilds at the current TOOLCHAIN_EPOCH instead of stopping when the epoch is unchanged.
+#
+# This workflow NEVER merges, green or not: a toolchain bump changes the compiler and libc every target package is built
+# with, so a human always reads the PR first. GITHUB_TOKEN pushes do not start the PR's own checks, hence the dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tree_commit:
+        description: >-
+          The gentoo-mirror/gentoo commit (40 hex digits) whose tree the builder image bakes in. It is archived as
+          gentoo-tree:<commit> first if it is not already.
+        required: true
+        type: string
+      first_rebuild:
+        description: >-
+          First rebuild: rebuild at the current TOOLCHAIN_EPOCH instead of stopping when the epoch is unchanged.
+        required: false
+        type: boolean
+        default: false
+      target_epoch:
+        description: >-
+          Force a specific TOOLCHAIN_EPOCH (YYYYMMDD) instead of the latest stage3 tag. Leave empty for normal behavior;
+          it must stay empty with first_rebuild. A changed epoch is refused until the Dockerfile's stage3 digest is
+          updated, so first_rebuild is currently the only mode that completes.
+        required: false
+        type: string
+
+concurrency:
+  group: toolchain-bump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/tuckermclean/themonolith
+
+jobs:
+  # Pulls or builds the toolbox image once for this run and shares it with the jobs that run toolbox/run.
+  toolbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pull or build the toolbox image
+        run: make toolbox-save
+
+      - name: Upload the toolbox image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox/toolbox.tar
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  # Checks the inputs and archives the tree. The only job that writes a tree to the registry.
+  archive:
+    needs: toolbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      NEW_COMMIT: ${{ inputs.tree_commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the toolbox image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox
+
+      - name: Load the toolbox image
+        run: make toolbox-load
+
+      - name: Check the inputs
+        env:
+          TARGET_EPOCH: ${{ inputs.target_epoch }}
+          FIRST_REBUILD: ${{ inputs.first_rebuild }}
+        run: make toolchain-inputs
+
+      - name: Is the tree already in the registry
+        id: probe
+        run: make pin-tree-exists
+
+      - name: Archive the tree
+        if: steps.probe.outputs.exists == 'false'
+        run: make pin-seed
+
+  bump:
+    needs: [toolbox, archive]
+    runs-on: ubuntu-latest
+    # Budget: ~100min for the crossdev image rebuild (a new toolchain compiled from scratch), ~240min bounded wait for the
+    # dispatched build.yml run, plus slack. A hosted job is capped at 360 minutes; the wait step degrades to a timed_out
+    # PR status instead of being killed.
+    timeout-minutes: 355
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      NEW_COMMIT: ${{ inputs.tree_commit }}
+      FIRST_REBUILD: ${{ inputs.first_rebuild }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the toolbox image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox
+
+      - name: Load the toolbox image
+        run: make toolbox-load
+
+      - name: Ensure labels exist
+        run: make toolchain-labels
+
+      # The current builder, by its digest (Makefile BUILDER_DIGEST): crossdev.lock is regenerated from it.
+      - name: Pull the current builder image
+        run: make pull-image
+
+      - name: Record the current TOOLCHAIN_EPOCH
+        id: epoch
+        env:
+          TARGET_EPOCH: ${{ inputs.target_epoch }}
+        run: make toolchain-epoch
+
+      - name: Write the toolchain pins (and regenerate crossdev.lock)
+        env:
+          TARGET_EPOCH: ${{ steps.epoch.outputs.target }}
+        run: make toolchain-update
+
+      - name: Stop when the epoch is unchanged
+        env:
+          OLD_EPOCH: ${{ steps.epoch.outputs.old }}
+        run: make toolchain-epoch-check
+
+      - name: Create branch
+        env:
+          OLD_EPOCH: ${{ steps.epoch.outputs.old }}
+        run: make toolchain-branch
+
+      # A failed build must not stop the PR: it is opened labelled needs-fixup, for a human to fix.
+      - name: Rebuild and push the builder image
+        id: build
+        continue-on-error: true
+        run: make push-image
+
+      - name: Upload the builder manifest
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: builder-manifest-${{ github.run_id }}
+          path: output/builder-manifest.txt
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload crossdev logs on failure
+        if: steps.build.outcome != 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crossdev-logs-${{ github.run_id }}
+          path: output/portage-logs/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Pin the pushed image's digest
+        if: steps.build.outcome == 'success'
+        run: make toolchain-digest
+
+      - name: Commit and push
+        env:
+          OLD_EPOCH: ${{ steps.epoch.outputs.old }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: make toolchain-commit
+
+      - name: Dispatch the full build and validation
+        id: dispatch
+        if: steps.build.outcome == 'success'
+        env:
+          OLD_EPOCH: ${{ steps.epoch.outputs.old }}
+        run: make toolchain-dispatch
+
+      - name: Wait for the validation run
+        id: wait
+        if: steps.dispatch.outputs.found == 'true'
+        env:
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+        run: make toolchain-wait
+
+      # Nothing merges: the last step opens the PR.
+      - name: Open PR
+        env:
+          OLD_EPOCH: ${{ steps.epoch.outputs.old }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          RUN_FOUND: ${{ steps.dispatch.outputs.found }}
+          RUN_URL: ${{ steps.dispatch.outputs.run_url }}
+          CONCLUSION: ${{ steps.wait.outputs.conclusion }}
+        run: make toolchain-pr

@@ -27,7 +27,7 @@
 # Update with: make update-build-pins
 ARG TOOLCHAIN_EPOCH=20260810
 ARG BUILD_EPOCH=20260811
-FROM gentoo/stage3:amd64-openrc-${TOOLCHAIN_EPOCH} AS base-tools
+FROM gentoo/stage3:amd64-openrc-${TOOLCHAIN_EPOCH}@sha256:806bbc0c87a3ac0f2640ed82ec6f509e042071639e52ba30a2acbc8c8026a278 AS base-tools
 
 LABEL maintainer="monolith-builder"
 LABEL description="Gentoo crossdev environment for i486-linux-musl + ISO tools"
@@ -63,15 +63,14 @@ RUN if ! (echo 'int main(void){return 0;}' | gcc -m32 -xc -o /tmp/m32check -); t
         exit 1; \
     fi && /tmp/m32check && rm -f /tmp/m32check && echo "gcc -m32 multilib: OK"
 
-# Fetch the toolchain's baked portage tree using portage's own tooling.
-# --revert pins to a specific date for reproducibility; emerge-webrsync handles
-# GPG verification internally using its bundled Gentoo release signing key
-# (DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D) — build fails if signature invalid.
-# This tree is pinned to TOOLCHAIN_EPOCH, not BUILD_EPOCH: it only resolves
+# Bake the toolchain's portage tree from the archive. make build-image restores
+# gentoo-tree@${TREE_DIGEST_TOOLCHAIN} (the Makefile pin, checked against the
+# registry's digest) into ./tree/, and this copies it in.
+# This tree is pinned to TREE_COMMIT_TOOLCHAIN, not BUILD_EPOCH: it only resolves
 # host build tools and the crossdev toolchain baked into this image. It is
 # NOT the runtime package tree used to build ISO packages — that tree is
 # pinned to BUILD_EPOCH and injected separately by scripts/sync-portage.sh.
-RUN emerge-webrsync --revert=${TOOLCHAIN_EPOCH}
+COPY tree/ /var/db/repos/gentoo/
 
 # Install all host tools
 # cmake:   prevents BDEPEND from pulling in cmake-9999 (live ebuild)
@@ -80,8 +79,8 @@ RUN emerge-webrsync --revert=${TOOLCHAIN_EPOCH}
 #
 # Version pinning: none of these packages carry an explicit version atom.
 # They are host build tools (not shipped in the ISO) and are pinned
-# *indirectly* via TOOLCHAIN_EPOCH: emerge-webrsync --revert=${TOOLCHAIN_EPOCH}
-# above fixes the baked portage snapshot date, which in turn fixes which
+# *indirectly* via the baked portage tree: the archived tree copied in above
+# (TREE_COMMIT_TOOLCHAIN) fixes the snapshot, which in turn fixes which
 # version of each package is "best visible" here. This is intentional and
 # matches the crossdev toolchain's own pinning story (crossdev.lock +
 # versions.lock still pin exact versions for the *target* toolchain and
