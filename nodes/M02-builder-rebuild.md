@@ -24,7 +24,7 @@ The builder image can be rebuilt from inputs we hold, and a human can dispatch o
 
 ## Changes from the port
 1. **Pin the stage3.** `FROM gentoo/stage3:amd64-openrc-${TOOLCHAIN_EPOCH}` (`Dockerfile:30`) gets `@sha256:<digest>` of the Docker Hub image (the digest above, mirrored to `${REGISTRY}/stage3`). A tag alone can be re-pushed. *Proof:* M02-AC-1.
-2. **Take the tree from the archive.** `RUN emerge-webrsync --revert=${TOOLCHAIN_EPOCH}` (`Dockerfile:74`) becomes `COPY tree/ /var/db/repos/gentoo/`. `make build-image` first runs I02's restore of `gentoo-tree@${TREE_DIGEST_TOOLCHAIN}` into `./tree/`. The original also baked the tree into the image, so the shape is unchanged. The snapshot is no longer fetched from the network. The `Makefile` carries two pins, `TREE_COMMIT_TOOLCHAIN` and `TREE_DIGEST_TOOLCHAIN`. They stay empty until the first dispatch's bump PR writes them, and while either is empty `make build-image` fails with a message naming it. *Proof:* M02-AC-1, M02-AC-2, M02-AC-4.
+2. **Take the tree from the archive.** `RUN emerge-webrsync --revert=${TOOLCHAIN_EPOCH}` (`Dockerfile:74`) becomes `COPY tree/ /var/db/repos/gentoo/`. `make build-image` first runs I02's restore of `gentoo-tree@${TREE_DIGEST_TOOLCHAIN}` into `./tree/`. The original also baked the tree into the image, so the shape is unchanged. The snapshot is no longer fetched from the network. The comments at `Dockerfile:67` and `:83` that say the tree comes from `emerge-webrsync` are corrected to say it comes from the archive. The `Makefile` carries two pins, `TREE_COMMIT_TOOLCHAIN` and `TREE_DIGEST_TOOLCHAIN`. They stay empty until the first dispatch's bump PR writes them, and while either is empty `make build-image` fails with a message naming it. *Proof:* M02-AC-1, M02-AC-2, M02-AC-4.
 3. **Push under the shared name.** `REGISTRY_IMAGE` (`Makefile:48`) becomes `${REGISTRY}/builder`, so `make push-image` produces what I03's `pull-image` consumes. The build is followed by `builder-manifest.sh` (I03). The new digest goes into `BUILDER_DIGEST` through the bump PR only. *Proof:* M03-AC-1 (the first dispatch).
 4. **`toolchain-bump.yml`: keep human-gated, re-point inputs.**
    - The predecessor workflow has no `--admin` and no merge step; its last step is `gh pr create` (`toolchain-bump.yml:309-316`). The `--admin` in `pin-bump.yml:396` is M01's. This workflow stays that way.
@@ -37,7 +37,7 @@ The builder image can be rebuilt from inputs we hold, and a human can dispatch o
    *Proof:* M02-AC-3, M02-AC-5.
 
 ## Gate
-- **M02-AC-1** — `git diff b9f533b -- Dockerfile` shows exactly two changed hunks: the `FROM` line gains `@sha256:<64 hex>` and the `emerge-webrsync` `RUN` becomes `COPY tree/`. *Verify:* `scripts/tests/builder-rebuild.test.sh`.
+- **M02-AC-1** — Ignoring comment lines (`#`), `git diff b9f533b -- Dockerfile` shows exactly two changed hunks: the `FROM` line gains `@sha256:<64 hex>` and the `emerge-webrsync` `RUN` becomes `COPY tree/`. *Verify:* `scripts/tests/builder-rebuild.test.sh`.
 - **M02-AC-2** — The rebuild runs with no request to `distfiles.gentoo.org` snapshots or `emerge-webrsync` for the tree: `grep -n webrsync Dockerfile Makefile` finds nothing. *Verify:* `scripts/tests/builder-rebuild.test.sh`. The first dispatch's build log is M03-AC-2.
 - **M02-AC-3** — `toolchain-bump.yml` contains no `gh pr merge`, no `--admin` and no `schedule:`; its only triggers are `workflow_dispatch`. *Verify:* `scripts/tests/builder-rebuild.test.sh`.
 - **M02-AC-4** — `make build-image` with `TREE_COMMIT_TOOLCHAIN` or `TREE_DIGEST_TOOLCHAIN` empty exits non-zero with a message naming the empty pin, before it restores a tree or runs `docker`. *Verify:* `scripts/tests/builder-rebuild.test.sh`.
@@ -46,4 +46,5 @@ The builder image can be rebuilt from inputs we hold, and a human can dispatch o
 ## Risks
 - Nothing in this gate runs the workflow: GitHub dispatches only workflows on the default branch. A fault only a real dispatch shows surfaces at M03's dispatch, and its fix must reach `main` before the dispatch runs again.
 - Live distfiles for the host tools and crossdev may have vanished upstream since August (unverified). A rebuild then fails, which is a finding: no bump PR is opened and the adopted image stays pinned.
+- A bump to a new epoch needs a new stage3 digest and mirror (change 1 pins the 20260810 digest, and the workflow does not update it) and an update to M02-AC-1's test (the bump changes `ARG TOOLCHAIN_EPOCH`). No node does this yet.
 - The workflow pushes with `GITHUB_TOKEN`; a PR opened that way does not trigger its own checks. The workflow dispatches `build.yml` itself instead. OD-6 (bump credential) concerns M01 and may simplify this later.
