@@ -210,6 +210,49 @@ release existing yet: by the time `gh release create` runs and makes that URL
 resolve, the SBOM already named it correctly. On a build that is not a tag
 the URL stays empty; none is fabricated.
 
+## Cutover
+
+These steps need the owner's credentials: pushing the tag, deleting
+secrets and archiving a repository. They run in this order.
+
+**Preconditions** (each proven by its own node): the allowlist report shows 0
+entries; the tree bump is merged and the tag's `TREE_COMMIT` differs from
+rc1's; the advisory feed answers at its published URL; the CVE gate passes
+with no expired waiver; G01 is done (each claim in the README is tested or removed).
+
+1. **Release.** Push the final tag, `v0.2.0` (confirm the number), with no
+   suffix. It goes through the whole tag pipeline, not a promotion of an
+   `-rc` tag. The release is not a prerelease and is Latest. Evidence:
+   ```sh
+   gh release view v0.2.0 --repo tuckermclean/themonolith --json isPrerelease,assets
+   gh api repos/tuckermclean/themonolith/releases/latest --jq .tag_name
+   gh release download v0.2.0 --repo tuckermclean/themonolith \
+     --pattern 'themonolith-0.2.0.iso' --pattern SHA256SUMS \
+     --pattern release-inputs.json --pattern dynamic-allowlist.txt
+   sha256sum -c SHA256SUMS --ignore-missing
+   gh attestation verify themonolith-0.2.0.iso \
+     --repo tuckermclean/themonolith \
+     --signer-workflow tuckermclean/themonolith/.github/workflows/build.yml
+   jq -r .TREE_COMMIT release-inputs.json   # differs from rc1's
+   ```
+   `dynamic-allowlist.txt` has 0 entries and the Build run's gate verdict is
+   green; record the Build run URL.
+2. **Verify rc1 (baseline).** Run the README's rc1 commands on a clean
+   machine and record the output.
+3. **Pointer.** One docs commit to the predecessor's default branch adds a
+   README banner pointing here. Edit the `v0.1.0-rc1` release notes to point
+   here; leave its assets untouched.
+4. **Retire the predecessor.** Disable its workflows, remove its AWS secrets,
+   set its description, then archive the repository (the repository's Settings page, Danger Zone, or the `gh repo` subcommand). Never rename, transfer
+   or delete it: rc1's attestation names it.
+5. **Verify rc1 again** with the same commands and record the output. If
+   verification fails, unarchive the repository and record why.
+6. **Evidence for the archive:**
+   ```sh
+   gh api repos/tuckermclean/linux-live-iso-factory --jq '[.full_name,.archived]'
+   gh release view v0.1.0-rc1 --repo tuckermclean/linux-live-iso-factory --json assets
+   ```
+
 ## Permissions
 
 | Permission | Scope | Why |
