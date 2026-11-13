@@ -5,13 +5,14 @@
 #   toolchain-bump.sh epoch        write old (the current TOOLCHAIN_EPOCH) and target (the epoch to bump to) to $GITHUB_OUTPUT
 #   toolchain-bump.sh epoch-check  stop when TOOLCHAIN_EPOCH did not change, unless this is a first rebuild
 #   toolchain-bump.sh branch       switch to toolchain/bump-<old>-<new>-<commit12>
+#   toolchain-bump.sh branch-name  print the branch name
 #   toolchain-bump.sh digest       write the pushed builder image's digest to BUILDER_DIGEST
 #   toolchain-bump.sh commit       stage the pins, commit and push the branch
-#   toolchain-bump.sh dispatch     dispatch build.yml on the branch; writes found, run_id and run_url to $GITHUB_OUTPUT
+#   toolchain-bump.sh dispatch     find the build.yml run the Makefile dispatched (make toolchain-dispatch); writes found, run_id and run_url to $GITHUB_OUTPUT
 #   toolchain-bump.sh wait         wait for that run; writes conclusion to $GITHUB_OUTPUT
 #   toolchain-bump.sh pr           open the PR against main. Nothing here merges.
 # Environment: NEW_COMMIT (tree_commit, 40 hex digits), TARGET_EPOCH (YYYYMMDD or empty), FIRST_REBUILD (true|false),
-# OLD_EPOCH, REGISTRY, GH_TOKEN, and the step results BUILD_OUTCOME, RUN_FOUND, RUN_ID, RUN_URL, CONCLUSION.
+# OLD_EPOCH, REGISTRY, GH_TOKEN, DISPATCHED_AFTER (UTC time before the dispatch), and the step results BUILD_OUTCOME, RUN_FOUND, RUN_ID, RUN_URL, CONCLUSION.
 # A first rebuild rebuilds at the current TOOLCHAIN_EPOCH (M03 rebuilds rc1's image at its epoch).
 set -euo pipefail
 
@@ -67,6 +68,9 @@ branch)
     git config user.email "github-actions[bot]@users.noreply.github.com"
     git switch -c "$(branch)"
     ;;
+branch-name)
+    branch
+    ;;
 digest)
     : "${REGISTRY:?toolchain-bump: REGISTRY is not set}"
     image="${REGISTRY}/builder"
@@ -98,9 +102,9 @@ Automated by .github/workflows/toolchain-bump.yml (human-gated, never merged by 
     git push -u origin "$(branch)"
     ;;
 dispatch)
+    : "${DISPATCHED_AFTER:?toolchain-bump: DISPATCHED_AFTER is not set}"
     br=$(branch)
-    before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    gh workflow run build.yml --ref "${br}"
+    before=${DISPATCHED_AFTER}
     echo "==> Waiting for the dispatched run to register..."
     run_id=""
     for _ in $(seq 1 30); do
@@ -198,10 +202,11 @@ pr)
         --body-file "${OUT}/pr-body.md" \
         --base main \
         --head "$(branch)" \
+        --label full-ci \
         --label "${labels}"
     ;;
 *)
-    sed -n '2,15p' "$0" >&2
+    sed -n '2,16p' "$0" >&2
     exit 1
     ;;
 esac

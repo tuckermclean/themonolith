@@ -481,7 +481,10 @@ toolchain-digest:
 toolchain-commit:
 	bash scripts/toolchain-bump.sh commit
 
+# Dispatches build.yml on the bump branch, then the script finds the run it started.
 toolchain-dispatch:
+	DISPATCHED_AFTER=$$(date -u +%Y-%m-%dT%H:%M:%SZ); export DISPATCHED_AFTER; \
+	gh workflow run build.yml --ref "$$(bash scripts/toolchain-bump.sh branch-name)" && \
 	bash scripts/toolchain-bump.sh dispatch
 
 toolchain-wait:
