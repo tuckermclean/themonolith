@@ -29,7 +29,7 @@ at or before that cut. It follows the mirror merge `3987ac2e` (22:30:47Z), whose
 mirror commit, `271d0fc4`, is at 01:15:49Z, after the cut.
 
 Cross-check: 33060 of 33060 `*.ebuild`/`*.eclass` blobs of rc1's snapshot equal those of `d4d0b0c7`. The neighbours
-differ: `8c116ba1` (before) lacks 1 file (`dev-libs/expat/expat-2.8.3.ebuild`), `d447f389` (after) has 2 differing blobs and 1 added file. All 358 `qlist -Iv` entries of `rc1.txt`
+differ: `8c116ba1` (before) lacks 1 file (`dev-libs/expat/expat-2.8.3.ebuild`), `d447f389` (after) adds `app-antivirus/clamav/clamav-0.103.12-r6.ebuild`, has `dev-python/pyqt6/pyqt6-6.11.0-r1.ebuild` in place of `pyqt6-6.11.0.ebuild`, and has a different blob for `games-emulation/pcsx2/pcsx2-2.6.3-r2.ebuild`. All 358 `qlist -Iv` entries of `rc1.txt`
 have their ebuild at `d4d0b0c7`.
 
 The tree is archived as `gentoo-tree:d4d0b0c7...`, digest
