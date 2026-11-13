@@ -4,6 +4,9 @@
 # Env: GRYPE_VERSION, GRYPE_SHA256 (the linux_amd64 tarball), GH_TOKEN, GITHUB_REPOSITORY,
 #      RC1_TAG, RC1_SBOM_URL, RC1_SBOM_SHA256, BASE_URL, FEED_DIR (default output/advisory-feed).
 # A status file that cannot be fetched (anything but HTTP 404) fails the run: unreachable is never clean.
+# A release whose SBOM cannot be fetched or verified, or that the monitor cannot scan, is a per-build error:
+# its status file stays as it was, the other builds still update, and $FEED_DIR/result says "partial" (else "ok")
+# so the workflow can end red after it has published. Any other monitor failure builds nothing and fails.
 set -eu
 : "${GRYPE_VERSION:?}" "${GRYPE_SHA256:?}" "${GH_TOKEN:?}" "${GITHUB_REPOSITORY:?}"
 : "${RC1_TAG:?}" "${RC1_SBOM_URL:?}" "${RC1_SBOM_SHA256:?}" "${BASE_URL:?}"
@@ -17,6 +20,8 @@ bin=$FEED_DIR/bin
 data=$FEED_DIR/data
 site=$FEED_DIR/site
 mkdir -p "$bin" "$data/status" "$site/status"
+bin=$(cd "$bin" && pwd)
+partial=
 
 echo "==> grype $GRYPE_VERSION"
 tgz=$FEED_DIR/grype_${GRYPE_VERSION}_linux_amd64.tar.gz
@@ -30,11 +35,19 @@ echo "==> SBOMs"
 tags=$(gh release list --limit 1000 --json tagName --jq '.[].tagName')
 for t in $tags; do
 	mkdir -p "$data/$t"
-	gh release download "$t" --pattern bom.cdx.json --dir "$data/$t"
+	if ! gh release download "$t" --pattern bom.cdx.json --dir "$data/$t"; then
+		echo "advisory-feed: no SBOM for $t; its status file stays as it was" >&2
+		rm -rf "${data:?}/$t"
+		partial=1
+	fi
 done
 mkdir -p "$data/$RC1_TAG"
-curl -fsSL --retry 3 -o "$data/$RC1_TAG/bom.cdx.json" "$RC1_SBOM_URL"
-echo "$RC1_SBOM_SHA256  $data/$RC1_TAG/bom.cdx.json" | sha256sum -c -
+if ! curl -fsSL --retry 3 -o "$data/$RC1_TAG/bom.cdx.json" "$RC1_SBOM_URL" ||
+	! echo "$RC1_SBOM_SHA256  $data/$RC1_TAG/bom.cdx.json" | sha256sum -c -; then
+	echo "advisory-feed: no verified SBOM for $RC1_TAG; its status file stays as it was" >&2
+	rm -rf "${data:?}/$RC1_TAG"
+	partial=1
+fi
 
 echo "==> prior status files from $BASE_URL"
 for t in $tags $RC1_TAG; do
@@ -48,8 +61,21 @@ for t in $tags $RC1_TAG; do
 done
 
 echo "==> monitor"
-GRYPE_DB_CACHE_DIR=$FEED_DIR/grype-db PATH=$PWD/$bin:$PATH \
-	python3 "$HERE/nightly-cve-monitor.py" --data-dir "$data" --base-url "$BASE_URL"
+rc=0
+GRYPE_DB_CACHE_DIR=$FEED_DIR/grype-db PATH=$bin:$PATH \
+	python3 "$HERE/nightly-cve-monitor.py" --data-dir "$data" --base-url "$BASE_URL" || rc=$?
+case $rc in
+0) ;;
+1) partial=1 ;;
+*) echo "advisory-feed: monitor failed (exit $rc); nothing built" >&2; exit "$rc" ;;
+esac
 
 cp "$data"/status/*.json "$site/status/"
-echo "==> site: $(ls "$site/status" | wc -l) status file(s)"
+set -- "$site"/status/*.json
+echo "==> site: $# status file(s)"
+if [ -n "$partial" ]; then
+	echo partial >"$FEED_DIR/result"
+	echo "advisory-feed: some builds were not refreshed (see above); the rest are published" >&2
+else
+	echo ok >"$FEED_DIR/result"
+fi
