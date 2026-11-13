@@ -5,7 +5,7 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create advisory-feed advisory-feed-check check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline pin-check pin-tree-exists pin-seed update-build-pins update-all pin-labels pin-branch pin-commit pin-pr cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create advisory-feed advisory-feed-check check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline pin-check pin-tree-exists pin-seed update-build-pins update-all pin-labels pin-branch pin-commit pin-pr cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions build-image print-registry-tag push-image toolchain-inputs toolchain-labels toolchain-epoch toolchain-update toolchain-epoch-check toolchain-branch toolchain-digest toolchain-commit toolchain-dispatch toolchain-wait toolchain-pr list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -330,6 +330,165 @@ tree-restore-offline:
 		[ -z "$$d" ] || { echo "$$d" | head -n 20; echo "tree-restore-offline: $(TREE_DIR) differs in content from the archive"; exit 1; }; \
 		diff "$(TREE_PULL)/listed" "$(TREE_PULL)/found" || { echo "tree-restore-offline: $(TREE_DIR) differs from the archive"; exit 1; }; \
 		echo "tree-restore-offline: $$(wc -l < "$(TREE_PULL)/found") files extracted offline, as in the archive"'
+
+# ---- M02: the builder rebuild (.github/workflows/toolchain-bump.yml; docs/version-pinning.md) ----
+
+# Toolchain epoch: pins the stage3 base image of the builder image. Decoupled from BUILD_EPOCH on purpose: see the Dockerfile header.
+TOOLCHAIN_EPOCH := $(shell grep '^ARG TOOLCHAIN_EPOCH=' Dockerfile | cut -d= -f2)
+
+# The tree baked into the builder image: gentoo-tree:TREE_COMMIT_TOOLCHAIN, restored by TREE_DIGEST_TOOLCHAIN into ./tree/ and
+# copied in by the Dockerfile. Both stay empty until a toolchain bump PR writes them; while either is empty build-image fails.
+TREE_COMMIT_TOOLCHAIN :=
+TREE_DIGEST_TOOLCHAIN :=
+
+LOGS_MOUNT = -v $(abspath $(PORTAGE_LOGS_DIR)):/var/log/portage
+
+# The builder image is pushed as $(REGISTRY)/builder, the name pull-image takes it from.
+REGISTRY_IMAGE := $(REGISTRY)/builder
+
+# Registry tag = TOOLCHAIN_EPOCH + a short hash of the Dockerfile with the two runtime-injected pins excluded (ARG BUILD_EPOCH,
+# ENV SOURCE_DATE_EPOCH). The image's filesystem is a function of TOOLCHAIN_EPOCH only: BUILD_EPOCH is injected at build time
+# by sync-portage and SOURCE_DATE_EPOCH is ENV metadata, so a routine BUILD_EPOCH bump must not mint a tag that was never pushed.
+DOCKERFILE_HASH := $(shell grep -vE '^ARG BUILD_EPOCH=|^ENV SOURCE_DATE_EPOCH=' Dockerfile | sha256sum | cut -c1-12)
+REGISTRY_TAG := $(TOOLCHAIN_EPOCH)-$(DOCKERFILE_HASH)
+
+# Build the builder image (pure factory: toolchain only, no sources). The toolchain tree is restored first from the archive,
+# by digest, into ./tree/. Then it tries to pull $(REGISTRY_IMAGE):$(REGISTRY_TAG) (fast path) and falls back to a local
+# build. Crossdev runs as `docker run` so portage logs land in output/portage-logs/; the final image is made by `docker commit`
+# from the finished crossdev container. The base-tools image ID is stamped as a label on the final image; if it matches the
+# current base-tools ID on a later run, the crossdev step is skipped. The build is followed by builder-manifest.sh.
+build-image:
+	@test -n '$(TREE_COMMIT_TOOLCHAIN)' || { echo "build-image: TREE_COMMIT_TOOLCHAIN is empty; a toolchain bump PR writes it (docs/version-pinning.md)"; exit 1; }
+	@test -n '$(TREE_DIGEST_TOOLCHAIN)' || { echo "build-image: TREE_DIGEST_TOOLCHAIN is empty; a toolchain bump PR writes it (docs/version-pinning.md)"; exit 1; }
+	$(MAKE) ensure-dirs
+	$(MAKE) sync-portage TREE_COMMIT=$(TREE_COMMIT_TOOLCHAIN) TREE_DIGEST=$(TREE_DIGEST_TOOLCHAIN) TREE_DIR=tree
+	@if [ -n "$(REGISTRY)" ] && $(DOCKER) pull $(REGISTRY_IMAGE):$(REGISTRY_TAG) 2>/dev/null; then \
+		$(DOCKER) tag $(REGISTRY_IMAGE):$(REGISTRY_TAG) $(IMAGE_NAME); \
+		$(DOCKER) pull $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG) 2>/dev/null && \
+			$(DOCKER) tag $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG) $(BASE_TOOLS_IMAGE) || true; \
+		echo "==> Pulled $(IMAGE_NAME) from $(REGISTRY_IMAGE):$(REGISTRY_TAG)"; \
+	else \
+		[ -n "$(REGISTRY)" ] && echo "==> Registry pull failed — building locally" || true; \
+		echo "==> Building base-tools stage (toolchain epoch: $(TOOLCHAIN_EPOCH))"; \
+		$(DOCKER) buildx build --target base-tools \
+			--build-arg TOOLCHAIN_EPOCH=$(TOOLCHAIN_EPOCH) \
+			--build-arg BUILD_EPOCH=$(BUILD_EPOCH) \
+			$(if $(REGISTRY),--cache-from $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)) \
+			--cache-from $(BASE_TOOLS_IMAGE) --cache-to type=inline \
+			-t $(BASE_TOOLS_IMAGE) \
+			. && \
+		BASE_HASH=$$($(DOCKER) inspect --format='{{json .RootFS.Layers}}' $(BASE_TOOLS_IMAGE) | sha256sum | cut -d' ' -f1) && \
+		CROSSDEV_PINS="$$(cat configs/portage/crossdev.lock | sha256sum | cut -d' ' -f1):$(CROSS_BINUTILS_VER):$(CROSS_HEADERS_VER)" && \
+		COMBINED_HASH=$$(printf '%s:%s' "$$BASE_HASH" "$$CROSSDEV_PINS" | sha256sum | cut -d' ' -f1) && \
+		EXISTING_HASH=$$($(DOCKER) inspect --format='{{index .Config.Labels "base-tools-hash"}}' $(IMAGE_NAME) 2>/dev/null || true) && \
+		if [ -n "$$EXISTING_HASH" ] && [ "$$COMBINED_HASH" = "$$EXISTING_HASH" ]; then \
+			echo "==> Image $(IMAGE_NAME) is up to date — base-tools and crossdev pins unchanged, skipping crossdev"; \
+		else \
+			[ -n "$$EXISTING_HASH" ] \
+				&& echo "==> Base-tools or crossdev pins changed — rebuilding crossdev toolchain" \
+				|| echo "==> Building crossdev toolchain (logs → $(PORTAGE_LOGS_DIR)/)"; \
+			$(DOCKER) rm -f $(CROSSDEV_CONTAINER) 2>/dev/null || true; \
+			$(DOCKER) run --name $(CROSSDEV_CONTAINER) \
+				$(LOGS_MOUNT) \
+				$(BASE_TOOLS_IMAGE) \
+				bash -c 'set -e && \
+				    printf "=cross-%s/musl-9999\n>=cross-%s/binutils-9999\n=cross-%s/gcc-14.4.9999\n" \
+				        "$$CROSS_TARGET" "$$CROSS_TARGET" "$$CROSS_TARGET" \
+				        > /etc/portage/package.mask/crossdev-no-live && \
+				    mkdir -p /etc/portage/package.unmask && \
+				    printf "=cross-%s/musl-$(CROSS_MUSL_VER)*\n" "$$CROSS_TARGET" \
+				        > /etc/portage/package.unmask/crossdev-musl && \
+				    crossdev --target "$$CROSS_TARGET" --stable \
+				        --gcc     "$(CROSS_GCC_VER)" \
+				        --libc    "$(CROSS_MUSL_VER)" \
+				        --binutils "$(CROSS_BINUTILS_VER)" \
+				        --kernel  "$(CROSS_HEADERS_VER)" \
+				        --portage --verbose && \
+				    emerge --update --newuse "cross-$$CROSS_TARGET/gcc" && \
+				    rm -rf /var/cache/distfiles/* && \
+				    mkdir -p \
+				        /usr/$$CROSS_TARGET/etc/portage/{package.use,package.accept_keywords,package.mask,package.env,env} \
+				        /build /configs /output /initrd' && \
+			$(DOCKER) commit \
+				--change 'ENV BUILD_DIR=/build' \
+				--change 'ENV CONFIGS_DIR=/configs' \
+				--change 'ENV OUTPUT_DIR=/output' \
+				--change "LABEL base-tools-hash=$$COMBINED_HASH" \
+				$(CROSSDEV_CONTAINER) $(IMAGE_NAME) && \
+			$(DOCKER) rm $(CROSSDEV_CONTAINER) && \
+			echo "==> Image $(IMAGE_NAME) ready"; \
+		fi; \
+	fi
+	mkdir -p output
+	DOCKER='$(DOCKER)' sh scripts/builder-manifest.sh $(IMAGE_NAME) > output/builder-manifest.txt
+
+# Print the resolved REGISTRY_TAG (epoch-hash), so CI need not re-derive the Dockerfile hash.
+print-registry-tag:
+	@echo $(REGISTRY_TAG)
+
+# Push the builder image to $(REGISTRY_IMAGE). With GITHUB_TOKEN set (CI) it logs in first.
+push-image: build-image
+	@if [ -z "$(REGISTRY)" ]; then \
+		echo "Error: set REGISTRY=<registry/repo>"; \
+		exit 1; \
+	fi
+	if [ -n "$${GITHUB_TOKEN:-}" ]; then echo "$$GITHUB_TOKEN" | $(DOCKER) login $(firstword $(subst /, ,$(REGISTRY))) -u "$${GITHUB_ACTOR:-token}" --password-stdin; fi
+	$(DOCKER) tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(REGISTRY_TAG)
+	$(DOCKER) tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(TOOLCHAIN_EPOCH)
+	$(DOCKER) tag $(IMAGE_NAME) $(REGISTRY_IMAGE):latest
+	$(DOCKER) push $(REGISTRY_IMAGE):$(REGISTRY_TAG)
+	$(DOCKER) push $(REGISTRY_IMAGE):$(TOOLCHAIN_EPOCH)
+	$(DOCKER) push $(REGISTRY_IMAGE):latest
+	$(DOCKER) tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)
+	$(DOCKER) tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(TOOLCHAIN_EPOCH)
+	$(DOCKER) tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:latest
+	$(DOCKER) push $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)
+	$(DOCKER) push $(REGISTRY_IMAGE)-base-tools:$(TOOLCHAIN_EPOCH)
+	$(DOCKER) push $(REGISTRY_IMAGE)-base-tools:latest
+	@echo "==> Pushed $(REGISTRY_IMAGE):$(REGISTRY_TAG) (+ :$(TOOLCHAIN_EPOCH) + :latest)"
+
+# The toolchain bump's steps (toolchain-bump.yml). The workflow passes NEW_COMMIT (tree_commit), TARGET_EPOCH, FIRST_REBUILD,
+# OLD_EPOCH and the step results through env; scripts/toolchain-bump.sh has the logic.
+TARGET_EPOCH ?=
+FIRST_REBUILD ?=
+
+toolchain-inputs:
+	bash scripts/toolchain-bump.sh inputs
+
+toolchain-labels:
+	bash scripts/toolchain-bump.sh labels
+
+# Records the current TOOLCHAIN_EPOCH and the epoch to bump to in $GITHUB_OUTPUT (the current one in a first rebuild).
+toolchain-epoch:
+	bash scripts/toolchain-bump.sh epoch
+
+# Verifies gentoo-tree:NEW_COMMIT, writes TOOLCHAIN_EPOCH and the two tree pins, then regenerates crossdev.lock from the
+# pulled builder image (the crossdev step needs the engine, so it runs on the host).
+toolchain-update:
+	toolbox/run -- scripts/update-build-pins.sh update-toolchain $(NEW_COMMIT) $(TARGET_EPOCH)
+	scripts/update-build-pins.sh crossdev-lock
+
+toolchain-epoch-check:
+	bash scripts/toolchain-bump.sh epoch-check
+
+toolchain-branch:
+	bash scripts/toolchain-bump.sh branch
+
+# Writes the pushed image's digest into BUILDER_DIGEST.
+toolchain-digest:
+	bash scripts/toolchain-bump.sh digest
+
+toolchain-commit:
+	bash scripts/toolchain-bump.sh commit
+
+toolchain-dispatch:
+	bash scripts/toolchain-bump.sh dispatch
+
+toolchain-wait:
+	bash scripts/toolchain-bump.sh wait
+
+toolchain-pr:
+	bash scripts/toolchain-bump.sh pr
 
 # ---- S01: the SBOM and the three gates ----
 
