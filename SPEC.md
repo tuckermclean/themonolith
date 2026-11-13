@@ -50,7 +50,7 @@ projects with their own specifications. This spec places no requirements on them
 arrive as ordinary packages in the overlay and count against the size budget (§1).
 
 Also out of scope:
-- the predecessor's dashboard and in-browser boot demo;
+- the predecessor's in-browser boot demo, and its dashboard code (P04's dashboard is new, §5);
 - any agent orchestration for building this repository.
 
 ### 0.1 The myth (and why it is load-bearing)
@@ -308,7 +308,7 @@ custom row must name the gap. Anything with no gap here is not built.
 | Reproducibility | `SOURCE_DATE_EPOCH`, `KBUILD_BUILD_*`, `cpio --reproducible`, mksquashfs and xorriso date options, `mkfs.vfat --invariant`, `docker run --network none`; `sha256sum` decides; diffoscope only diagnoses a mismatch | Each nondeterminism is fixed at its source (P02). There is no known-differences list. The one possible custom step is normalising Portage's VDB metadata on the disc, if Portage does not honour `SOURCE_DATE_EPOCH` for it (unverified). |
 | CI | GitHub Actions, Dependabot for action SHAs, CODEOWNERS and branch protection | The ported workflows, without the AWS steps. |
 | Storage | An OCI registry (GHCR) via `oras` or `docker`; GitHub Releases; Actions artifacts | None. No store interface, contract suite or backends. |
-| Publishing | GitHub Releases, as the download page; GitHub Pages for the advisory feed | The advisory feed later (P03): static JSON on GitHub Pages under the OD-1 name, so no cloud key is stored. The dashboard and boot demo are out of scope. |
+| Publishing | GitHub Releases, as the download page; GitHub Pages for the advisory feed and the release dashboard | The advisory feed (P03): static JSON on GitHub Pages under the OD-1 name, so no cloud key is stored. The release dashboard (P04): static HTML pages on the same site, written by the feed's run from the release assets and the feed. Gap: a GitHub release page shows assets and notes, not the gate results, the advisory status or the SBOM's contents. P04 writes a new UI with no JavaScript, framework or third-party fonts rather than porting the predecessor's `web/` app, which read a bucket that no longer exists: a deliberate exception to §2.2, chosen by the owner. The in-browser boot demo is out of scope. |
 | Process | Branch protection, CODEOWNERS, PR review; Claude Code skills, subagents and hooks | Development tooling, outside the product: the `/node` skill, three role agents (tester, implementer, reviewer), a guard hook and the spec checker in `.claude/`, adapted from strange-company. No agent platform, identity CI or system inventory. |
 
 ---

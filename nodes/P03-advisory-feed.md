@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| later | P01, S01 | X01 | — | M |
+| later | P01, S01 | P04, X01 | — | M |
 
 **Owns:** `scripts/nightly-cve-monitor.py` (modified), `.github/workflows/advisory-feed.yml` (replaces `nightly-cve-scan.yml`), `scripts/tests/advisory-feed.test.sh`, `scripts/tests/advisory-feed-workflow.test.sh`, `scripts/advisory-feed.sh` (the feed run the workflow calls), `Makefile` (target `advisory-feed`).
 **Ports from linux-live-iso-factory@b9f533b:** `scripts/nightly-cve-monitor.py` (359 lines), `.github/workflows/nightly-cve-scan.yml`. The disc side (`monolith-advisory-check` and its URL) is R01's and is read here, not changed. Not ported: `generate-dashboard.py`.
