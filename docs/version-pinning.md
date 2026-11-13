@@ -162,6 +162,20 @@ gcc that fails against the kernel headers pin, an ebuild that no longer applies.
 3. A push to the branch re-runs the Build run, since the PR carries `full-ci` (`synchronize` re-runs it).
 4. Repeat until green, then merge the PR normally. Nothing in this pipeline merges on your behalf.
 
+## The toolchain bump
+
+The builder image is rebuilt by `.github/workflows/toolchain-bump.yml`, run by hand (`workflow_dispatch`).
+
+- **Pins.** `TREE_COMMIT_TOOLCHAIN` and `TREE_DIGEST_TOOLCHAIN` in the `Makefile` name the tree the image bakes in.
+  They are empty until the PR of the first dispatch writes them. While either is empty, `make build-image` fails.
+- **Inputs.** `tree_commit` is the 40-digit commit of the tree. `first_rebuild` rebuilds at the current
+  `TOOLCHAIN_EPOCH`. Without it, the run stops when the epoch is unchanged.
+- **Archive.** The `archive` job stores the tree as `gentoo-tree:<commit40>` when the registry lacks it.
+- **Tags.** The image tag is the epoch, a hash of the `Dockerfile` and the first 12 digits of the tree commit.
+- **No merge.** The workflow opens a PR and never merges it. A human reads it first.
+- **New epoch.** The `FROM` line of the `Dockerfile` names the stage3 image by digest. A new epoch needs a new stage3
+  digest in that `FROM` line and a mirror of the image first. Until then, the pin script refuses a changed epoch.
+
 ## Caveat: `savedconfig` changes require a binpkg purge
 
 `build.yml` restores the per-package binary packages (`.gpkg.tar`) from the registry store

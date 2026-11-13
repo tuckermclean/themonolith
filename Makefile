@@ -350,7 +350,10 @@ REGISTRY_IMAGE := $(REGISTRY)/builder
 # ENV SOURCE_DATE_EPOCH). The image's filesystem is a function of TOOLCHAIN_EPOCH only: BUILD_EPOCH is injected at build time
 # by sync-portage and SOURCE_DATE_EPOCH is ENV metadata, so a routine BUILD_EPOCH bump must not mint a tag that was never pushed.
 DOCKERFILE_HASH := $(shell grep -vE '^ARG BUILD_EPOCH=|^ENV SOURCE_DATE_EPOCH=' Dockerfile | sha256sum | cut -c1-12)
-REGISTRY_TAG := $(TOOLCHAIN_EPOCH)-$(DOCKERFILE_HASH)
+# The tree is a pin, not part of the Dockerfile, so the first 12 hex digits of TREE_COMMIT_TOOLCHAIN are in the tag too:
+# an image built from another tree must not be reused.
+TREE_COMMIT_TOOLCHAIN12 := $(shell printf '%.12s' '$(TREE_COMMIT_TOOLCHAIN)')
+REGISTRY_TAG := $(TOOLCHAIN_EPOCH)-$(DOCKERFILE_HASH)-$(TREE_COMMIT_TOOLCHAIN12)
 
 # Build the builder image (pure factory: toolchain only, no sources). The toolchain tree is restored first from the archive,
 # by digest, into ./tree/. Then it tries to pull $(REGISTRY_IMAGE):$(REGISTRY_TAG) (fast path) and falls back to a local
@@ -358,8 +361,8 @@ REGISTRY_TAG := $(TOOLCHAIN_EPOCH)-$(DOCKERFILE_HASH)
 # from the finished crossdev container. The base-tools image ID is stamped as a label on the final image; if it matches the
 # current base-tools ID on a later run, the crossdev step is skipped. The build is followed by builder-manifest.sh.
 build-image:
-	@test -n '$(TREE_COMMIT_TOOLCHAIN)' || { echo "build-image: TREE_COMMIT_TOOLCHAIN is empty; a toolchain bump PR writes it (docs/version-pinning.md)"; exit 1; }
-	@test -n '$(TREE_DIGEST_TOOLCHAIN)' || { echo "build-image: TREE_DIGEST_TOOLCHAIN is empty; a toolchain bump PR writes it (docs/version-pinning.md)"; exit 1; }
+	@test -n '$(TREE_COMMIT_TOOLCHAIN)' || { echo "build-image: TREE_COMMIT_TOOLCHAIN is empty; a toolchain bump PR writes it (docs/version-pinning.md, The toolchain bump)"; exit 1; }
+	@test -n '$(TREE_DIGEST_TOOLCHAIN)' || { echo "build-image: TREE_DIGEST_TOOLCHAIN is empty; a toolchain bump PR writes it (docs/version-pinning.md, The toolchain bump)"; exit 1; }
 	$(MAKE) ensure-dirs
 	$(MAKE) sync-portage TREE_COMMIT=$(TREE_COMMIT_TOOLCHAIN) TREE_DIGEST=$(TREE_DIGEST_TOOLCHAIN) TREE_DIR=tree
 	@if [ -n "$(REGISTRY)" ] && $(DOCKER) pull $(REGISTRY_IMAGE):$(REGISTRY_TAG) 2>/dev/null; then \
@@ -484,7 +487,8 @@ toolchain-commit:
 # Dispatches build.yml on the bump branch, then the script finds the run it started.
 toolchain-dispatch:
 	DISPATCHED_AFTER=$$(date -u +%Y-%m-%dT%H:%M:%SZ); export DISPATCHED_AFTER; \
-	gh workflow run build.yml --ref "$$(bash scripts/toolchain-bump.sh branch-name)" && \
+	br=$$(bash scripts/toolchain-bump.sh branch-name) && [ -n "$$br" ] && \
+	gh workflow run build.yml --ref "$$br" && \
 	bash scripts/toolchain-bump.sh dispatch
 
 toolchain-wait:

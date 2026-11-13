@@ -359,6 +359,13 @@ cmd_update_toolchain() {
         fi
     fi
 
+    # A new epoch needs a new stage3 digest in the Dockerfile FROM and a mirror first: the FROM resolves by digest, so
+    # changing only the ARG would build the old stage3 under the new epoch's name.
+    if [[ "${current_epoch}" != "${latest_date}" ]]; then
+        echo "ERROR: TOOLCHAIN_EPOCH ${current_epoch} -> ${latest_date}: a new epoch needs a new stage3 digest in the Dockerfile FROM and a mirror first (docs/version-pinning.md, 'The toolchain bump'). Dispatch with first_rebuild, or with the current epoch." >&2
+        exit 1
+    fi
+
     # Fail closed: the tree must be archived. An empty answer or an error from the registry is a failure.
     local ref digest
     ref="$(get_registry)/gentoo-tree"
