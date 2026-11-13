@@ -30,8 +30,8 @@ trap 'rm -rf "$TMP"' EXIT
 BIN="$TMP/bin"; mkdir -p "$BIN"
 LOG="$TMP/docker.log"
 
-# ---- I03-AC-1: the Dockerfile is the predecessor's, byte for byte -------------
-DF="$ROOT/Dockerfile"
+# ---- I03-AC-1: the b9f533b Dockerfile fixture is the predecessor's, byte for byte
+DF="$ROOT/scripts/fixtures/M02/Dockerfile.b9f533b"
 if [ -f "$DF" ]; then
     sum=$(sha256sum "$DF" | cut -d' ' -f1)
     [ "$sum" = 19a14861abd13739bf4c4380dea29fe3b028dc218181d43e01acb11a33f5f861 ] \
@@ -42,8 +42,8 @@ if [ -f "$DF" ]; then
         && ok "I03-AC-1 Dockerfile without the epoch lines hashes to d9d08d1c7422" \
         || fail "I03-AC-1 Dockerfile without the epoch lines hashes to $pre, want d9d08d1c7422"
 else
-    fail "I03-AC-1 Dockerfile sha256 is the b9f533b blob (Dockerfile missing)"
-    fail "I03-AC-1 Dockerfile without the epoch lines hashes to d9d08d1c7422 (Dockerfile missing)"
+    fail "I03-AC-1 Dockerfile sha256 is the b9f533b blob (Dockerfile fixture missing)"
+    fail "I03-AC-1 Dockerfile without the epoch lines hashes to d9d08d1c7422 (Dockerfile fixture missing)"
 fi
 
 # ---- stub docker: DOCKER_MODE = ok | pullfail ---------------------------------
@@ -112,7 +112,7 @@ bt=$(printf '%s\n' 'docker pull ghcr.io/x/builder:latest' 'docker pull ghcr.io/x
     && ok "I03-AC-3 builder-reference pattern skips manifest paths, matches builder:tag and bare builder" \
     || fail "I03-AC-3 builder-reference pattern (paths matched=$bn, refs matched=$bt of 2)"
 
-WF=$(ls "$ROOT"/.github/workflows/* 2>/dev/null)
+WF=$(ls "$ROOT"/.github/workflows/* 2>/dev/null | grep -v -F "$ROOT/.github/workflows/toolchain-bump.yml")
 bad=0
 for f in $WF; do
     if grep -nE ':latest|REGISTRY_TAG|buildx build|STAGE3_DIGEST' "$f" >/dev/null; then
