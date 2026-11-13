@@ -210,7 +210,7 @@ test-artifact: rootfs
 # ---- I03: the builder image, taken by digest ----
 
 # rc1's builder image. Nothing here builds it or pulls it by tag.
-BUILDER_DIGEST := sha256:ab04002a13794c2ad90d821b5de535a4e4df2945346bb04d8073883ea8aab3fa
+BUILDER_DIGEST := sha256:3f825cc695668cd70096b3fc14b5abfdf4d4888c299f313be71a8652fb0c3d13
 BUILDER_REF := $(REGISTRY)/builder@$(BUILDER_DIGEST)
 IMAGE_NAME := monolith-builder
 DOCKER ?= docker
@@ -338,8 +338,8 @@ TOOLCHAIN_EPOCH := $(shell grep '^ARG TOOLCHAIN_EPOCH=' Dockerfile | cut -d= -f2
 
 # The tree baked into the builder image: gentoo-tree:TREE_COMMIT_TOOLCHAIN, restored by TREE_DIGEST_TOOLCHAIN into ./tree/ and
 # copied in by the Dockerfile. Both stay empty until a toolchain bump PR writes them; while either is empty build-image fails.
-TREE_COMMIT_TOOLCHAIN :=
-TREE_DIGEST_TOOLCHAIN :=
+TREE_COMMIT_TOOLCHAIN := d4d0b0c78bd9a3b0b81434268dd96e6f97b294cb
+TREE_DIGEST_TOOLCHAIN := sha256:05e24a4b8d0d2d2f15552ffb26b82db5c3cee5ccf25a86a2e60205c747022ad8
 
 LOGS_MOUNT = -v $(abspath $(PORTAGE_LOGS_DIR)):/var/log/portage
 
