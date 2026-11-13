@@ -36,7 +36,8 @@ on:
       target_epoch:
         description: >-
           Force a specific TOOLCHAIN_EPOCH (YYYYMMDD) instead of the latest stage3 tag. Leave empty for normal behavior;
-          it must stay empty with first_rebuild.
+          it must stay empty with first_rebuild. A changed epoch is refused until the Dockerfile's stage3 digest is
+          updated, so first_rebuild is currently the only mode that completes.
         required: false
         type: string
 

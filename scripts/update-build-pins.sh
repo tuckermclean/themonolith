@@ -13,8 +13,9 @@
 #   update-build-pins.sh check            # newest commit of gentoo-mirror/gentoo (or $TARGET_COMMIT)
 #   update-build-pins.sh update <commit>  # write the four pin lines for an archived commit
 #   update-build-pins.sh update-toolchain <commit> [YYYYMMDD]
-#                                         # write TOOLCHAIN_EPOCH (latest stage3 tag, or the given date) and the two
-#                                         # toolchain tree pins for an archived commit
+#                                         # write the two toolchain tree pins for an archived commit; a changed
+#                                         # TOOLCHAIN_EPOCH (latest stage3 tag, or the given date) is refused until
+#                                         # the Dockerfile's stage3 digest is updated
 #   update-build-pins.sh crossdev-lock    # regenerate crossdev.lock from the monolith-builder image
 #   update-build-pins.sh set-builder <sha256:digest>   # write BUILDER_DIGEST
 #
@@ -47,8 +48,9 @@ usage() {
     echo "  update <commit40>  Write TREE_COMMIT, TREE_DIGEST, SOURCE_DATE_EPOCH and TREE_FILES"
     echo "                     for a commit already archived as gentoo-tree:<commit40>"
     echo "  update-toolchain <commit40> [YYYYMMDD]"
-    echo "                     Write TOOLCHAIN_EPOCH (the latest stage3 tag, or the given date), TREE_COMMIT_TOOLCHAIN"
-    echo "                     and TREE_DIGEST_TOOLCHAIN for a commit already archived as gentoo-tree:<commit40>"
+    echo "                     Write TREE_COMMIT_TOOLCHAIN and TREE_DIGEST_TOOLCHAIN for a commit already archived as"
+    echo "                     gentoo-tree:<commit40>; a changed TOOLCHAIN_EPOCH (the latest stage3 tag, or the given"
+    echo "                     date) is refused until the Dockerfile's stage3 digest is updated"
     echo "  crossdev-lock      Regenerate crossdev.lock from the monolith-builder image (needs Docker)"
     echo "  set-builder <sha256:digest>  Write BUILDER_DIGEST"
     exit 1
@@ -328,8 +330,9 @@ EOF
 }
 
 # Command: update-toolchain <commit40> [YYYYMMDD]
-# Bumps TOOLCHAIN_EPOCH, the builder image's stage3 pin, and writes the tree the image bakes in:
-# TREE_COMMIT_TOOLCHAIN and TREE_DIGEST_TOOLCHAIN, for a commit already archived as gentoo-tree:<commit>.
+# Writes the tree the image bakes in: TREE_COMMIT_TOOLCHAIN and TREE_DIGEST_TOOLCHAIN, for a commit already archived as
+# gentoo-tree:<commit>. A changed TOOLCHAIN_EPOCH (the builder image's stage3 pin) is refused until the Dockerfile's
+# stage3 digest is updated.
 # The image must then be rebuilt (make build-image). This does not touch SOURCE_DATE_EPOCH or the runtime tree pin.
 cmd_update_toolchain() {
     echo "==> Updating the toolchain pins (TOOLCHAIN_EPOCH, TREE_COMMIT_TOOLCHAIN, TREE_DIGEST_TOOLCHAIN)"
@@ -362,7 +365,7 @@ cmd_update_toolchain() {
     # A new epoch needs a new stage3 digest in the Dockerfile FROM and a mirror first: the FROM resolves by digest, so
     # changing only the ARG would build the old stage3 under the new epoch's name.
     if [[ "${current_epoch}" != "${latest_date}" ]]; then
-        echo "ERROR: TOOLCHAIN_EPOCH ${current_epoch} -> ${latest_date}: a new epoch needs a new stage3 digest in the Dockerfile FROM and a mirror first (docs/version-pinning.md, 'The toolchain bump'). Dispatch with first_rebuild, or with the current epoch." >&2
+        echo "ERROR: TOOLCHAIN_EPOCH ${current_epoch} -> ${latest_date}: a new epoch needs a new stage3 digest in the Dockerfile FROM and a mirror first (docs/version-pinning.md, 'The toolchain bump'). Dispatch with first_rebuild." >&2
         exit 1
     fi
 
@@ -384,6 +387,7 @@ cmd_update_toolchain() {
     if [[ "${current_epoch}" == "${latest_date}" ]]; then
         echo "  TOOLCHAIN_EPOCH already up to date: ${current_epoch}"
     else
+        # Unreachable while the guard above stands; it stays for when the stage3 digest moves with the epoch.
         echo "  Updating TOOLCHAIN_EPOCH: ${current_epoch} → ${latest_date}"
         sed -i "s/^ARG TOOLCHAIN_EPOCH=.*/ARG TOOLCHAIN_EPOCH=${latest_date}/" "${DOCKERFILE}"
         # Fail closed: assert the sed actually applied before continuing.

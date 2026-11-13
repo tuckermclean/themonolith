@@ -4,14 +4,14 @@
 #   toolchain-bump.sh labels       create the labels the PR uses (idempotent)
 #   toolchain-bump.sh epoch        write old (the current TOOLCHAIN_EPOCH) and target (the epoch to bump to) to $GITHUB_OUTPUT
 #   toolchain-bump.sh epoch-check  stop when TOOLCHAIN_EPOCH did not change, unless this is a first rebuild
-#   toolchain-bump.sh branch       switch to toolchain/bump-<old>-<new>-<commit12>-<run id>
+#   toolchain-bump.sh branch       switch to toolchain/bump-<old>-<new>-<commit12>-<run id>-<run attempt>
 #   toolchain-bump.sh branch-name  print the branch name
 #   toolchain-bump.sh digest       write the pushed builder image's digest to BUILDER_DIGEST
 #   toolchain-bump.sh commit       stage the pins, commit and push the branch
 #   toolchain-bump.sh dispatch     find the build.yml run the Makefile dispatched (make toolchain-dispatch); writes found, run_id and run_url to $GITHUB_OUTPUT
 #   toolchain-bump.sh wait         wait for that run; writes conclusion to $GITHUB_OUTPUT
 #   toolchain-bump.sh pr           open the PR against main. Nothing here merges.
-# Environment: GITHUB_RUN_ID (ends the branch name; "local" when unset), NEW_COMMIT (tree_commit, 40 hex digits), TARGET_EPOCH (YYYYMMDD or empty), FIRST_REBUILD (true|false),
+# Environment: GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT (end the branch name; "local" and 1 when unset), NEW_COMMIT (tree_commit, 40 hex digits), TARGET_EPOCH (YYYYMMDD or empty), FIRST_REBUILD (true|false),
 # OLD_EPOCH, REGISTRY, GH_TOKEN, DISPATCHED_AFTER (UTC time before the dispatch), and the step results BUILD_OUTCOME, RUN_FOUND, RUN_ID, RUN_URL, CONCLUSION.
 # A first rebuild rebuilds at the current TOOLCHAIN_EPOCH (M03 rebuilds rc1's image at its epoch).
 set -euo pipefail
@@ -22,7 +22,7 @@ out() { echo "$1" >> "${GITHUB_OUTPUT:-/dev/stdout}"; }
 branch() {
     : "${NEW_COMMIT:?toolchain-bump: NEW_COMMIT is not set}"
     : "${OLD_EPOCH:?toolchain-bump: OLD_EPOCH is not set}"
-    echo "toolchain/bump-${OLD_EPOCH}-$(cur_epoch)-$(printf %.12s "${NEW_COMMIT}")-${GITHUB_RUN_ID:-local}"
+    echo "toolchain/bump-${OLD_EPOCH}-$(cur_epoch)-$(printf %.12s "${NEW_COMMIT}")-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 }
 
 case ${1:-} in
@@ -43,8 +43,8 @@ inputs)
 labels)
     gh label create "toolchain-bump" --color "5319e7" \
         --description "Automated TOOLCHAIN_EPOCH pin bump (human-gated)" --force
-    gh label create "full-ci" --color "0E8A16" \
-        --description "Run the full ISO build on this PR" --force
+    gh label create "full-ci" --color "1d76db" \
+        --description "Run the full build on this pull request" --force
     gh label create "needs-fixup" --color "d93f0b" \
         --description "Automated pin bump failed or could not complete validation" --force
     gh label create "validated" --color "0e8a16" \

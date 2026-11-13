@@ -347,8 +347,9 @@ LOGS_MOUNT = -v $(abspath $(PORTAGE_LOGS_DIR)):/var/log/portage
 REGISTRY_IMAGE := $(REGISTRY)/builder
 
 # Registry tag = TOOLCHAIN_EPOCH + a short hash of the Dockerfile with the two runtime-injected pins excluded (ARG BUILD_EPOCH,
-# ENV SOURCE_DATE_EPOCH). The image's filesystem is a function of TOOLCHAIN_EPOCH only: BUILD_EPOCH is injected at build time
-# by sync-portage and SOURCE_DATE_EPOCH is ENV metadata, so a routine BUILD_EPOCH bump must not mint a tag that was never pushed.
+# ENV SOURCE_DATE_EPOCH) + the tree commit. The image's filesystem depends on TOOLCHAIN_EPOCH, the Dockerfile and
+# TREE_COMMIT_TOOLCHAIN: BUILD_EPOCH is injected at build time by sync-portage and SOURCE_DATE_EPOCH is ENV metadata, so a
+# routine BUILD_EPOCH bump must not mint a tag that was never pushed.
 DOCKERFILE_HASH := $(shell grep -vE '^ARG BUILD_EPOCH=|^ENV SOURCE_DATE_EPOCH=' Dockerfile | sha256sum | cut -c1-12)
 # The tree is a pin, not part of the Dockerfile, so the first 12 hex digits of TREE_COMMIT_TOOLCHAIN are in the tag too:
 # an image built from another tree must not be reused.
@@ -425,7 +426,7 @@ build-image:
 	mkdir -p output
 	DOCKER='$(DOCKER)' sh scripts/builder-manifest.sh $(IMAGE_NAME) > output/builder-manifest.txt
 
-# Print the resolved REGISTRY_TAG (epoch-hash), so CI need not re-derive the Dockerfile hash.
+# Print the resolved REGISTRY_TAG (epoch-dockerfilehash12-commit12), so CI need not re-derive the Dockerfile hash.
 print-registry-tag:
 	@echo $(REGISTRY_TAG)
 
@@ -465,8 +466,9 @@ toolchain-labels:
 toolchain-epoch:
 	bash scripts/toolchain-bump.sh epoch
 
-# Verifies gentoo-tree:NEW_COMMIT, writes TOOLCHAIN_EPOCH and the two tree pins, then regenerates crossdev.lock from the
-# pulled builder image (the crossdev step needs the engine, so it runs on the host).
+# Verifies gentoo-tree:NEW_COMMIT and writes the two tree pins, then regenerates crossdev.lock from the pulled builder image
+# (the crossdev step needs the engine, so it runs on the host). A changed TOOLCHAIN_EPOCH is refused until the Dockerfile's
+# stage3 digest is updated.
 toolchain-update:
 	toolbox/run -- scripts/update-build-pins.sh update-toolchain $(NEW_COMMIT) $(TARGET_EPOCH)
 	scripts/update-build-pins.sh crossdev-lock
