@@ -53,8 +53,10 @@ All three pins are checked into git and are the source of truth; this document e
 
 `TREE_COMMIT`, `TREE_DIGEST`, `SOURCE_DATE_EPOCH` and `TREE_FILES` are the tree pin; `BUILDER_DIGEST` is the
 builder pin. `scripts/update-build-pins.sh` manages the tree pin and runs on the host or in the toolbox
-(`git`, `curl`, `oras`, `zstd`, `jq`); it needs no Docker and makes no request to `distfiles.gentoo.org` or
-Docker Hub.
+(`git`, `curl`, `oras`, `zstd`, `jq`). Its tree-pin commands (`check`, `update`) need no Docker and make no
+request to `distfiles.gentoo.org` or Docker Hub. The toolchain commands differ: `update-toolchain` asks Docker
+Hub for the stage3 tags unless it is given a date, and reads the tree's digest from the registry;
+`crossdev-lock` needs Docker and the `monolith-builder` image; `set-builder` only writes `BUILDER_DIGEST`.
 
 ```sh
 scripts/update-build-pins.sh check                # newest gentoo-mirror/gentoo commit; NO-OP when it is TREE_COMMIT
@@ -162,6 +164,21 @@ gcc that fails against the kernel headers pin, an ebuild that no longer applies.
 3. A push to the branch re-runs the Build run, since the PR carries `full-ci` (`synchronize` re-runs it).
 4. Repeat until green, then merge the PR normally. Nothing in this pipeline merges on your behalf.
 
+## The toolchain bump
+
+The builder image is rebuilt by `.github/workflows/toolchain-bump.yml`, run by hand (`workflow_dispatch`).
+
+- **Pins.** `TREE_COMMIT_TOOLCHAIN` and `TREE_DIGEST_TOOLCHAIN` in the `Makefile` name the tree the image bakes in.
+  They are empty until the PR of the first dispatch writes them. While either is empty, `make build-image` fails.
+- **Inputs.** `tree_commit` is the 40-digit commit of the tree. `first_rebuild` rebuilds at the current
+  `TOOLCHAIN_EPOCH`. Without it, the run stops when the epoch is unchanged. `first_rebuild` is currently the only
+  mode that completes (see "New epoch").
+- **Archive.** The `archive` job stores the tree as `gentoo-tree:<commit40>` when the registry lacks it.
+- **Tags.** The image tag is the epoch, a hash of the `Dockerfile` and the first 12 digits of the tree commit.
+- **No merge.** The workflow opens a PR and never merges it. A human reads it first.
+- **New epoch.** The `FROM` line of the `Dockerfile` names the stage3 image by digest. A new epoch needs a new stage3
+  digest in that `FROM` line and a mirror of the image first. Until then, the pin script refuses a changed epoch.
+
 ## Caveat: `savedconfig` changes require a binpkg purge
 
 `build.yml` restores the per-package binary packages (`.gpkg.tar`) from the registry store
@@ -189,14 +206,16 @@ time; the kernel is not, which is why this is a purge-on-change rule rather than
 
 | File | Purpose |
 | --- | --- |
-| `Makefile` | the tree pin (`TREE_COMMIT`, `TREE_DIGEST`, `SOURCE_DATE_EPOCH`, `TREE_FILES`) and the builder pin (`BUILDER_DIGEST`) |
+| `Makefile` | the tree pin (`TREE_COMMIT`, `TREE_DIGEST`, `SOURCE_DATE_EPOCH`, `TREE_FILES`), the builder pin (`BUILDER_DIGEST`) and the toolchain tree pins (`TREE_COMMIT_TOOLCHAIN`, `TREE_DIGEST_TOOLCHAIN`) |
 | `configs/portage/versions.lock` | the world package version pins, resolved against the pinned tree |
 | `configs/portage/crossdev.lock` | musl + gcc cross-toolchain pins, tied to the builder pin |
 | `docs/tree-pin.md` | the record of rc1's tree |
 | `scripts/seed-tree.sh` | archives a gentoo-mirror commit as `gentoo-tree:<commit40>` |
 | `scripts/sync-portage.sh` | restores the pinned tree by digest; run via `make sync-portage` |
-| `scripts/update-build-pins.sh` | resolves the newest commit (`check`) and writes the tree pin lines (`update <commit>`) |
+| `scripts/update-build-pins.sh` | resolves the newest commit (`check`) and writes the tree pin lines (`update <commit>`); writes the toolchain tree pins (`update-toolchain <commit>`), regenerates `crossdev.lock` (`crossdev-lock`) and writes `BUILDER_DIGEST` (`set-builder <digest>`) |
 | `scripts/pin-bump-pr.sh` | the bump job's labels, branch, commit and PR steps (`make pin-*`) |
 | `scripts/update-versions.sh` | container-side: regenerate `versions.lock` against the restored tree |
 | `.github/workflows/pin-bump.yml` | the weekly/manual automation described above |
+| `.github/workflows/toolchain-bump.yml` | the manual builder image rebuild ("The toolchain bump") |
+| `scripts/toolchain-bump.sh` | the toolchain bump's inputs, labels, epoch, branch, digest, commit, dispatch, wait and PR steps (`make toolchain-*`) |
 | `.github/workflows/build.yml` | the build + attestation pipeline that validates the PR |

@@ -344,6 +344,7 @@ GitHub Action references are full commit SHAs in the workflow `uses:` lines, and
 | Name | Contents | Mutability |
 |---|---|---|
 | `builder@sha256:…` | The builder image; rc1's adopted copy is tagged `rc1` | immutable |
+| `stage3@sha256:…` | Docker Hub's `gentoo/stage3` image that the builder's `FROM` names, copied by digest | immutable |
 | `gentoo-tree:<commit40>` | A `git archive` of the pinned tree, as one layer | immutable |
 | `binpkgs:<cache-tag>` | The development `PKGDIR`, as one layer in the ported format. `<cache-tag>` is the first 16 hex digits of a sha256 over `BUILDER_DIGEST`, `TREE_COMMIT` and the global config files listed in §5. | overwritten by `main` builds only |
 | `distfiles:<version>` | The archive both release builds used, pushed after the gate | immutable |
