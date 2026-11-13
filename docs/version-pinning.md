@@ -153,8 +153,9 @@ is a full rebuild: the PR's run is cold, and `main` pays another after the merge
 A new tree can shift package versions in ways that break the build: a portage mask change, a new musl or
 gcc that fails against the kernel headers pin, an ebuild that no longer applies. The policy:
 
-1. The bump PR is opened with its failing Build run visible on it. A tree that does not resolve fails
-   `make update-versions` in the bump job and no PR is opened.
+1. The bump PR is opened with its failing Build run visible on it. When `make update-versions` fails
+   against the new tree, the bump job still pushes the branch and opens the PR, labelled `needs-fixup`, with a
+   BLOCKED note in its body (`versions.lock` is then unchanged).
 2. A human (or an agent) fixes forward on the **same branch** (`pins/bump-<old12>-<new12>`): adjust
    `package.mask`/`package.unmask` entries, tweak `configs/overlay/**` ebuilds, or hand-edit a lock entry,
    then commit directly to that branch. The `needs-fixup` label marks it.

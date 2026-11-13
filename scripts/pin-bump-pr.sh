@@ -4,7 +4,8 @@
 #   pin-bump-pr.sh branch   switch to pins/bump-<old12>-<new12>
 #   pin-bump-pr.sh commit   stage the tree pin and versions.lock, commit and push the branch
 #   pin-bump-pr.sh pr       open the PR against main with the full-ci label
-# Environment: OLD_COMMIT, NEW_COMMIT (40 hex digits); GH_TOKEN for labels and pr.
+# Environment: OLD_COMMIT, NEW_COMMIT (40 hex digits); GH_TOKEN for labels, commit (the push) and pr;
+# LOCK_OUTCOME (the update-versions step's outcome) for pr.
 set -eu
 
 : "${OLD_COMMIT:?pin-bump-pr: OLD_COMMIT is not set}"
@@ -42,7 +43,13 @@ commit)
 Automated by .github/workflows/pin-bump.yml.
 - Makefile: TREE_COMMIT, TREE_DIGEST, SOURCE_DATE_EPOCH, TREE_FILES
 - configs/portage/versions.lock: regenerated against the new tree"
-    git push -u origin "$BRANCH"
+    # actions/checkout keeps its credentials in an include file under RUNNER_TEMP, which the toolbox does not
+    # mount; authenticate this one push with the App token through a throwaway helper that reads $GH_TOKEN
+    # (nothing is written to .git/config, and the token is not on any command line).
+    : "${GH_TOKEN:?pin-bump-pr: GH_TOKEN is not set}"
+    git -c credential.helper= \
+        -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' \
+        push -u origin "$BRANCH"
     ;;
 pr)
     {
@@ -64,6 +71,11 @@ pr)
         echo "</details>"
         echo ""
         echo "## Validation"
+        if [ "${LOCK_OUTCOME:-success}" != "success" ]; then
+            echo "**BLOCKED** - \`make update-versions\` failed against the new tree. versions.lock was not"
+            echo "regenerated. Fix forward on this branch (docs/version-pinning.md)."
+            echo ""
+        fi
         echo "The \`full-ci\` label starts \`build.yml\` on this PR: build, attestation (SBOM, licence and CVE gates)"
         echo "and the boot tests. Merge only when that run is green."
         echo ""
@@ -71,12 +83,14 @@ pr)
         echo "This PR was opened automatically by \`.github/workflows/pin-bump.yml\`. It is never merged"
         echo "automatically; a human reviews and merges it, per \`docs/version-pinning.md\`."
     } > "$OUT/pr-body.md"
+    labels="pin-bump,full-ci"
+    [ "${LOCK_OUTCOME:-success}" = "success" ] || labels="$labels,needs-fixup"
     gh pr create \
         --title "$TITLE" \
         --body-file "$OUT/pr-body.md" \
         --base main \
         --head "$BRANCH" \
-        --label "pin-bump,full-ci"
+        --label "$labels"
     ;;
 *)
     echo "usage: pin-bump-pr.sh labels|branch|commit|pr" >&2

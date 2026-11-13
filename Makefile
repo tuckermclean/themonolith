@@ -278,7 +278,7 @@ CROSSDEV_CONTAINER := monolith-crossdev-build
 # rc1's tree: gentoo-mirror commit TREE_COMMIT, archived once as an OCI artifact (scripts/seed-tree.sh) and
 # restored by digest (scripts/sync-portage.sh). docs/tree-pin.md has the evidence.
 TREE_COMMIT := 6e88ed01f3e97de8710efe1c333808dfbd05bf32
-# SPEC §6: the committer time of TREE_COMMIT (2026-08-11T23:00:56Z, docs/tree-pin.md).
+# SPEC §6: the committer time of TREE_COMMIT (docs/tree-pin.md).
 SOURCE_DATE_EPOCH := 1786489256
 TREE_FILES := 130089
 TREE_DIGEST := sha256:b01bbe7a886fa869a4018a5f711e11fae8fb783b30878216b0f8f408ad2a70bd
@@ -770,10 +770,10 @@ pin-branch:
 # update-versions regenerates versions.lock inside the builder container, as root; reclaim it before staging.
 pin-commit:
 	sudo chown -R "$$(id -u):$$(id -g)" configs/portage
-	toolbox/run -e OLD_COMMIT -e NEW_COMMIT -- sh scripts/pin-bump-pr.sh commit
+	toolbox/run -e GH_TOKEN -e OLD_COMMIT -e NEW_COMMIT -- sh scripts/pin-bump-pr.sh commit
 
 pin-pr:
-	toolbox/run -e GH_TOKEN -e OLD_COMMIT -e NEW_COMMIT -- sh scripts/pin-bump-pr.sh pr
+	toolbox/run -e GH_TOKEN -e LOCK_OUTCOME -e OLD_COMMIT -e NEW_COMMIT -- sh scripts/pin-bump-pr.sh pr
 
 # Everything: packages (and their kernel modules checked), root filesystem, ISO.
 all: sync-portage build-packages verify-kernel-modules build-rootfs iso

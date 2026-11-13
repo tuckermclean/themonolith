@@ -128,6 +128,8 @@ jobs:
         with:
           app-id: ${{ vars.PIN_BUMP_APP_ID }}
           private-key: ${{ secrets.PIN_BUMP_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -156,15 +158,21 @@ jobs:
       - name: Restore the new tree
         run: make sync-portage
 
+      # A tree that does not resolve must not stop the PR: it is opened labelled needs-fixup (docs/version-pinning.md).
       - name: Regenerate versions.lock
+        id: update-versions
+        continue-on-error: true
         run: make update-versions
 
       # versions.lock is regenerated inside the builder container, so on the host it is owned by root and the
       # unprivileged runner's `git add` fails to index it; the target reclaims ownership before staging.
       - name: Commit and push
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: make pin-commit
 
       - name: Open PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LOCK_OUTCOME: ${{ steps.update-versions.outcome }}
         run: make pin-pr
