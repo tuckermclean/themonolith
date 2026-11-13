@@ -28,7 +28,7 @@ rc1's builder image is rebuilt on GitHub from the 20260810 stage3 and tree by M0
 3. **Compare.** The rebuilt image's `builder-manifest.txt` is committed as `rebuilt.txt` beside `rc1.txt`, and `docs/builder-rebuild.md` lists each difference with a cause. Byte identity is not expected: `docker commit`, `syft`/`grype` installed from `main` (`Dockerfile:128-142`), rustup's install script (`:167-170`) and distfiles fetched live all vary (unverified which differ). *Proof:* M03-AC-3.
 
 ## Gate
-- **M03-AC-1** — The rebuilt image passes I03's in-image checks (`-march=i486 -static` 64-bit atomic link, `gcc -m32` `sizeof(long)==4`), and its digest is pushed to `${REGISTRY}/builder`. *Verify:* `toolchain-bump.yml` dispatch on `main` (mode: first rebuild).
+- **M03-AC-1** — The rebuilt image passes I03's in-image checks (`-march=i486 -static` 64-bit atomic link, `gcc -m32` `sizeof(long)==4`), and its digest is pushed to `${REGISTRY}/builder`. *Verify:* `toolchain-bump.yml` dispatch on `main` (mode: first rebuild) builds and pushes the image; I03-AC-6's `docker run` (or `podman run`) checks on the pushed digest, since the workflow does not run them.
 - **M03-AC-2** — The first rebuild's build log has no `webrsync` line. *Verify:* the dispatch run log.
 - **M03-AC-3** — `docs/builder-manifests/rc1.txt` and `rebuilt.txt` exist, and every line of `diff` between them appears in `docs/builder-rebuild.md` with a cause; an empty diff is stated as such. *Verify:* `scripts/tests/builder-first-rebuild.test.sh` (diff, then `grep -F` each differing package).
 - **M03-AC-4** — A ci-build run (B03) using the rebuilt image resolves the same world versions as `versions.lock` and completes. *Verify:* `build.yml` run on the bump PR branch.
