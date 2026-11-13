@@ -5,7 +5,7 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create advisory-feed advisory-feed-check check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create advisory-feed advisory-feed-check check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline pin-check pin-tree-exists pin-seed update-build-pins update-all pin-labels pin-branch pin-commit pin-pr cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -275,10 +275,10 @@ CROSSDEV_CONTAINER := monolith-crossdev-build
 
 # ---- I02: the pinned Gentoo tree ----
 
-# rc1's tree: gentoo-mirror commit TREE_COMMIT, archived once as an OCI artifact (scripts/seed-tree.sh) and
-# restored by digest (scripts/sync-portage.sh). docs/tree-pin.md has the evidence.
+# The pinned tree: gentoo-mirror commit TREE_COMMIT, archived once as an OCI artifact (scripts/seed-tree.sh) and
+# restored by digest (scripts/sync-portage.sh). docs/tree-pin.md has rc1's evidence; docs/version-pinning.md the bump.
 TREE_COMMIT := 6e88ed01f3e97de8710efe1c333808dfbd05bf32
-# SPEC §6: the committer time of TREE_COMMIT (2026-08-11T23:00:56Z, docs/tree-pin.md).
+# SPEC §6: the committer time of the pinned tree's TREE_COMMIT.
 SOURCE_DATE_EPOCH := 1786489256
 TREE_FILES := 130089
 TREE_DIGEST := sha256:b01bbe7a886fa869a4018a5f711e11fae8fb783b30878216b0f8f408ad2a70bd
@@ -739,6 +739,54 @@ iso: pull-image ensure-dirs
 iso-stage:
 	mkdir -p output/iso
 	cp '$(BUILT_ISO)' output/iso/boot-test.iso
+
+# ---- M01: the tree bump (.github/workflows/pin-bump.yml; docs/version-pinning.md) ----
+
+# NEW_COMMIT: the gentoo-mirror commit being bumped to; OLD_COMMIT: the TREE_COMMIT it replaces; TARGET_COMMIT: an optional
+# forced commit for pin-check (the workflow's target_commit input). The workflow passes them through env.
+NEW_COMMIT ?=
+OLD_COMMIT ?=
+TARGET_COMMIT ?=
+need_new_commit = test -n '$(NEW_COMMIT)' || { echo 'NEW_COMMIT is empty'; exit 1; }
+
+# Resolves the newest commit (or TARGET_COMMIT); writes update_available, commit and current to $GITHUB_OUTPUT, and says NO-OP
+# in the job summary when it is TREE_COMMIT.
+pin-check:
+	toolbox/run -e TARGET_COMMIT -- scripts/update-build-pins.sh check
+
+# Writes exists=true|false to $GITHUB_OUTPUT: whether gentoo-tree:NEW_COMMIT is in the registry.
+pin-tree-exists:
+	@$(need_new_commit)
+	$(MAKE) tree-exists TREE_COMMIT=$(NEW_COMMIT)
+
+# Archives NEW_COMMIT as gentoo-tree:NEW_COMMIT (scripts/seed-tree.sh refuses an existing tag).
+pin-seed:
+	@$(need_new_commit)
+	$(MAKE) seed-tree TREE_COMMIT=$(NEW_COMMIT)
+
+# Rewrites the four tree pin lines for NEW_COMMIT, which must already be archived (the script refuses an empty one).
+update-build-pins:
+	toolbox/run -- scripts/update-build-pins.sh update $(NEW_COMMIT)
+
+# The pin lines, then versions.lock against the new tree. Two sub-makes, not prerequisites: Make reads the
+# TREE_* pins once at parse time, so update-versions must re-read the Makefile that update-build-pins rewrote.
+update-all:
+	$(MAKE) update-build-pins NEW_COMMIT=$(NEW_COMMIT)
+	$(MAKE) update-versions
+
+pin-labels:
+	toolbox/run -e GH_TOKEN -e OLD_COMMIT -e NEW_COMMIT -- sh scripts/pin-bump-pr.sh labels
+
+pin-branch:
+	toolbox/run -e OLD_COMMIT -e NEW_COMMIT -- sh scripts/pin-bump-pr.sh branch
+
+# update-versions regenerates versions.lock inside the builder container, as root; reclaim it before staging.
+pin-commit:
+	sudo chown -R "$$(id -u):$$(id -g)" configs/portage
+	toolbox/run -e GH_TOKEN -e OLD_COMMIT -e NEW_COMMIT -- sh scripts/pin-bump-pr.sh commit
+
+pin-pr:
+	toolbox/run -e GH_TOKEN -e LOCK_OUTCOME -e OLD_COMMIT -e NEW_COMMIT -- sh scripts/pin-bump-pr.sh pr
 
 # Everything: packages (and their kernel modules checked), root filesystem, ISO.
 all: sync-portage build-packages verify-kernel-modules build-rootfs iso
