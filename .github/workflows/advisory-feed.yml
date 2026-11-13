@@ -5,7 +5,8 @@ name: Advisory feed
 # acquired a gating CVE is marked revoked for the boot-time advisory check.
 #
 # scripts/advisory-feed.sh gathers the inputs and runs scripts/nightly-cve-monitor.py. Pages replaces
-# the whole site on each deploy, so the scan job's tree holds every status file, changed or not.
+# the whole site on each deploy, so the scan job's tree holds every status file, changed or not, including
+# those of deleted releases (listed in status/index.txt and carried forward).
 # The deploy job runs when the site tree was built. A scan that could not run builds none and publishes
 # nothing. If only some builds could not be refreshed, their files stay as they were, the rest are
 # published, and the scan job's last step fails so the run ends red.

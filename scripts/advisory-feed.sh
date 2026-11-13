@@ -3,7 +3,9 @@
 # existing status file, runs the monitor, and leaves the whole site in $FEED_DIR/site.
 # Env: GRYPE_VERSION, GRYPE_SHA256 (the linux_amd64 tarball), GH_TOKEN, GITHUB_REPOSITORY,
 #      RC1_TAG, RC1_SBOM_URL, RC1_SBOM_SHA256, BASE_URL, FEED_DIR (default output/advisory-feed).
-# A status file that cannot be fetched (anything but HTTP 404) fails the run: unreachable is never clean.
+# The site carries status/index.txt (every tag with a status file). The prior index and the prior status files
+# of the releases, rc1 and every indexed tag are fetched; a tag whose release is gone is carried forward unscanned.
+# An index or status file that cannot be fetched (anything but HTTP 404) fails the run: unreachable is never clean.
 # A release whose SBOM cannot be fetched or verified, or that the monitor cannot scan, is a per-build error:
 # its status file stays as it was, the other builds still update, and $FEED_DIR/result says "partial" (else "ok")
 # so the workflow can end red after it has published. Any other monitor failure builds nothing and fails.
@@ -49,8 +51,26 @@ if ! curl -fsSL --retry 3 -o "$data/$RC1_TAG/bom.cdx.json" "$RC1_SBOM_URL" ||
 	partial=1
 fi
 
+echo "==> tag index from $BASE_URL"
+code=$(curl -sS --retry 3 -o "$FEED_DIR/index.in" -w '%{http_code}' "$BASE_URL/status/index.txt") ||
+	{ echo "advisory-feed: $BASE_URL/status/index.txt unreachable" >&2; exit 1; }
+case $code in
+200) ;;
+404) : >"$FEED_DIR/index.in" ;;
+*) echo "advisory-feed: $BASE_URL/status/index.txt answered HTTP $code" >&2; exit 1 ;;
+esac
+# A tag is used in a URL and a path: keep only plain names.
+indexed=
+while IFS= read -r t || [ -n "$t" ]; do
+	case $t in
+	'' | .* | *[!A-Za-z0-9._+-]*) [ -z "$t" ] || echo "advisory-feed: ignoring bad index line" >&2 ;;
+	*) indexed="$indexed $t" ;;
+	esac
+done <"$FEED_DIR/index.in"
+
 echo "==> prior status files from $BASE_URL"
-for t in $tags $RC1_TAG; do
+# Releases that were deleted keep their status file: it is carried forward unscanned.
+for t in $(printf '%s\n' "$tags" "$RC1_TAG" "$indexed" | tr ' ' '\n' | sort -u); do
 	code=$(curl -sS --retry 3 -o "$data/status/$t.json" -w '%{http_code}' "$BASE_URL/status/$t.json") ||
 		{ echo "advisory-feed: $BASE_URL/status/$t.json unreachable" >&2; exit 1; }
 	case $code in
@@ -72,6 +92,7 @@ esac
 
 cp "$data"/status/*.json "$site/status/"
 set -- "$site"/status/*.json
+for f; do basename "$f" .json; done | sort >"$site/status/index.txt"
 echo "==> site: $# status file(s)"
 if [ -n "$partial" ]; then
 	echo partial >"$FEED_DIR/result"
