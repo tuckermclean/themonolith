@@ -132,6 +132,38 @@ server on the framebuffer, the `dwm` window manager and an `st` terminal. Boot a
 `fb800` first. The `gui` mode runs `startx` and checks that the server and `st` run and the screen is not
 blank. The `stele-acid2` mode renders the Acid2 page with `stele`, the document-web browser.
 
+## Verify a release
+
+Download the ISO and `SHA256SUMS` from the release, check the digest, then verify the attestation. An
+ISO from this repository (replace `<ver>` with the release version, for example `0.2.0`):
+
+```sh
+gh release download v<ver> --repo tuckermclean/themonolith \
+  --pattern 'themonolith-<ver>.iso' --pattern SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify themonolith-<ver>.iso \
+  --repo tuckermclean/themonolith \
+  --signer-workflow tuckermclean/themonolith/.github/workflows/build.yml
+```
+
+The predecessor's `v0.1.0-rc1` ISO was signed by the predecessor's workflow, so it verifies against
+that repository and not against this one:
+
+```sh
+gh release download v0.1.0-rc1 --repo tuckermclean/linux-live-iso-factory \
+  --pattern 'themonolith-0.1.0-rc1.iso' --pattern SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify themonolith-0.1.0-rc1.iso \
+  --repo tuckermclean/linux-live-iso-factory \
+  --signer-workflow tuckermclean/linux-live-iso-factory/.github/workflows/build.yml
+```
+
+The commands name the repository and the signer workflow. `--owner` alone is not used, because it
+accepts an attestation from any repository of the owner.
+
+Each release carries a report of what changed since rc1,
+[`rc1-diff.md`](https://github.com/tuckermclean/themonolith/releases/latest/download/rc1-diff.md).
+
 ## Testing
 
 The tests run in the [toolbox](toolbox/) (`toolbox/run`). The checks that need no ISO:
@@ -140,7 +172,7 @@ The tests run in the [toolbox](toolbox/) (`toolbox/run`). The checks that need n
 make test-lint test-unit
 ```
 
-`test-unit` runs every `scripts/tests/*.sh`, including two that check this README. They check the platform-support wording against dated evidence and the kernel's paravirtual driver symbols, the names of the boot tests, the SLIP and PPP command lines, the SSH key type and the boot menu default. They do not check every other sentence.
+`test-unit` runs every `scripts/tests/*.sh`, including three that check this README. They check the platform-support wording against dated evidence and the kernel's paravirtual driver symbols, the names of the boot tests, the SLIP and PPP command lines, the SSH key type, the boot menu default and the verification commands. They do not check every other sentence.
 The ISO is booted in QEMU under TCG by `scripts/boot-test.py`:
 
 ```
