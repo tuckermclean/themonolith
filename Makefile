@@ -275,10 +275,10 @@ CROSSDEV_CONTAINER := monolith-crossdev-build
 
 # ---- I02: the pinned Gentoo tree ----
 
-# rc1's tree: gentoo-mirror commit TREE_COMMIT, archived once as an OCI artifact (scripts/seed-tree.sh) and
-# restored by digest (scripts/sync-portage.sh). docs/tree-pin.md has the evidence.
+# The pinned tree: gentoo-mirror commit TREE_COMMIT, archived once as an OCI artifact (scripts/seed-tree.sh) and
+# restored by digest (scripts/sync-portage.sh). docs/tree-pin.md has rc1's evidence; docs/version-pinning.md the bump.
 TREE_COMMIT := 6e88ed01f3e97de8710efe1c333808dfbd05bf32
-# SPEC §6: the committer time of TREE_COMMIT (docs/tree-pin.md).
+# SPEC §6: the committer time of the pinned tree's TREE_COMMIT.
 SOURCE_DATE_EPOCH := 1786489256
 TREE_FILES := 130089
 TREE_DIGEST := sha256:b01bbe7a886fa869a4018a5f711e11fae8fb783b30878216b0f8f408ad2a70bd
@@ -758,8 +758,11 @@ pin-seed:
 update-build-pins:
 	toolbox/run -- scripts/update-build-pins.sh update $(NEW_COMMIT)
 
-# The pin lines, then versions.lock against the new tree.
-update-all: update-build-pins update-versions
+# The pin lines, then versions.lock against the new tree. Two sub-makes, not prerequisites: Make reads the
+# TREE_* pins once at parse time, so update-versions must re-read the Makefile that update-build-pins rewrote.
+update-all:
+	$(MAKE) update-build-pins NEW_COMMIT=$(NEW_COMMIT)
+	$(MAKE) update-versions
 
 pin-labels:
 	toolbox/run -e GH_TOKEN -e OLD_COMMIT -e NEW_COMMIT -- sh scripts/pin-bump-pr.sh labels
