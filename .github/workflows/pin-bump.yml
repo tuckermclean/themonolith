@@ -1,0 +1,179 @@
+name: Pin Bump
+
+# Proposes a new Gentoo tree as a pull request (docs/version-pinning.md). The tree pin is the Makefile's
+# TREE_COMMIT, TREE_DIGEST, SOURCE_DATE_EPOCH and TREE_FILES; this workflow moves them and regenerates
+# configs/portage/versions.lock. The builder image and stage3 pins are not touched.
+#
+# Weekly (and on manual dispatch) this:
+#   1. archive job: resolves the newest commit of gentoo-mirror/gentoo (or the target_commit input) with
+#      scripts/update-build-pins.sh. When it is TREE_COMMIT the run ends with NO-OP in the job summary. Otherwise it
+#      archives the commit as gentoo-tree:<commit> (scripts/seed-tree.sh) unless that tag exists. This job holds
+#      packages: write for the registry push and has no App token.
+#   2. bump job: with a GitHub App token, writes the four pin lines (scripts/update-build-pins.sh update), restores the
+#      tree (make sync-portage), regenerates versions.lock (make update-versions), pushes a branch and opens a PR
+#      against main with the full-ci label.
+#   3. The PR's own pull_request run of build.yml validates it (build, attestation, boot tests). The App token, unlike
+#      GITHUB_TOKEN, makes that run start. A human reviews and merges; nothing here merges.
+
+on:
+  schedule:
+    # Monday 06:00 UTC — three hours after build.yml's own weekly build (Mondays
+    # 03:00 UTC per .github/workflows/build.yml), so that run's image/portage cache
+    # is warm before this workflow starts touching the same pins.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      target_commit:
+        description: >-
+          Force a specific gentoo-mirror/gentoo commit (40 hex digits) instead of using the
+          newest one. Leave empty for normal behavior.
+        required: false
+        type: string
+
+concurrency:
+  group: pin-bump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/tuckermclean/themonolith
+
+jobs:
+  # Pulls or builds the toolbox image once for this run and shares it with the jobs that run toolbox/run.
+  toolbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pull or build the toolbox image
+        run: make toolbox-save
+
+      - name: Upload the toolbox image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox/toolbox.tar
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  # Resolves the commit and archives its tree. The only job that writes to the registry.
+  archive:
+    needs: toolbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      update_available: ${{ steps.resolve.outputs.update_available }}
+      commit: ${{ steps.resolve.outputs.commit }}
+      current: ${{ steps.resolve.outputs.current }}
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the toolbox image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox
+
+      - name: Load the toolbox image
+        run: make toolbox-load
+
+      - name: Resolve the newest tree commit
+        id: resolve
+        env:
+          TARGET_COMMIT: ${{ inputs.target_commit }}
+        run: make pin-check
+
+      - name: Is the tree already in the registry
+        id: probe
+        if: steps.resolve.outputs.update_available == 'true'
+        env:
+          NEW_COMMIT: ${{ steps.resolve.outputs.commit }}
+        run: make pin-tree-exists
+
+      - name: Archive the tree
+        if: steps.probe.outputs.exists == 'false'
+        env:
+          NEW_COMMIT: ${{ steps.resolve.outputs.commit }}
+        run: make pin-seed
+
+  bump:
+    needs: [toolbox, archive]
+    if: needs.archive.outputs.update_available == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: read
+    env:
+      OLD_COMMIT: ${{ needs.archive.outputs.current }}
+      NEW_COMMIT: ${{ needs.archive.outputs.commit }}
+    steps:
+      # A token that is not GITHUB_TOKEN: pushes made with it start workflows, so the PR's Build run starts.
+      - name: Mint the App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.PIN_BUMP_APP_ID }}
+          private-key: ${{ secrets.PIN_BUMP_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Download the toolbox image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: toolbox-${{ github.run_id }}
+          path: output/toolbox
+
+      - name: Load the toolbox image
+        run: make toolbox-load
+
+      - name: Ensure labels exist
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: make pin-labels
+
+      - name: Create branch
+        run: make pin-branch
+
+      - name: Write the tree pin
+        run: make update-build-pins
+
+      - name: Restore the new tree
+        run: make sync-portage
+
+      # A tree that does not resolve must not stop the PR: it is opened labelled needs-fixup (docs/version-pinning.md).
+      - name: Regenerate versions.lock
+        id: update-versions
+        continue-on-error: true
+        run: make update-versions
+
+      # versions.lock is regenerated inside the builder container, so on the host it is owned by root and the
+      # unprivileged runner's `git add` fails to index it; the target reclaims ownership before staging.
+      - name: Commit and push
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: make pin-commit
+
+      - name: Open PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LOCK_OUTCOME: ${{ steps.update-versions.outcome }}
+        run: make pin-pr
