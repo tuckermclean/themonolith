@@ -41,20 +41,20 @@ The tree is archived as `gentoo-tree:d4d0b0c7...`, digest
 
 | Differing line | Cause |
 | --- | --- |
-| `"AttachStderr": false,` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
-| `"AttachStderr": true,` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
-| `"AttachStdout": false,` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
-| `"AttachStdout": true,` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
+| `"AttachStderr": false,` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
+| `"AttachStderr": true,` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
+| `"AttachStdout": false,` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
+| `"AttachStdout": true,` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
 | `"Created": "2026-08-15T00:25:50.854152837Z",` | time of the final `docker commit` of the crossdev container |
 | `"Created": "2026-11-13T16:14:02.525845635Z",` | time of the final `docker commit` of the crossdev container |
-| `"DockerVersion": "",` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
-| `"DockerVersion": "28.0.4",` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
-| `"Hostname": "",` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
-| `"Hostname": "d9db719e260d",` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
+| `"DockerVersion": "",` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
+| `"DockerVersion": "28.0.4",` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
+| `"Hostname": "",` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
+| `"Hostname": "d9db719e260d",` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
 | `"Id": "sha256:0ebb5f6f88c941f12c04aba5ec4a5a4164dd0ac65b854b9c9c396db91ab60089",` | image config digest; the config differs (creation time, history, layer diff_ids) |
 | `"Id": "sha256:4aff9132817585bd5abb0a0f9c60c65f60c33f0432d3260b28385d2730f17668",` | image config digest; the config differs (creation time, history, layer diff_ids) |
-| `"Image": "",` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
-| `"Image": "monolith-builder-base-tools",` | legacy field of the committed container config; rc1 recorded it, the rebuilt image leaves it empty (observed; mechanism unproven, see below) |
+| `"Image": "",` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
+| `"Image": "monolith-builder-base-tools",` | rc1's image config records this field; the rebuilt image's config omits it, so `docker image inspect` shows the zero value (observed; mechanism unproven, see below) |
 | `"LastTagTime": "2026-11-13T02:22:27.825887293Z"` | when the CI run tagged the pulled image `monolith-builder`; a property of the run |
 | `"LastTagTime": "2026-11-13T16:16:58.301750565Z"` | when the CI run tagged the pulled image `monolith-builder`; a property of the run |
 | `"LowerDir": "/var/lib/docker/overlay2/18396f4de8b3bbe5a131723e080cd8311c6c5db44747e79c86c27efc7dc20484/diff:/var/lib/docker/overlay2/a427473974ea3d4284b65ee1421d8c52ec0ed0576d8943e08f25fe28289d5c8f/diff:/var/lib/docker/overlay2/71f9c7942ce18f3a4b7e730aed4f2d2757ac3c1b9721bea5f4436330f081be0a/diff:/var/lib/docker/overlay2/f9a15e39145f65f8ca09088f933fb3336e70e143fbf20fc4c86c150d92aceae9/diff:/var/lib/docker/overlay2/70934c1aa6873827738a5139b475a96987300d9c634b9d6cef07e56da8781de9/diff:/var/lib/docker/overlay2/77e82a55ece3d4a5c52e20e71b9fb43f0e517ab0e76f95d9d94d16a7fa67da65/diff:/var/lib/docker/overlay2/829a74f62336bcd514b3eb91bfe6b143884525c2d72d5961e41e80fa620cc39f/diff:/var/lib/docker/overlay2/61fea92ecf98cea362c935d4a8153f82c9c06be3b61d5ae81e0f66ea54772c38/diff",` | overlay2 path on the runner that pulled the image; random per pull, not part of the image |
@@ -67,8 +67,8 @@ The tree is archived as `gentoo-tree:d4d0b0c7...`, digest
 | `"UpperDir": "/var/lib/docker/overlay2/f6ee59b34b50df82247ecbe6201c9ffab2c4034ddd18b46ed3c07be18ba17994/diff",` | overlay2 path on the runner that pulled the image; random per pull, not part of the image |
 | `"WorkDir": "/var/lib/docker/overlay2/0b0d027842425663e0ae6a7c4826e381a454aa371dc320be3a5661540b7e3c6e/work"` | overlay2 path on the runner that pulled the image; random per pull, not part of the image |
 | `"WorkDir": "/var/lib/docker/overlay2/f6ee59b34b50df82247ecbe6201c9ffab2c4034ddd18b46ed3c07be18ba17994/work"` | overlay2 path on the runner that pulled the image; random per pull, not part of the image |
-| `"base-tools-hash": "5f4649d82fa92e9051fb157294a430d48ac75d96c7a483957b8a777118263b63",` | `COMBINED_HASH` over the base-tools layer list and the crossdev pins; the pins are equal, the layers differ |
-| `"base-tools-hash": "966c33b3a8e50d64fffe3ed7a078099e116d085afe128762ea0489be457924aa",` | `COMBINED_HASH` over the base-tools layer list and the crossdev pins; the pins are equal, the layers differ |
+| `"base-tools-hash": "5f4649d82fa92e9051fb157294a430d48ac75d96c7a483957b8a777118263b63",` | `COMBINED_HASH` over the base-tools layer list and the crossdev pins; the crossdev versions are identical, but whether rc1's build hashed the same pin string is unverified; the base-tools layers (3-8) differ, which alone changes the hash |
+| `"base-tools-hash": "966c33b3a8e50d64fffe3ed7a078099e116d085afe128762ea0489be457924aa",` | `COMBINED_HASH` over the base-tools layer list and the crossdev pins; the crossdev versions are identical, but whether rc1's build hashed the same pin string is unverified; the base-tools layers (3-8) differ, which alone changes the hash |
 | `"ghcr.io/tuckermclean/themonolith/builder@sha256:3f825cc695668cd70096b3fc14b5abfdf4d4888c299f313be71a8652fb0c3d13"` | RepoDigests entry: the same registry digest as the `image:` line |
 | `"ghcr.io/tuckermclean/themonolith/builder@sha256:ab04002a13794c2ad90d821b5de535a4e4df2945346bb04d8073883ea8aab3fa"` | RepoDigests entry: the same registry digest as the `image:` line |
 | `"sha256:085bdd307f4222d9f3423e1214d6c0bc54d4c06bb6e3edb574ea3b15832c032f"` | one of layers 4-9 (host-tools emerge, pyyaml and syft/grype, xcb-proto, rustup, crossdev repo setup, crossdev `docker commit`); the layer differs, which cause moves which layer is unverified (possible causes below), except syft/grype, observed in layer 5 |
@@ -96,13 +96,17 @@ Notes on the causes.
 
 - Digests: GHCR tags `rc1` point at `ab04002a...`; `20260810-245c88d08440-d4d0b0c78bd9`, `20260810` and `latest` point at
   `3f825cc6...`.
-- Legacy config fields (`DockerVersion`, `Hostname`, `AttachStdout`, `AttachStderr`, `Image`): rc1's `docker commit`
-  recorded the engine version, the container hostname, its attach settings and the parent image name; the rebuilt
-  image's config leaves them empty or false. The rebuild's runner engine stored images in Docker's containerd image
-  store (its own inspect of the committed image shows `Descriptor` and no `GraphDriver`). That this store's commit does
-  not write these fields is observed, not a proven mechanism.
-- `base-tools-hash`: the crossdev pins are the same (`crossdev.lock` came out unchanged on the bump branch; gcc
-  15.3.1_p20260717, musl 1.2.6, binutils 2.46.1, headers 6.12), so the hash differs because the base-tools layers do.
+- Fields of the image config (`DockerVersion`, `Hostname`, `AttachStdout`, `AttachStderr`, `Image`): rc1's image
+  config records `docker_version` `28.0.4` at its top level, and `Hostname` `d9db719e260d`, `AttachStdout` and
+  `AttachStderr` `true` and `Image` `monolith-builder-base-tools` in `config` (and again in `container_config`). The
+  rebuilt image's config has no `docker_version` and no `container_config`, and its `config` has none of the other four,
+  so `docker image inspect` prints the zero value (`""` or `false`). The rebuild's runner engine stored images in
+  Docker's containerd image store (its own inspect of the committed image shows `Descriptor` and no `GraphDriver`).
+  That this store's commit omits these fields is observed, not a proven mechanism.
+- `base-tools-hash`: the crossdev versions are identical (the `cross-i486-linux-musl/*` entries of `qlist -Iv` are the
+  same in both manifests: binutils 2.46.1, gcc 15.3.1_p20260717, linux-headers 6.12, musl 1.2.6-r2), and the bump
+  branch left `configs/portage/crossdev.lock` unchanged. Whether rc1's build, made with the predecessor's Makefile,
+  hashed the same pin string is unverified. The base-tools layers (3-8) differ, which alone changes the hash.
 - Layers: 9 layers each; layers 1 and 2 are identical (`a67c7be5...`, the stage3, and `5f70bf18...`, the empty
   `gcc -m32` check layer). Layer 3 holds the same ebuilds in both images (all 33060 blob ids equal) in different
   packaging, an rsync snapshot against a git archive of the mirror commit; which files account for the 47.5 MB against
