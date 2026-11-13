@@ -218,7 +218,7 @@ secrets and archiving a repository. They run in this order.
 **Preconditions** (each proven by its own node): the allowlist report shows 0
 entries; the tree bump is merged and the tag's `TREE_COMMIT` differs from
 rc1's; the advisory feed answers at its published URL; the CVE gate passes
-with no expired waiver.
+with no expired waiver; G01 is done (each claim in the README is tested or removed).
 
 1. **Release.** Push the final tag, `v0.2.0` (confirm the number), with no
    suffix. It goes through the whole tag pipeline, not a promotion of an
@@ -243,7 +243,7 @@ with no expired waiver.
    README banner pointing here. Edit the `v0.1.0-rc1` release notes to point
    here; leave its assets untouched.
 4. **Retire the predecessor.** Disable its workflows, remove its AWS secrets,
-   set its description, then archive the repository. Never rename, transfer
+   set its description, then archive the repository (the repository's Settings page, Danger Zone, or the `gh repo` subcommand). Never rename, transfer
    or delete it: rc1's attestation names it.
 5. **Verify rc1 again** with the same commands and record the output. If
    verification fails, unarchive the repository and record why.

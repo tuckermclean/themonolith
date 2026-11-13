@@ -161,7 +161,8 @@ gh attestation verify themonolith-0.1.0-rc1.iso \
 The commands name the repository and the signer workflow. `--owner` alone is not used, because it
 accepts an attestation from any repository of the owner.
 
-Each release carries a report of what changed since rc1,
+Each release carries a report of what changed since rc1 among its assets, `rc1-diff.md`.
+The link points at the latest final release:
 [`rc1-diff.md`](https://github.com/tuckermclean/themonolith/releases/latest/download/rc1-diff.md).
 
 ## Testing
