@@ -166,7 +166,9 @@ Before signing, a tag's `attestation` job fails unless:
 
 The release assets are: the ISO, `bom.cdx.json`, `SHA256SUMS`,
 `release-inputs.json`, `source-audit.tsv`, `rootfs-provenance.tsv`,
-`rc1-diff.md`, `sizes.md` and `dynamic-allowlist.txt`.
+`rc1-diff.md`, `sizes.md`, `dynamic-allowlist.txt` and
+`attestation-summary.json` (the gate summary of the attestation job, which the
+dashboard reads).
 
 ## Verifying a release
 
