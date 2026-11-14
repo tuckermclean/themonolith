@@ -1,0 +1,1 @@
+{"build_tag": "v0.3.0", "status": "revoked", "checked": "2026-11-12T03:00:00Z", "policy_sha256": "aa", "grype_db_built": "2026-11-12T01:00:00Z", "advisories": ["CVE-2026-1111", "CVE-2026-2222"], "details_url": "https://example.invalid/v0.3.0", "clearing": 1}

@@ -1,0 +1,16 @@
+{
+  "tagName": "v0.4.0",
+  "name": "v0.4.0",
+  "url": "https://github.com/acme/monolith-fixture/releases/tag/v0.4.0",
+  "body": "Release v0.4.0\n\n<img src=x onerror=alert(5)>",
+  "publishedAt": "2026-11-01T09:30:00Z",
+  "isPrerelease": false,
+  "isDraft": false,
+  "assets": [
+    {"name": "themonolith-0.4.0.iso", "size": 1024, "contentType": "application/octet-stream", "state": "uploaded", "url": "https://github.com/acme/monolith-fixture/releases/download/v0.4.0/themonolith-0.4.0.iso"},
+    {"name": "bom.cdx.json", "size": 1024, "contentType": "application/octet-stream", "state": "uploaded", "url": "https://github.com/acme/monolith-fixture/releases/download/v0.4.0/bom.cdx.json"},
+    {"name": "SHA256SUMS", "size": 1024, "contentType": "application/octet-stream", "state": "uploaded", "url": "https://github.com/acme/monolith-fixture/releases/download/v0.4.0/SHA256SUMS"},
+    {"name": "attestation-summary.json", "size": 1024, "contentType": "application/octet-stream", "state": "uploaded", "url": "https://github.com/acme/monolith-fixture/releases/download/v0.4.0/attestation-summary.json"},
+    {"name": "release-inputs.json", "size": 1024, "contentType": "application/octet-stream", "state": "uploaded", "url": "https://github.com/acme/monolith-fixture/releases/download/v0.4.0/release-inputs.json"}
+  ]
+}

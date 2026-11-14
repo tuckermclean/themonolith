@@ -1,0 +1,9 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "components": [
+    {"type": "library", "bom-ref": "musl-1.2.5", "name": "musl", "version": "1.2.5", "licenses": [{"license": {"id": "MIT"}}]},
+    {"type": "library", "bom-ref": "<script>alert(1)</script>-1.0", "name": "<script>alert(1)</script>", "version": "1.0", "licenses": [{"license": {"id": "MIT"}}]}
+  ]
+}

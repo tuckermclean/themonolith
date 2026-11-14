@@ -1,0 +1,14 @@
+{
+  "tagName": "v0.1.0-rc1",
+  "name": "v0.1.0-rc1",
+  "url": "https://github.com/tuckermclean/linux-live-iso-factory/releases/tag/v0.1.0-rc1",
+  "body": "Release v0.1.0-rc1\n\n<img src=x onerror=alert(5)>",
+  "publishedAt": "2026-08-21T18:53:08Z",
+  "isPrerelease": true,
+  "isDraft": false,
+  "assets": [
+    {"name": "themonolith-0.1.0-rc1.iso", "size": 1024, "contentType": "application/octet-stream", "state": "uploaded", "url": "https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/themonolith-0.1.0-rc1.iso"},
+    {"name": "bom.cdx.json", "size": 1024, "contentType": "application/octet-stream", "state": "uploaded", "url": "https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/bom.cdx.json"},
+    {"name": "SHA256SUMS", "size": 1024, "contentType": "application/octet-stream", "state": "uploaded", "url": "https://github.com/tuckermclean/linux-live-iso-factory/releases/download/v0.1.0-rc1/SHA256SUMS"}
+  ]
+}
