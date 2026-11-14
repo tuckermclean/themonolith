@@ -52,6 +52,16 @@
 #                           `toolbox/run -- <command>` (as advisory-feed-check); the command succeeds only when the
 #                           result file holds `ok` (a missing file or any other content fails). The test strips the
 #                           `toolbox/run -- ` prefix and runs the command, since a test cannot nest the toolbox.
+#
+# Added cases (a review of slice 1; they only add to the checks above):
+#   Fixture scripts/fixtures/P04/extra/ holds one more release, v0.5.0 (a verified summary with cve_check fail, overall
+#   fail, non-empty cve_failures, distinctive coverage counts, a revoked status without `clearing`); the test overlays it
+#   on a scratch copy of the fixtures (P04/x), so the base fixtures stay as they are.
+#   P04-AC-1  the gating findings (cve_failures) are on the page; each coverage count is the whole text of an element
+#             (>N<); the licence summary has one row per licence holding the licence and its package count (>N<).
+#   P04-AC-2  a failing gate shows >fail<; `clearing` shows as the word: a revoked status with "clearing": 1 gives an
+#             element whose whole text is `clearing` (>clearing<), never a bare number; a revoked status without
+#             `clearing` and a clean status give no such element.
 set -u
 unset MAKEFLAGS MAKELEVEL MFLAGS MAKEOVERRIDES GH_REPO GH_TOKEN GITHUB_TOKEN
 HERE=$(cd "$(dirname "$0")" && pwd -P)
@@ -340,6 +350,78 @@ for res in ok failed none; do
 	else
 		[ $c -ne 0 ] && ok "P04-AC-5: make dashboard-check fails on a result of $res" || fail "P04-AC-5: make dashboard-check fails on a result of $res"
 	fi
+done
+
+# ======================================================================= added cases (review of slice 1)
+# coverage counts as the whole text of an element (v0.2.0: values unique on its page)
+P=$S1/v0.2.0/index.html
+for n in 163 17 146 5 29 11; do
+	hasf "$P" ">$n<" && ok "P04-AC-1: v0.2.0 page shows the count $n as the whole text of an element" \
+		|| fail "P04-AC-1: v0.2.0 page shows the count $n as the whole text of an element"
+done
+# licence summary: v0.3.0 has two GPL-2.0-only packages (busybox, linux) and one each of MIT and Zlib
+flat "$S1/v0.3.0/index.html" | sed 's#</tr>#\n#g' >"$W/lrows"
+grep -F '>GPL-2.0-only<' "$W/lrows" | grep -qF '>2<' && ok "P04-AC-1: v0.3.0 licence summary has GPL-2.0-only with the count 2 in one row" \
+	|| fail "P04-AC-1: v0.3.0 licence summary has GPL-2.0-only with the count 2 in one row"
+grep -F '>MIT<' "$W/lrows" | grep -qF '>1<' && ok "P04-AC-1: v0.3.0 licence summary has MIT with the count 1 in one row" \
+	|| fail "P04-AC-1: v0.3.0 licence summary has MIT with the count 1 in one row"
+grep -F '>MIT<' "$W/lrows" | grep -qF '>2<' && fail "P04-AC-1: v0.3.0 licence summary does not give MIT the count 2" \
+	|| ok "P04-AC-1: v0.3.0 licence summary does not give MIT the count 2"
+
+# the revoked build with clearing shows the word; builds without it do not
+hasf "$S1/v0.3.0/index.html" ">clearing<" && ok "P04-AC-2: the revoked build with clearing shows the word clearing as an element" \
+	|| fail "P04-AC-2: the revoked build with clearing shows the word clearing as an element"
+for t in v0.2.0 v0.4.0 v0.1.5 v0.1.6 v0.1.0-rc1; do
+	nogrep "$S1/$t/index.html" -F ">clearing<" && ok "P04-AC-2: the page of $t (not clearing) never shows the word clearing" \
+		|| fail "P04-AC-2: the page of $t (not clearing) never shows the word clearing"
+done
+
+# v0.5.0 on a scratch copy of the fixtures: failing gates, gating findings, revoked without clearing
+X=$W/x
+rm -rf "${X:?}"; mkdir -p "$X"
+cp -R "$FX/gh" "$X/gh"; cp -R "$FX/feed/site" "$X/site"; cp -R "$FX/feed/data" "$X/data"
+cp -R "$FX/extra/gh/$(echo "$REPO" | sed 's|/|__|')/v0.5.0" "$X/gh/$(echo "$REPO" | sed 's|/|__|')/v0.5.0"
+cp -R "$FX/extra/feed/data/v0.5.0" "$X/data/v0.5.0"
+cp "$FX/extra/feed/site/status/v0.5.0.json" "$X/site/status/v0.5.0.json"
+python3 -I -c '
+import json,sys
+d=sys.argv[1]
+a=json.load(open(d+"/gh/acme__monolith-fixture/list.json"))
+a+=json.load(open(sys.argv[2]))
+json.dump(a,open(d+"/gh/acme__monolith-fixture/list.json","w"))
+' "$X" "$FX/extra/gh/acme__monolith-fixture/list.json"
+(cd "$W/cwd" && env PATH="$W/bin:$PATH" P04_GH_FIXTURES="$X" P04_GH_LOG="$W/x.log" \
+	GITHUB_REPOSITORY=$REPO RC1_TAG=v0.1.0-rc1 \
+	python3 -I "$ROOT/scripts/dashboard.py" --site "$X/site" --data "$X/data" --result "$X/result") >"$X/out.log" 2>&1
+XRC=$?
+check "P04-AC-1: dashboard.py exits 0 with the v0.5.0 release added" test "$XRC" -eq 0
+P=$X/site/v0.5.0/index.html
+check "P04-AC-1: the v0.5.0 page is written" test -s "$P"
+for s in CVE-2026-9001 CVE-2026-9002 CVE-2026-9003 openssl-3.0.1 zlib-1.2.11; do
+	hasf "$P" "$s" && ok "P04-AC-1: v0.5.0 page lists the gating finding '$s'" || fail "P04-AC-1: v0.5.0 page lists the gating finding '$s'"
+done
+n=$(count "$P" ">fail<")
+[ "$n" -eq 2 ] && ok "P04-AC-2: v0.5.0 page marks exactly its CVEs and overall gates fail" || fail "P04-AC-2: v0.5.0 page marks exactly its CVEs and overall gates fail ($n)"
+n=$(count "$P" ">pass<")
+[ "$n" -eq 3 ] && ok "P04-AC-2: v0.5.0 page marks its SBOM, licences and unowned gates pass" || fail "P04-AC-2: v0.5.0 page marks its SBOM, licences and unowned gates pass ($n)"
+flat "$P" | sed 's#</tr>#\n#g' | grep -F '>CVEs<' | grep -qF '>fail<' && ok "P04-AC-2: v0.5.0 CVEs row shows fail" || fail "P04-AC-2: v0.5.0 CVEs row shows fail"
+flat "$P" | sed 's#</tr>#\n#g' | grep -F '>Overall<' | grep -qF '>fail<' && ok "P04-AC-2: v0.5.0 overall row shows fail" || fail "P04-AC-2: v0.5.0 overall row shows fail"
+for c in 71 13 58 4 37 19; do
+	hasf "$P" ">$c<" && ok "P04-AC-1: v0.5.0 page shows the count $c as the whole text of an element" \
+		|| fail "P04-AC-1: v0.5.0 page shows the count $c as the whole text of an element"
+done
+flat "$P" | sed 's#</tr>#\n#g' >"$W/lrows"
+grep -F '>Apache-2.0<' "$W/lrows" | grep -qF '>2<' && ok "P04-AC-1: v0.5.0 licence summary has Apache-2.0 with the count 2 in one row" \
+	|| fail "P04-AC-1: v0.5.0 licence summary has Apache-2.0 with the count 2 in one row"
+grep -F '>Zlib<' "$W/lrows" | grep -qF '>1<' && ok "P04-AC-1: v0.5.0 licence summary has Zlib with the count 1 in one row" \
+	|| fail "P04-AC-1: v0.5.0 licence summary has Zlib with the count 1 in one row"
+check "P04-AC-2: the revoked v0.5.0 page says revoked and lists CVE-2026-9001" sh -c 'tr "\n" " " <"$1" | grep -qF ">revoked<"' _ "$P"
+nogrep "$P" -F ">clearing<" && ok "P04-AC-2: the revoked build without clearing never shows the word clearing" \
+	|| fail "P04-AC-2: the revoked build without clearing never shows the word clearing"
+nogrep "$P" -F ">clean<" && ok "P04-AC-2: the revoked v0.5.0 page never says clean" || fail "P04-AC-2: the revoked v0.5.0 page never says clean"
+flat "$X/site/index.html" | sed 's#</tr>#\n#g' | grep -F 'href="v0.5.0/' | head -1 >"$W/row"
+for m in fail revoked; do
+	has "$W/row" ">$m<" && ok "P04-AC-2: the index row of v0.5.0 shows '$m'" || fail "P04-AC-2: the index row of v0.5.0 shows '$m'"
 done
 
 [ "$fails" -eq 0 ] && { echo "PASS: all dashboard checks"; exit 0; }

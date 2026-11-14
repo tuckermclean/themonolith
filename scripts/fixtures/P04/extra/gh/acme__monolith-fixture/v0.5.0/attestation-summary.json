@@ -1,0 +1,18 @@
+{
+  "build_tag": "v0.5.0",
+  "timestamp": "2026-01-01T00:00:00Z",
+  "iso_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "package_count": 3,
+  "sbom_check": "pass",
+  "license_check": "pass",
+  "cve_check": "fail",
+  "cve_scanner": {"name": "grype", "version": "0.106.7"},
+  "cve_db": {"built": "2026-11-04T05:00:00Z", "schema_version": "6", "checksum": null, "age_warning": null},
+  "cve_coverage": {"scanned": 71, "matched": 13, "clean": 58, "unscanned": 4, "total_findings": 37, "waived_findings": 19},
+  "unowned_check": "pass",
+  "unowned_count": 0,
+  "overall": "fail",
+  "cve_failures": ["openssl-3.0.1: CVE-2026-9001, CVE-2026-9002", "zlib-1.2.11: CVE-2026-9003"],
+  "license_failures": [],
+  "unowned_files": []
+}
