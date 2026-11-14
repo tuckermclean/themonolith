@@ -602,6 +602,7 @@ release-assets:
 	cp '$(RELEASE_INPUTS)' '$(RELEASE_DIR)/release-inputs.json'
 	cp '$(AUDIT)' '$(RELEASE_DIR)/source-audit.tsv'
 	cp '$(ATTEST_OUT)/rootfs-provenance.tsv' '$(RELEASE_DIR)/rootfs-provenance.tsv'
+	cp '$(ATTEST_OUT)/attestation-summary.json' '$(RELEASE_DIR)/attestation-summary.json'
 	toolbox/run --network none -- sh scripts/release-sums.sh '$(RELEASE_DIR)'
 
 # The publish job's steps; values from the environment (TAG, BUILT_SHA, BUILD_VERSION, PREV_TAG, ISO, GH_TOKEN). The two

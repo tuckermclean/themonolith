@@ -670,6 +670,7 @@ jobs:
             output/release/rc1-diff.md
             output/release/sizes.md
             output/release/dynamic-allowlist.txt
+            output/release/attestation-summary.json
           retention-days: 14
           if-no-files-found: error
 

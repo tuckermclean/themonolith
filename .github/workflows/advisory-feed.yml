@@ -10,12 +10,19 @@ name: Advisory feed
 # The deploy job runs when the site tree was built. A scan that could not run builds none and publishes
 # nothing. If only some builds could not be refreshed, their files stay as they were, the rest are
 # published, and the scan job's last step fails so the run ends red.
+#
+# The scan job also writes the release dashboard (make dashboard) into the same site tree, and runs after each
+# Release workflow that succeeds. A dashboard that could not be built does not stop the feed; make dashboard-check
+# ends the run red.
 
 on:
   schedule:
     # 04:00 UTC daily, after the nightly Grype DB publishes settle.
     - cron: '0 4 * * *'
   workflow_dispatch:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
 
 permissions:
   contents: read
@@ -26,6 +33,7 @@ concurrency:
 
 jobs:
   scan:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
@@ -41,6 +49,10 @@ jobs:
 
       - name: Scan the releases
         run: make advisory-feed
+
+      - name: Write the release dashboard
+        continue-on-error: true
+        run: make dashboard
 
       - id: pages
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
@@ -60,6 +72,9 @@ jobs:
 
       - name: Fail the run if a build was not refreshed
         run: make advisory-feed-check
+
+      - name: Fail the run if the dashboard was not built
+        run: make dashboard-check
 
   deploy:
     needs: scan

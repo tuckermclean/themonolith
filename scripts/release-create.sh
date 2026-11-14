@@ -27,4 +27,5 @@ gh release create "${TAG}" $flags \
 	"$d/rootfs-provenance.tsv" \
 	"$d/rc1-diff.md" \
 	"$d/sizes.md" \
-	"$d/dynamic-allowlist.txt"
+	"$d/dynamic-allowlist.txt" \
+	"$d/attestation-summary.json"
