@@ -424,6 +424,25 @@ for m in fail revoked; do
 	has "$W/row" ">$m<" && ok "P04-AC-2: the index row of v0.5.0 shows '$m'" || fail "P04-AC-2: the index row of v0.5.0 shows '$m'"
 done
 
+# each coverage count sits in the row of its own label (a swap of two labels is caught)
+cov_rows() { flat "$1" | sed 's#</tr>#\n#g'; }
+cov_row() { # <page> <label> <count>
+	cov_rows "$1" | grep -F ">$2<" | grep -F ">$3<" | grep -q . && ok "P04-AC-1: $(basename "$(dirname "$1")") coverage row '$2' holds $3" \
+		|| fail "P04-AC-1: $(basename "$(dirname "$1")") coverage row '$2' holds $3"
+}
+cov_row "$S1/v0.2.0/index.html" scanned 163
+cov_row "$S1/v0.2.0/index.html" matched 17
+cov_row "$S1/v0.2.0/index.html" "without findings" 146
+cov_row "$S1/v0.2.0/index.html" unscanned 5
+cov_row "$S1/v0.2.0/index.html" "total findings" 29
+cov_row "$S1/v0.2.0/index.html" "waived findings" 11
+cov_row "$X/site/v0.5.0/index.html" scanned 71
+cov_row "$X/site/v0.5.0/index.html" matched 13
+cov_row "$X/site/v0.5.0/index.html" "without findings" 58
+cov_row "$X/site/v0.5.0/index.html" unscanned 4
+cov_row "$X/site/v0.5.0/index.html" "total findings" 37
+cov_row "$X/site/v0.5.0/index.html" "waived findings" 19
+
 [ "$fails" -eq 0 ] && { echo "PASS: all dashboard checks"; exit 0; }
 echo "FAIL: $fails dashboard check(s) failed"
 exit 1
