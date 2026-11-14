@@ -128,12 +128,13 @@ first, before the code it tests, with only the harness and path adjustments the 
 | Release: digest chain, SHA256SUMS, prerelease, reports | `release.yml`, `docs/releasing.md` | P01 | port+fix | X01 |
 | rc1 diff and size reports | — | P01 | build | |
 | Advisory feed on GitHub Pages | `nightly-cve-monitor.py`, `nightly-cve-scan.yml` | P03 | port+fix | |
+| Release dashboard on GitHub Pages | — | P04 | build | |
 | Cutover and archive of the predecessor | README "Verify a release" | X01 | build | |
 
 ## Dropped
 
 | What | Source | Why |
 |---|---|---|
-| Dashboard and in-browser boot demo | `web/` (13 files), `boot.html`, `generate-dashboard.py`, `make dashboard` | Out of scope (SPEC §0); not maintained or restored here, and the predecessor keeps the code |
+| In-browser boot demo and the predecessor's dashboard code | `web/` (13 files), `boot.html`, `generate-dashboard.py` | Out of scope (SPEC §0); not maintained or restored here, and the predecessor keeps the code. P04 writes a new dashboard instead |
 | Storage retention | `s3-gc.sh`, `ghcr-gc.sh`, their tests, `gc.yml`, `make restore-cache` | Nothing is deleted automatically (SPEC §6); S3 is gone |
 | Planning history and a stale readiness report | `docs/superpowers/` (18 files), `RELEASE-READINESS.md` | Not code; readable in the predecessor |

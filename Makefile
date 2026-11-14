@@ -5,7 +5,7 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create advisory-feed advisory-feed-check check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline pin-check pin-tree-exists pin-seed update-build-pins update-all pin-labels pin-branch pin-commit pin-pr cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions build-image print-registry-tag push-image toolchain-inputs toolchain-labels toolchain-epoch toolchain-update toolchain-epoch-check toolchain-branch toolchain-digest toolchain-commit toolchain-dispatch toolchain-wait toolchain-pr list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create advisory-feed advisory-feed-check dashboard dashboard-check check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline pin-check pin-tree-exists pin-seed update-build-pins update-all pin-labels pin-branch pin-commit pin-pr cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions build-image print-registry-tag push-image toolchain-inputs toolchain-labels toolchain-epoch toolchain-update toolchain-epoch-check toolchain-branch toolchain-digest toolchain-commit toolchain-dispatch toolchain-wait toolchain-pr list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -602,6 +602,7 @@ release-assets:
 	cp '$(RELEASE_INPUTS)' '$(RELEASE_DIR)/release-inputs.json'
 	cp '$(AUDIT)' '$(RELEASE_DIR)/source-audit.tsv'
 	cp '$(ATTEST_OUT)/rootfs-provenance.tsv' '$(RELEASE_DIR)/rootfs-provenance.tsv'
+	cp '$(ATTEST_OUT)/attestation-summary.json' '$(RELEASE_DIR)/attestation-summary.json'
 	toolbox/run --network none -- sh scripts/release-sums.sh '$(RELEASE_DIR)'
 
 # The publish job's steps; values from the environment (TAG, BUILT_SHA, BUILD_VERSION, PREV_TAG, ISO, GH_TOKEN). The two
@@ -624,6 +625,15 @@ advisory-feed:
 # Fails when the last advisory-feed run could not refresh every build (it still published the rest).
 advisory-feed-check:
 	toolbox/run -- sh -c 'test "$$(cat output/advisory-feed/result)" = ok'
+
+# The release dashboard (P04): index.html, <tag>/index.html and style.css beside the feed's status/ in the site tree.
+DASHBOARD_RESULT ?= output/advisory-feed/dashboard-result
+dashboard:
+	toolbox/run -e GH_TOKEN -e GITHUB_REPOSITORY -- env RC1_TAG='$(RC1_TAG)' python3 -I scripts/dashboard.py --site output/advisory-feed/site --data output/advisory-feed/data --result '$(DASHBOARD_RESULT)'
+
+# Fails when the last dashboard run did not write every page.
+dashboard-check:
+	toolbox/run -- sh -c 'test "$$(cat "$$1")" = ok' _ '$(DASHBOARD_RESULT)'
 
 # The CycloneDX document BOM against the vendored schema of its specVersion (no network).
 CDX_SCHEMAS ?= configs/attestation/schemas

@@ -1,0 +1,14 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "components": [
+    {"type": "library", "bom-ref": "r1-3.1", "name": "r1", "version": "3.1", "licenses": [{"license": {"id": "MIT"}}]},
+    {"type": "library", "bom-ref": "r2-3.2", "name": "r2", "version": "3.2", "licenses": [{"license": {"id": "MIT"}}]},
+    {"type": "library", "bom-ref": "r3-3.3", "name": "r3", "version": "3.3", "licenses": [{"license": {"id": "GPL-2.0-only"}}]},
+    {"type": "library", "bom-ref": "r4-3.4", "name": "r4", "version": "3.4", "licenses": [{"license": {"id": "MIT"}}]},
+    {"type": "library", "bom-ref": "r5-3.5", "name": "r5", "version": "3.5", "licenses": [{"license": {"id": "ISC"}}]},
+    {"type": "library", "bom-ref": "r6-3.6", "name": "r6", "version": "3.6", "licenses": [{"license": {"id": "MIT"}}]},
+    {"type": "library", "bom-ref": "r7-3.7", "name": "r7", "version": "3.7", "licenses": [{"license": {"id": "MIT"}}]}
+  ]
+}

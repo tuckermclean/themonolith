@@ -1,0 +1,20 @@
+body { margin: 1em auto; padding: 0 1em; max-width: 60em; font-family: sans-serif; line-height: 1.4; color: #111; background: #fff; }
+a { color: #0645ad; }
+table { border-collapse: collapse; margin: 0.5em 0; }
+th, td { border: 1px solid #bbb; padding: 0.2em 0.6em; text-align: left; vertical-align: top; }
+th { background: #eee; }
+pre, code { font-family: monospace; }
+pre { padding: 0.5em; background: #eee; overflow: auto; }
+.mark { font-weight: bold; padding: 0 0.4em; border: 1px solid; }
+.pass, .clean { color: #060; }
+.fail, .revoked { color: #900; }
+.not-published, .unverified, .no-data, .prerelease { color: #850; }
+@media (prefers-color-scheme: dark) {
+  body { color: #ddd; background: #181818; }
+  a { color: #8ab4f8; }
+  th, td { border-color: #555; }
+  th, pre { background: #262626; }
+  .pass, .clean { color: #6c6; }
+  .fail, .revoked { color: #f77; }
+  .not-published, .unverified, .no-data, .prerelease { color: #db6; }
+}
