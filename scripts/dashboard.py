@@ -173,7 +173,8 @@ def release_page(rel, site, data):
         h.append(row(("th", "Status"), td(mark(adv["status"]))))
         h.append(row(("th", "Checked"), td(escape(str(adv.get("checked", ""))))))
         h.append(row(("th", "Advisories"), td(escape(", ".join(map(str, adv.get("advisories") or [])) or "none"))))
-        h.append(row(("th", "Clearing"), td(escape(str(adv.get("clearing", ""))))))
+        if adv["status"] == "revoked" and adv.get("clearing"):
+            h.append(row(("th", "Clearing"), td(mark("clearing"))))
         h.append(row(("th", "Vulnerability database built"), td(escape(str(adv.get("grype_db_built", ""))))))
     else:
         h.append(row(("th", "Status"), td(mark("no data"))))
@@ -188,6 +189,7 @@ def release_page(rel, site, data):
         for _, _, lic in pk:
             count[lic] = count.get(lic, 0) + 1
         h.append("<h3>Licences</h3>\n<table>\n")
+        h.append(row(("th", "Licence"), ("th", "Packages")))
         for lic in sorted(count):
             h.append(row(td(escape(lic)), td(str(count[lic]))))
         h.append("</table>\n<h3>All packages</h3>\n<table>\n")
