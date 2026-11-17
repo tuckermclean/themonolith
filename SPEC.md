@@ -536,7 +536,7 @@ These are owner decisions. A node that names one does not start until it is sett
 
 | Id | Question | Default if unanswered |
 |---|---|---|
-| OD-1 | The advisory URL is baked into every disc from the first release on. It must be a dedicated name that can be repointed for decades. The service behind it (P03) can come later. `themonolith.org` belongs to a third party, so it is out. Where is the name hosted? | `https://monolith.technomantics.com/`, served by GitHub Pages (a custom domain needs no stored cloud key, SPEC §8) |
+| OD-1 | The advisory URL is baked into every disc from the first release on. It must be a dedicated name that can be repointed for decades. The service behind it (P03) can come later. `themonolith.org` belongs to a third party, so it is out. Where is the name hosted? | `https://tuckermclean.github.io/themonolith/`, this repository's GitHub Pages site (no stored cloud key, SPEC §8), the owner's choice until a permanent name is chosen (P05). A custom domain set on the site later becomes where GitHub redirects this URL, so discs that carry it follow. |
 | OD-2 | May a prerelease ship with a non-empty dynamic-binary allowlist? (rc1 needs no entry: the list starts empty.) | Yes for prereleases, each entry with an issue. The list is empty before the first non-prerelease (R03). |
 | OD-3 | First tree pin: rc1's tree, recovered from gentoo-mirror git, or a current tree? | rc1's tree; M01 bumps it after MS2 |
 | OD-4 | First release version from this repository. | `v0.2.0-rc1` |
