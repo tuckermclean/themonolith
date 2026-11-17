@@ -76,5 +76,15 @@ for mode in "--node P05" "--all"; do
     else fail "P05-AC-4 check-migration.py $mode passes (rc=$rc: $(echo "$out" | head -n 3 | tr '\n' ' '))"; fi
 done
 
+# ---- P05-AC-2 (owner Q2): docs/rc1-diff-reasons.tsv names the monolith-base version versions.lock pins
+pinned=$(sed -n 's|^app-misc/monolith-base:\([^:]*\):0$|\1|p' "$ROOT/configs/portage/versions.lock" | head -n 1)
+if [ -z "$pinned" ]; then fail "P05-AC-2 (owner Q2) could not read the app-misc/monolith-base version from configs/portage/versions.lock"
+else
+    tab=$(printf '\t')
+    if grep -Eq "^added${tab}app-misc/monolith-base@${pinned}${tab}[^${tab}]+\$" "$ROOT/docs/rc1-diff-reasons.tsv"; then
+        ok "P05-AC-2 (owner Q2) docs/rc1-diff-reasons.tsv has an added line for the pinned monolith-base version $pinned"
+    else fail "P05-AC-2 (owner Q2) docs/rc1-diff-reasons.tsv has an added line for the pinned monolith-base version $pinned, with a reason"; fi
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "pages-url: all passed"; else echo "pages-url: $fails FAILED"; exit 1; fi
