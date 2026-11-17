@@ -36,6 +36,10 @@ else fail "P05-AC-3 Makefile ADVISORY_BASE_URL ('$mk') equals the advisory check
 if [ "$adv" = "$WANT" ] && [ "$mon" = "$adv" ]; then ok "P05-AC-3 nightly-cve-monitor.py DEFAULT_BASE_URL equals the advisory check's default"
 else fail "P05-AC-3 nightly-cve-monitor.py DEFAULT_BASE_URL ('$mon') equals the advisory check's default ('$adv')"; fi
 
+# ---- P05-AC-2: versions.lock pins monolith-base at 0.1.0-r8
+if grep -qx 'app-misc/monolith-base:0.1.0-r8:0' "$ROOT/configs/portage/versions.lock" 2>/dev/null; then ok "P05-AC-2 versions.lock has app-misc/monolith-base:0.1.0-r8:0"
+else fail "P05-AC-2 versions.lock has the line app-misc/monolith-base:0.1.0-r8:0"; fi
+
 # ---- P05-AC-4: no tracked file outside the history directories names the old host
 # scan <root>: print each tracked file (outside the excluded dirs) that contains the old host word
 scan() {
@@ -44,6 +48,8 @@ scan() {
     done
     return 0
 }
+if git -C "$ROOT" ls-files 2>/dev/null | grep -qx 'scripts/tests/pages-url.test.sh'; then ok "P05-AC-4 guard: git ls-files lists this test, so the scan is not vacuous"
+else fail "P05-AC-4 guard: git ls-files lists scripts/tests/pages-url.test.sh, so the scan is not vacuous"; fi
 hits=$(scan "$ROOT")
 if [ -z "$hits" ]; then ok "P05-AC-4 no tracked file outside nodes/, docs/study/, docs/reviews/, docs/evidence/ names the old host"
 else fail "P05-AC-4 tracked files outside nodes/, docs/study/, docs/reviews/, docs/evidence/ still name the old host: $(echo "$hits" | tr '\n' ' ')"; fi
