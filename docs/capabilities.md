@@ -93,7 +93,7 @@ first, before the code it tests, with only the harness and path adjustments the 
 | Clock honesty `monolith-time`, `monolith-time-check` | `files/monolith-time*`, `30-clock-hint.sh`, two tests | R01 | port | |
 | Advisory check | `files/monolith-advisory-check`, `40-advisory.sh` | R01 | port+fix | P03 (the service) |
 | Command-not-found, console, prompt square, `which`, `startx`, guestbook | `60-monolith-cnf.bash`, `monolith-console`, `99-monolith-square.bash`, `which`, `startx`, `guestbook.cgi`, `monolith-cnf.test.sh` | R01 | port | |
-| The `monolith-base` ebuild | `monolith-base-0.1.0-r6.ebuild` | R01 | port+fix (r7) | |
+| The `monolith-base` ebuild | `monolith-base-0.1.0-r6.ebuild` | R01 | port+fix (r8) | |
 
 ## Image assembly
 

@@ -618,7 +618,7 @@ release-create:
 
 # The advisory feed (P03). GRYPE_VERSION and GRYPE_SHA256 (the release tarball) come from advisory-feed.yml's env.
 RC1_TAG ?= v0.1.0-rc1
-ADVISORY_BASE_URL ?= https://monolith.technomantics.com
+ADVISORY_BASE_URL ?= https://tuckermclean.github.io/themonolith
 advisory-feed:
 	toolbox/run -e GH_TOKEN -e GITHUB_REPOSITORY -e GRYPE_VERSION -e GRYPE_SHA256 -- env RC1_TAG='$(RC1_TAG)' RC1_SBOM_URL='$(RC1_SBOM_URL)' RC1_SBOM_SHA256='$(RC1_SBOM_SHA256)' BASE_URL='$(ADVISORY_BASE_URL)' sh scripts/advisory-feed.sh
 

@@ -43,7 +43,7 @@ configs/overlay/app-misc/monolith-base/files/60-monolith-cnf.bash	100644	d0c4fcf
 configs/overlay/app-misc/monolith-base/files/99-monolith-square.bash	100644	37347b3c771e2b4a00cca094fd9e76e898dbe8cc	R01	port	configs/overlay/app-misc/monolith-base/files/99-monolith-square.bash	-
 configs/overlay/app-misc/monolith-base/files/guestbook.cgi	100644	00ee3ec6e912b87b99dc6d0f52ff3c3023e19f6c	R01	port	configs/overlay/app-misc/monolith-base/files/guestbook.cgi	-
 configs/overlay/app-misc/monolith-base/files/monolith	100755	f09d57b64ae6aed386047b0379cdba3fee12c86c	R01	port	configs/overlay/app-misc/monolith-base/files/monolith	-
-configs/overlay/app-misc/monolith-base/files/monolith-advisory-check	100755	bca689c33b9552e332caca77572666e02d0a80bd	R01	port+fix	configs/overlay/app-misc/monolith-base/files/monolith-advisory-check	-
+configs/overlay/app-misc/monolith-base/files/monolith-advisory-check	100755	bca689c33b9552e332caca77572666e02d0a80bd	R01	port+fix	configs/overlay/app-misc/monolith-base/files/monolith-advisory-check	P05
 configs/overlay/app-misc/monolith-base/files/monolith-console	100755	99d85b53fdf316288c3a1a85365026aec149269c	R01	port	configs/overlay/app-misc/monolith-base/files/monolith-console	-
 configs/overlay/app-misc/monolith-base/files/monolith-net	100755	eb0aa9ab7ebeb552544bbd43c41ac88aae6ea0e6	R01	port	configs/overlay/app-misc/monolith-base/files/monolith-net	-
 configs/overlay/app-misc/monolith-base/files/monolith-persist	100755	86d68da657d1de147292662265d159e5b8204be3	R01	port	configs/overlay/app-misc/monolith-base/files/monolith-persist	-
@@ -60,7 +60,7 @@ configs/overlay/app-misc/monolith-base/files/topics/tools.txt	100644	e5aa4795d64
 configs/overlay/app-misc/monolith-base/files/topics/verify.txt	100644	8c02442a5cef0d503b11bff62bfa0bab56816fdb	R01	port	configs/overlay/app-misc/monolith-base/files/topics/verify.txt	-
 configs/overlay/app-misc/monolith-base/files/topics/web.txt	100644	794cba26aef1eb312374bd61d20aed9bccc43529	R01	port	configs/overlay/app-misc/monolith-base/files/topics/web.txt	-
 configs/overlay/app-misc/monolith-base/files/which	100755	7ec5681740983de3dcedd2d4a02e3214a2d6acda	R01	port	configs/overlay/app-misc/monolith-base/files/which	-
-configs/overlay/app-misc/monolith-base/monolith-base-0.1.0-r6.ebuild	100644	c31b67637fcce3d0ced813c73311a31624d055a3	R01	port+fix	configs/overlay/app-misc/monolith-base/monolith-base-0.1.0-r7.ebuild	-
+configs/overlay/app-misc/monolith-base/monolith-base-0.1.0-r6.ebuild	100644	c31b67637fcce3d0ced813c73311a31624d055a3	R01	port+fix	configs/overlay/app-misc/monolith-base/monolith-base-0.1.0-r7.ebuild	P05:configs/overlay/app-misc/monolith-base/monolith-base-0.1.0-r8.ebuild
 configs/overlay/dev-db/monolith-sqlite/Manifest	100644	a18621d9e15922516e23c73a7cc5d5dd9a6f4a2a	B01	port	configs/overlay/dev-db/monolith-sqlite/Manifest	-
 configs/overlay/dev-db/monolith-sqlite/monolith-sqlite-3.53.4.ebuild	100644	021d8d56665d8ddd81787c18e11524c0c044a798	B01	port	configs/overlay/dev-db/monolith-sqlite/monolith-sqlite-3.53.4.ebuild	-
 configs/overlay/dev-lang/monolith-perl/Manifest	100644	ad881039237711c06397df179ae1ce2a1b4cbc18	B01	port	configs/overlay/dev-lang/monolith-perl/Manifest	-
@@ -146,7 +146,7 @@ scripts/boot-test.py	100755	283c29256ba121891ade6e3d469afe43ac72474e	O01	port+fi
 scripts/build-initrd.sh	100755	b23e9164b77db04e5208b59ace91797eb0b40c84	B03	port	scripts/build-initrd.sh	P02
 scripts/build-iso.sh	100755	faccf1d64a16b2fadd5ccde38f2c52f219e4d24a	B03	port	scripts/build-iso.sh	P02
 scripts/build-packages.sh	100755	5308e8c95e3633c4686f75473a6a462eddfcf481	B01	port+fix	scripts/build-packages.sh	B02 R03 G01
-scripts/build-rootfs.sh	100755	465c8539b4643e6e1d6e7db22cc30719fdcee1ad	B03	port+fix	scripts/build-rootfs.sh	P02 G01
+scripts/build-rootfs.sh	100755	465c8539b4643e6e1d6e7db22cc30719fdcee1ad	B03	port+fix	scripts/build-rootfs.sh	P02 G01 P05
 scripts/check-cves.sh	100755	1bf98d6b1c819e6b241aacb90e32d68860ed8d07	S01	port+fix	scripts/check-cves.sh	-
 scripts/check-licenses.py	100755	f7796e46f4b337adc94fcc6a93bd4c712fffc1d6	S01	port+fix	scripts/check-licenses.py	S02 S03
 scripts/check-unowned.py	100755	63dc3b77d96e73dd38a877d7386dce949966a573	S01	port+fix	scripts/check-unowned.py	B01
@@ -156,7 +156,7 @@ scripts/fixtures/canary-sbom.cdx.json	100644	5013867e0bae1241171b79bdaa221ab9d5e
 scripts/generate-dashboard.py	100755	417644e3fa8199f87e735ad87a156dbc70aca316	-	drop	-	-
 scripts/generate-provenance.py	100644	4753ffb05815f4af7c2cfdba4efb3b71c2c8f090	P01	replace	-	-
 scripts/ghcr-gc.sh	100755	9d2963f30a77047633dd167078b177d757ac2fe2	-	drop	-	-
-scripts/nightly-cve-monitor.py	100755	44ed144305e0651238bd544e3de654d9cdd7beca	P03	port+fix	scripts/nightly-cve-monitor.py	-
+scripts/nightly-cve-monitor.py	100755	44ed144305e0651238bd544e3de654d9cdd7beca	P03	port+fix	scripts/nightly-cve-monitor.py	P05
 scripts/pcf-fontname.py	100644	fa3aa8cda64c27dd2e4cddf9481d69e39878a349	B03	port	scripts/pcf-fontname.py	-
 scripts/run-cve-canary.sh	100755	f701a3cf45765576a7ce9b7c893d10cff318bea4	S01	port	scripts/run-cve-canary.sh	-
 scripts/s3-gc.sh	100755	300153e3b3858b51d7b836a15fd9cd5d908aa649	-	drop	-	-

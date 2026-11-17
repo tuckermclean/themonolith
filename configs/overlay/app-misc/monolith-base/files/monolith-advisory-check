@@ -21,7 +21,7 @@
 #   MONOLITH_ADVISORY_STATE   — default /run/monolith-advisory-state
 #   MONOLITH_ADVISORY_FILE    — default /run/monolith-advisory (revoked only)
 
-ADVISORY_BASE_URL="${ADVISORY_BASE_URL:-https://monolith.technomantics.com}"
+ADVISORY_BASE_URL="${ADVISORY_BASE_URL:-https://tuckermclean.github.io/themonolith}"
 RELEASE_FILE="${MONOLITH_RELEASE_FILE:-/etc/monolith-release}"
 STATE_FILE="${MONOLITH_ADVISORY_STATE:-/run/monolith-advisory-state}"
 ADVISORY_FILE="${MONOLITH_ADVISORY_FILE:-/run/monolith-advisory}"

@@ -269,7 +269,7 @@ PRETTY_NAME="The Monolith ${BUILD_VERSION:-unknown}"
 VERSION_ID="${BUILD_VERSION:-unknown}"
 BUILD_ID="${BUILD_VERSION:-unknown}"
 ANSI_COLOR="1;32"
-HOME_URL="https://monolith.technomantics.com"
+HOME_URL="https://tuckermclean.github.io/themonolith"
 EOF
 
     # /etc/resolv.conf (empty, populated by DHCP)
