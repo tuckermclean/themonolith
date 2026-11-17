@@ -10,7 +10,7 @@
 #   MONOLITH_ADVISORY_FILE   default /run/monolith-advisory          (checker writes
 #                            for revoked only; 40-advisory.sh reads: the banner)
 # ADVISORY_BASE_URL keeps its meaning; unset, it defaults to
-# https://monolith.technomantics.com (OD-1).  curl/wget are stubs on PATH, so
+# https://tuckermclean.github.io/themonolith (OD-1).  curl/wget are stubs on PATH, so
 # no network is used; nothing reads host /etc or /run.  No git needed.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -75,15 +75,15 @@ silent() { # name
 s3host='amazon''aws'
 if [ -f "$CHECK" ] && ! grep -q "$s3host" "$CHECK"; then ok "AC-1 no S3 host (amazon...aws) in the script"
 else fail "AC-1 no S3 host (amazon...aws) in the script"; fi
-if [ -f "$CHECK" ] && grep -q 'https://monolith\.technomantics\.com' "$CHECK"; then ok "AC-1 default base URL in source"
+if [ -f "$CHECK" ] && grep -q 'https://tuckermclean\.github\.io/themonolith' "$CHECK"; then ok "AC-1 default base URL in source"
 else fail "AC-1 default base URL in source"; fi
 : > "$CURL_LOG"
 CURL_MODE=ok CURL_BODY="$TMP/clean.json" MONOLITH_RELEASE_FILE="$TMP/release" \
 MONOLITH_ADVISORY_STATE="$TMP/state" MONOLITH_ADVISORY_FILE="$TMP/banner" \
     env -u ADVISORY_BASE_URL sh "$CHECK" >/dev/null 2>&1
-if [ "$(tail -n1 "$CURL_LOG" 2>/dev/null)" = "https://monolith.technomantics.com/status/v1.2.3.json" ]; then
-    ok "AC-1 unset ADVISORY_BASE_URL fetches https://monolith.technomantics.com/status/<tag>.json"
-else fail "AC-1 unset ADVISORY_BASE_URL fetches https://monolith.technomantics.com/status/<tag>.json (asked: '$(cat "$CURL_LOG" 2>/dev/null)')"; fi
+if [ "$(tail -n1 "$CURL_LOG" 2>/dev/null)" = "https://tuckermclean.github.io/themonolith/status/v1.2.3.json" ]; then
+    ok "AC-1 unset ADVISORY_BASE_URL fetches https://tuckermclean.github.io/themonolith/status/<tag>.json"
+else fail "AC-1 unset ADVISORY_BASE_URL fetches https://tuckermclean.github.io/themonolith/status/<tag>.json (asked: '$(cat "$CURL_LOG" 2>/dev/null)')"; fi
 
 # ---- AC-2 / AC-3
 run_check 404 404 "$TMP/clean.json";      state_is "HTTP 404" unknown;     silent "HTTP 404"
@@ -125,8 +125,8 @@ else ok "AC-4 Details line is free of control bytes"; fi
 
 # ---- AC-5
 n=$(ls "$PKG"/*.ebuild 2>/dev/null | wc -l)
-if [ "$n" = 1 ] && [ -f "$PKG/monolith-base-0.1.0-r7.ebuild" ]; then ok "AC-5 exactly one ebuild, monolith-base-0.1.0-r7.ebuild"
-else fail "AC-5 exactly one ebuild, monolith-base-0.1.0-r7.ebuild (found: $(ls "$PKG" 2>/dev/null | grep ebuild | tr '\n' ' '))"; fi
+if [ "$n" = 1 ] && [ -f "$PKG/monolith-base-0.1.0-r8.ebuild" ]; then ok "AC-5 exactly one ebuild, monolith-base-0.1.0-r8.ebuild"
+else fail "AC-5 exactly one ebuild, monolith-base-0.1.0-r8.ebuild (found: $(ls "$PKG" 2>/dev/null | grep ebuild | tr '\n' ' '))"; fi
 
 # ---- AC-6: dry run of `make test` (never run it: it would recurse into this test)
 lint_args() { make -n -C "$ROOT" test "$@" 2>&1 | grep 'test-lint\.sh' | head -n1; }
