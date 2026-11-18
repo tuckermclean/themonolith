@@ -8,7 +8,7 @@
 #   - DIR layout is the ported one: DIR/<tag>/bom.cdx.json per release; the status file for
 #     a tag is DIR/status/<tag>.json (also the prior state: revoked / clearing).
 #   - --policy defaults to configs/attestation/cve-policy.yaml; --base-url defaults to
-#     https://monolith.technomantics.com ; details_url = <base-url>/<tag> on revoked files.
+#     https://tuckermclean.github.io/themonolith ; details_url = <base-url>/<tag> on revoked files.
 #   - the monitor finds scripts/check-cves.sh and scripts/run-cve-canary.sh next to itself, runs
 #     `grype db update`, then the canary, then check-cves.sh per SBOM and reads its coverage report.
 #   - exit 0 = every tag was scanned and written; 3 = grype db update failed (nothing scanned
@@ -204,9 +204,12 @@ if [ -f "$R" ] && [ -f "$C" ] && [ -f "$L" ] && ! grep -qi 'themonolith\.org' "$
 else fail "P03-AC-2 no status file contains themonolith.org"; fi
 dd="$TMP/ac2-default"; mk_sbom "$dd" tagR; night tagR F
 runmon "$dd" --policy "$POL"
-v=$(jget "$(sfile "$dd" tagR)" 'd["details_url"].startswith("https://monolith.technomantics.com")')
-[ "$v" = True ] && ok "P03-AC-2 without --base-url details_url starts with https://monolith.technomantics.com" \
-    || fail "P03-AC-2 without --base-url details_url starts with https://monolith.technomantics.com"
+v=$(jget "$(sfile "$dd" tagR)" 'd["details_url"].startswith("https://tuckermclean.github.io/themonolith")')
+[ "$v" = True ] && ok "P03-AC-2 without --base-url details_url starts with https://tuckermclean.github.io/themonolith" \
+    || fail "P03-AC-2 without --base-url details_url starts with https://tuckermclean.github.io/themonolith"
+v=$(jget "$(sfile "$dd" tagR)" 'd["details_url"].startswith("https://tuckermclean.github.io/themonolith/") and d["details_url"].endswith("tagR")')
+[ "$v" = True ] && ok "P05-AC-5 without --base-url details_url starts with https://tuckermclean.github.io/themonolith/ and names the tag" \
+    || fail "P05-AC-5 without --base-url details_url starts with https://tuckermclean.github.io/themonolith/ and names the tag"
 # change 5 keys
 SHA=$(sha256sum "$POL" | cut -d' ' -f1)
 v=$(jget "$R" '[d.get("build_tag"), d.get("policy_sha256"), d.get("grype_db_built"), d.get("advisories")]')

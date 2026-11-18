@@ -115,7 +115,7 @@ Porting can start now. F01 needs item 1, which takes a minute; the others are ne
    A copy keeps the digest. Then set both packages, and every later one, to public in the package
    settings. GHCR creates packages private.
 3. **Settle the decisions on the path, or accept the defaults** (each before the node that names it):
-   - OD-1: the advisory URL baked into the disc; default `https://monolith.technomantics.com/`.
+   - OD-1: the advisory URL baked into the disc; default `https://tuckermclean.github.io/themonolith/`.
    - OD-2: whether a prerelease may ship dynamic binaries; default yes, with a shrinking list.
    - OD-3: the first tree; default rc1's.
    - OD-4: the version; default `v0.2.0-rc1`.
