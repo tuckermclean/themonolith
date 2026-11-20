@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | B03 | P01 | — | M |
+| critical | B03 | O04, P01 | — | M |
 
 **Owns:** `docs/evidence/uefi-flake.md` (the diagnosis record and the boot tally), the failure evidence of change 1 in `scripts/boot-test.py` (O01 owns the rest of the file), the runner CPU lines `make test-boot` adds to `output/tool-versions.txt` (change 2), `.github/workflows/boot-test-repeat.yml` (change 3), `scripts/tests/boot-test-evidence.test.sh`, and the fix the diagnosis record names (change 4).
 **Resolves:** #46
