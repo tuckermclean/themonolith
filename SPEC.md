@@ -471,6 +471,9 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
     and gate on that ISO, and P01's package-set check have passed. Nothing is pushed or published before
     that.
   - A suffixed tag is a prerelease and never "Latest".
+  - On a prerelease tag the CVE gate reports its verdict and does not block, as on `main`; every other
+    gate and check still blocks. The verdict and its counts are published with the release. A final
+    `vX.Y.Z` tag must pass the CVE gate (P07).
   - The publish step re-verifies the digest chain: `sha256(ISO)` must equal the build's recorded digest
     (both builds' digests), the SHA256SUMS entry, the SBOM's recorded ISO hash and the
     attestation subject (`gh attestation verify`).
