@@ -465,11 +465,11 @@ The release oracle is the predecessor's, ported, plus the checks the study showe
 - **Merging.** Humans merge. Bots open PRs; they never merge, approve or use `--admin`. The
   predecessor's `pin-bump.yml` used `--admin`, and M01 removes it.
 - **Release.**
-  - A `vX.Y.Z[-rcN]` tag runs P02's gate: one fetch job, then two offline from-source builds whose ISOs
-    must have equal SHA-256.
+  - A `vX.Y.Z[-<suffix>]` tag (a suffix such as `-alpha2`, `-beta.2` or `-rc1`) runs P02's gate: one
+    fetch job, then two offline from-source builds whose ISOs must have equal SHA-256.
   - Attestation and the GitHub release (P01) are created only after the gate, every boot mode, check
-    and gate on that ISO, and P01's package-set check have passed. Nothing is pushed or published before
-    that.
+    and gate on that ISO (except the CVE gate on a prerelease tag, as below), and P01's package-set
+    check have passed. Nothing is pushed or published before that.
   - A suffixed tag is a prerelease and never "Latest".
   - On a prerelease tag the CVE gate reports its verdict and does not block, as on `main`; every other
     gate and check still blocks. The verdict and its counts are published with the release. A final
