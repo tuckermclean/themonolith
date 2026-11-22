@@ -37,13 +37,25 @@ Not every build gets a version tag, and that's by design.
 
 ### Prerelease / RC tags
 
-A tag carrying a `-rcN` or `-betaN` suffix (e.g. `v0.2.0-rc1`) is published
-as a GitHub **prerelease**: `scripts/release-create.sh`, which the publish
-job runs, passes `--prerelease --latest=false` for any hyphenated tag.
+A tag carrying a suffix (`-alpha1`, `-beta.2`, `-rc1`, e.g. `v0.2.0-alpha2`) is
+published as a GitHub **prerelease**: `scripts/release-kind.sh` is the one rule
+(any hyphen after the leading `v`), and `scripts/release-create.sh`, which the
+publish job runs, passes `--prerelease --latest=false` for it.
 GitHub's API forbids a prerelease from also holding the "Latest" badge
 (`HTTP 422: Latest release cannot be draft or prerelease`), so the
 `--latest=false` is mandatory, not cosmetic. A final `vX.Y.Z` tag with no
 suffix becomes GitHub's "Latest".
+
+On a pre-release tag the CVE gate reports and does not block: `make test-gates`
+runs `gates-verdict.sh --cve-report-only`, and the attestation job does not fail
+on CVE findings. These gates and checks still block on a pre-release tag: the
+licence gate, the unowned-files gate, the SBOM gate and the grype DB record
+(`db.built`), the package set, the rootfs provenance, the CycloneDX schema, the
+size budget and the digest chain. The CVE verdict is published in the release
+notes (`### Supply-chain gates`), in `attestation-summary.json` and on the
+dashboard, so a pre-release says plainly that it ships with known CVE findings.
+A final tag must pass the CVE gate: it fails the attestation job on any gating
+CVE finding.
 
 ### Iteration builds vs. tagged releases
 
