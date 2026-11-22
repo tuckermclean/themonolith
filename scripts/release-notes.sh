@@ -17,9 +17,15 @@ try:
     s = json.load(open(sys.argv[1]))
     cov = s.get("cve_coverage") or {}
     gating = sum(len([c for c in e.split(": ", 1)[-1].split(",") if c.strip()]) for e in s.get("cve_failures") or [])
-    for v in (s.get("cve_check"), gating, cov.get("waived_findings"), cov.get("total_findings"),
-              (s.get("cve_db") or {}).get("built"), s.get("license_check"), s.get("unowned_check")):
-        print("" if v is None else v)
+    vals = (("cve_check", s.get("cve_check")), ("cve_failures", gating),
+            ("cve_coverage.waived_findings", cov.get("waived_findings")),
+            ("cve_coverage.total_findings", cov.get("total_findings")),
+            ("cve_db.built", (s.get("cve_db") or {}).get("built")),
+            ("license_check", s.get("license_check")), ("unowned_check", s.get("unowned_check")))
+    for k, v in vals:
+        if v is None or v == "":
+            raise ValueError("missing or empty field %s" % k)
+        print(v)
 except Exception as e:
     sys.exit("release-notes: cannot read %s: %s" % (sys.argv[1], e))
 ' "$SUMMARY") || exit 1
