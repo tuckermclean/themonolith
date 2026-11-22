@@ -345,6 +345,15 @@ mkn "$W/mk.rn2" release-notes RELEASE_DIR=p07/given
 grep -qF "RELEASE_DIR='p07/given'" "$W/mk.rn2" && ! grep -qF "RELEASE_DIR='output/release'" "$W/mk.rn2" \
 	&& ok "P07-AC-4 make -n release-notes passes the RELEASE_DIR given on the command line" \
 	|| fail "P07-AC-4 make -n release-notes passes the RELEASE_DIR given on the command line"
+# a summary that parses but lacks a field the notes need fails the same way: non-zero, naming the file, not silently
+for v in nounowned:unowned_check emptycve:cve_check; do
+	notes "$FX/notes/${v%%:*}" v0.2.0-alpha2
+	if [ -f "$RN" ] && [ $NRC -ne 0 ] && echo "$NOUT" | grep -q 'attestation-summary\.json'; then
+		ok "P07-AC-4 release-notes.sh on a summary lacking ${v##*:} exits non-zero, naming attestation-summary.json"
+	else
+		fail "P07-AC-4 release-notes.sh on a summary lacking ${v##*:} exits non-zero, naming attestation-summary.json (rc=$NRC)"
+	fi
+done
 
 # ---------------------------------------------------------------- P07-AC-5 (guard)
 REPO=acme/monolith-fixture
