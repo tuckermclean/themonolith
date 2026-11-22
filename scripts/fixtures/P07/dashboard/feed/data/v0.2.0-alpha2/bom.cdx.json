@@ -1,0 +1,10 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "components": [
+    {"type": "library", "bom-ref": "openssl-3.0.1", "name": "openssl", "version": "3.0.1", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "zlib-1.2.11", "name": "zlib", "version": "1.2.11", "licenses": [{"license": {"id": "Zlib"}}]},
+    {"type": "library", "bom-ref": "curl-8.5.0", "name": "curl", "version": "8.5.0", "licenses": [{"license": {"id": "Apache-2.0"}}]}
+  ]
+}
