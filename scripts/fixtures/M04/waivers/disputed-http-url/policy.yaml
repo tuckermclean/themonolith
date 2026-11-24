@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0008
+    component: "coreutils"
+    justification: "disputed: http://example.invalid/record/CVE-2099-0008"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"

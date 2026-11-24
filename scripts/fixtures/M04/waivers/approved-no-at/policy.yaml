@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0008
+    component: "linux"
+    justification: "no-upper-bound: CONFIG_UNSET"
+    approved_by: "Jane Roe <jane>"
+    expires: "2027-02-22"
