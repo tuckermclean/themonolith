@@ -45,11 +45,18 @@ trap 'rm -f "$body"' EXIT INT TERM
 		--jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | "- " + .name + ": " + .conclusion') || jobs=
 	if [ -n "$jobs" ]; then echo "$jobs"; else echo "- (none listed)"; fi
 	echo
-	echo "What to do: see the operator steps in docs/releasing.md. Re-run failed jobs for a flake; fix forward and re-tag otherwise."
+	echo "What to do: see the operator steps in ${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/blob/main/docs/releasing.md#operator-steps-to-cut-a-release (re-run failed jobs for a flake; fix forward and re-tag otherwise)."
 } > "$body"
 title="Release ${tag} did not publish"
-number=$(gh issue list --state open --limit 200 --json number,title \
-	--jq ".[] | select(.title == \"${title}\") | .number" | head -n 1) || number=
+number=
+list=$(gh issue list --state open --limit 200 --json number,title \
+	--jq '.[] | "\(.number)\t\(.title)"') || list=
+tab=$(printf '\t')
+while IFS=$tab read -r num t; do
+	if [ "$t" = "$title" ]; then number=$num; break; fi
+done <<EOF
+$list
+EOF
 if [ -n "$number" ]; then
 	gh issue comment "$number" --body-file "$body" || echo "release-report: could not comment on issue ${number}" >&2
 else

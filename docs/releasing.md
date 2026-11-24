@@ -307,23 +307,25 @@ Once the version to release is decided (see the scheme above):
    signed, pushed or published. Pick the retry by the cause:
    - **A failure that needs no fix** (a flake, a runner fault): use **Re-run
      failed jobs** on the tag's Build run first. The re-run keeps the tag, the
-     commit and the run id; the attestation job overwrites its artifacts of
-     the earlier attempt, and the Release run that follows publishes from
-     them.
+     commit and the run id; the jobs that passed keep their results and artifacts, and the
+     attestation job's uploads set overwrite, so a re-run of an attestation
+     job that failed after uploading replaces its own earlier upload. The
+     Release run that follows publishes from them.
    - **A failure that needs a change**: **do not re-push the same tag** (git
      tags are meant to be immutable, and a force-push re-triggers the whole
      pipeline from a confusing state). Fix forward on `main`, delete the
      local/remote tag (`git tag -d v0.2.0-rc1 && git push origin :refs/tags/v0.2.0-rc1`),
      and re-tag once the fix is in.
-   - **A failed Release run** (the Build run was green): re-run that Release
-     run. It starts from the Build run's artifacts again.
+
+   If instead the Build run was green and the Release run failed, re-run that
+   Release run. It starts from the Build run's artifacts again.
 
    A tag whose Build run or Release run failed also gets an issue titled
    `Release <tag> did not publish`, with the run URLs, the attempt and the
    failed jobs (the `report` job of `release.yml`); a later failure of the
    same tag comments on it.
 
-**Pushing the tag is the only step.** Never create, draft or publish the
+**Pushing the tag is the only step that makes the release.** Never create, draft or publish the
 release for the tag by hand, in the GitHub UI or with `gh release create`:
 publishing a release there also creates the tag and starts the Build, so the
 release and the tag come apart from the pipeline. What the `publish` job does
