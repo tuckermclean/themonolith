@@ -547,7 +547,7 @@ These are owner decisions. A node that names one does not start until it is sett
 | OD-6 | Bump PRs (M01) need a credential other than `GITHUB_TOKEN` so their checks run. Fine-grained PAT or GitHub App? | GitHub App |
 | OD-7 | Hyper-V: provide manual evidence on real Hyper-V, or drop the README claim? | A dated manual evidence file |
 | OD-8 | Keep the undocumented Tier-0 `NET_9P`, `NET_9P_FD` and `NETFS_SUPPORT` symbols? | Keep them, documented |
-| OD-9 | If the CVE gate blocks the first release on rc1's 2026-08 tree: waive with an expiry, or bump the tree first? | Waive with a 30-day expiry; M01 follows |
+| OD-9 | If the CVE gate blocks the first release on rc1's 2026-08 tree: waive with an expiry, or bump the tree first? | Bump the tree first (M04, by M01's mechanism); the remaining findings are waived with one expiry, 90 days after M04's node PR opens. The owner's choice (issue #117). |
 | OD-10 | The distribution's share of the CD, once content projects claim space. | The whole 74-minute CD-R (681,984,000 bytes) until set |
 
 **Tracked, outside MS1.** These stay open on purpose. None is a gate for MS1, and none adds a node.
