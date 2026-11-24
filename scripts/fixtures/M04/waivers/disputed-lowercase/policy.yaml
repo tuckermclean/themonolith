@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0011
+    component: "coreutils"
+    justification: "disputed: the vendor says it is disputed"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
