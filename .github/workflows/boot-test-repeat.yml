@@ -1,9 +1,10 @@
 name: Boot Test Repeat
 
 # Boots one mode of one finished build.yml run's ISO `count` times, one job per boot, without a rebuild
-# (O03, issue #46). The mode input picks `uefi` (the default) or `bios-64` (BIOS with 64 MB of RAM). Dispatch
-# it from the Actions tab or `gh workflow run`. Each job downloads the artifact iso-<build-run-id> (a single
-# file, boot-test.iso) and uploads its serial log and tool versions as boot-test-<mode>-<build-run-id>-<index>. A failed job is not re-run: each failure is a result.
+# (O03, issue #46). The mode input picks `uefi` (the default) or `bios-64` (BIOS with 64 MB of RAM).
+# Dispatch it from the Actions tab or `gh workflow run`. Each job downloads the artifact
+# iso-<build-run-id> (a single file, boot-test.iso) and uploads its serial log and tool versions as
+# boot-test-<mode>-<build-run-id>-<index>. A failed job is not re-run: each failure is a result.
 
 on:
   workflow_dispatch:

@@ -888,8 +888,8 @@ def capture_output(child, cmd, timeout=30):
 def failure_evidence(child, cmd, files, timeout=30):
     """
     Evidence for a failed check that named the `files` its command reads, taken in
-    the same boot: their sha256sums, the last 50 lines of dmesg and a second run of
-    `cmd`. Never raises; the check stays failed whatever the second run gives.
+    the same boot: the guest's /proc/meminfo first, then their sha256sums, the last 50 lines of
+    dmesg and a second run of `cmd`. Never raises; the check stays failed whatever the second run gives.
     """
     parts = []
     for label, evidence_cmd in (
@@ -2410,12 +2410,12 @@ def run_serial_net(child, args):
         def chat_fails(exit_code, output):
             m = re.search(r"chat_rc=(\d+) waited=(\d+)", output)
             if not m:
-                return False, f"no result line from the chat run: {output.strip()[-300:]}"
+                return False, f"no result line from the chat run: {head_tail(output)}"
             rc, waited = int(m.group(1)), int(m.group(2))
             if rc in (0, 126, 127):
-                return False, f"expected chat to fail on a string that never arrives; exit {rc}, output: {output.strip()[-300:]}"
+                return False, f"expected chat to fail on a string that never arrives; exit {rc}, output: {head_tail(output)}"
             if rc != 3 or waited < 3:
-                return False, f"expected chat's timeout (exit 3 after 3s), got exit {rc} after {waited}s: {output.strip()[-300:]}"
+                return False, f"expected chat's timeout (exit 3 after 3s), got exit {rc} after {waited}s: {head_tail(output)}"
             return True, f"chat exited {rc} after {waited}s"
         results.append(("A: chat expecting a string that never arrives fails (non-zero exit)", *run_check(
             child, "chat never",
