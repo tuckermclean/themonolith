@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0045
+    component: "linux"
+    justification: "no-upper-bound: MYCONFIG_UNSET is off"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"

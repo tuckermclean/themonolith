@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0055
+    component: "coreutils"
+    justification: "disputed: https:// is the record"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"

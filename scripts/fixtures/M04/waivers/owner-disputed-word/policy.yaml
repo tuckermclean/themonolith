@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0061
+    component: "busybox"
+    justification: "owner: the record is DISPUTED"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"

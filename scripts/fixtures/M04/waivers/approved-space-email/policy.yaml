@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0064
+    component: "linux"
+    justification: "no-upper-bound: CONFIG_UNSET"
+    approved_by: "Jane Roe <ja ne@example.invalid>"
+    expires: "2027-02-22"

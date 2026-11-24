@@ -1,0 +1,3 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - "CVE-2099-0067"

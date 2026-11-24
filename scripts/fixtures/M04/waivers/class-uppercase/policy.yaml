@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0044
+    component: "coreutils"
+    justification: "Disputed: https://example.invalid/record/CVE-2099-0044"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"

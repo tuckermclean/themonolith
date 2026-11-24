@@ -1,0 +1,26 @@
+allowlist:
+  - cve: CVE-2099-0091
+    component: "linux"
+    justification: "no-upper-bound: CONFIG_UNSET"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0001
+    component: "linux"
+    justification: "no-upper-bound: CONFIG_UNSET"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0002
+    component: "coreutils"
+    justification: "disputed: DISPUTED"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0003
+    component: "linux"
+    justification: "fixed-in-shipped: 0123456789ab"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0004
+    component: "busybox"
+    justification: "owner: https://example.invalid/a"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
