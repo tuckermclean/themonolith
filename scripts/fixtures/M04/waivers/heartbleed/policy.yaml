@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2014-0160
+    component: "openssl"
+    justification: "disputed: https://example.invalid/heartbleed"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"

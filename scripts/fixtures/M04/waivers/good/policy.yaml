@@ -1,0 +1,42 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0001
+    component: "linux"
+    justification: "no-upper-bound: CONFIG_UNSET is not set in the savedconfig"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0002
+    component: "linux"
+    justification: "no-upper-bound: drivers/foo/bar.c is not built"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0003
+    component: "linux"
+    justification: "no-upper-bound: product: otheros"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0004
+    component: "coreutils"
+    justification: "disputed: https://example.invalid/record/CVE-2099-0004"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0005
+    component: "openssh"
+    justification: "disputed: the record says DISPUTED"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0006
+    component: "linux"
+    justification: "fixed-in-shipped: stable commit 0123456789ab"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0007
+    component: "linux"
+    justification: "fixed-in-shipped: https://example.invalid/changelog"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0008
+    component: "busybox"
+    justification: "owner: https://example.invalid/issues/1#answer"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"

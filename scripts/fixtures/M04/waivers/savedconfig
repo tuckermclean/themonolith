@@ -1,0 +1,7 @@
+#
+# Linux/i386 6.12.119 Kernel Configuration
+#
+CONFIG_SETY=y
+CONFIG_SETM=m
+# CONFIG_UNSET is not set
+CONFIG_STR="x"
