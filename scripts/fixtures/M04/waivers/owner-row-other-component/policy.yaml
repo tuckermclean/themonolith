@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0009
+    component: "busybox"
+    justification: "owner: https://example.invalid/issues/1#answer"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
