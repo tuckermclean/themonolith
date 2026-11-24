@@ -655,6 +655,7 @@ jobs:
           path: output/release/themonolith-${{ env.BUILD_VERSION }}.iso
           compression-level: 0
           retention-days: 14
+          overwrite: true
           if-no-files-found: error
 
       # release-inputs.json and source-audit.tsv are their own artifacts; the release job takes them from there.
@@ -673,6 +674,7 @@ jobs:
             output/release/attestation-summary.json
           retention-days: 14
           if-no-files-found: error
+          overwrite: true
 
       - name: Attest the build provenance of the ISO
         if: github.ref_type == 'tag'
@@ -696,4 +698,5 @@ jobs:
             output/attestation/
             output/reports/static-audit.txt
           retention-days: 14
+          overwrite: true
           if-no-files-found: warn

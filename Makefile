@@ -5,7 +5,7 @@ REGISTRY ?= ghcr.io/tuckermclean/themonolith
 
 .DEFAULT_GOAL := test
 
-.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-create advisory-feed advisory-feed-check dashboard dashboard-check check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline pin-check pin-tree-exists pin-seed update-build-pins update-all pin-labels pin-branch pin-commit pin-pr cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions build-image print-registry-tag push-image toolchain-inputs toolchain-labels toolchain-epoch toolchain-update toolchain-epoch-check toolchain-branch toolchain-digest toolchain-commit toolchain-dispatch toolchain-wait toolchain-pr list-packages show-failed shell clean
+.PHONY: take-packages sysroot-pack sysroot-unpack all build-rootfs iso iso-stage build-version verify-kernel-modules changes toolbox-publish toolbox-save toolbox-load toolbox-check test-toolbox-check pull-image builder-manifest registry-copy test test-lint test-unit test-revbump test-overlay test-rust-offline test-boot test-artifact test-gates test-cve-canary test-static-rebuild compare test-repro repro-fetch repro-build-a repro-build-b repro-build gate-route attestation attest-builder grype-db-update fetch-rc1-sbom sbom-diff-rc1 size-report iso-parts rc1-diff allowlist-report release-package-set release-digest-chain release-sums-check release-assets release-resolve release-notes release-existing release-create release-report advisory-feed advisory-feed-check dashboard dashboard-check check-cyclonedx rootfs-provenance push-distfiles fetch-rc1-iso verify-rc1-attestation rootfs fetch-iso run-bios run-uefi iso-artifact-name repeat-matrix sync-portage seed-tree tree-exists tree-check tree-restore-offline pin-check pin-tree-exists pin-seed update-build-pins update-all pin-labels pin-branch pin-commit pin-pr cache-tag cache-pull cache-push ensure-dirs ensure-volume build-packages build-packages-resume extract menuconfig-busybox menuconfig-kernel regen-manifest check-updates update-versions build-image print-registry-tag push-image toolchain-inputs toolchain-labels toolchain-epoch toolchain-update toolchain-epoch-check toolchain-branch toolchain-digest toolchain-commit toolchain-dispatch toolchain-wait toolchain-pr list-packages show-failed shell clean
 
 test-lint:
 	toolbox/run --network none -- sh scripts/test-lint.sh $(SHELL_EXTRA) $(addprefix configs/overlay/app-misc/monolith-base/files/,monolith-net monolith-router monolith monolith-time monolith-time-check monolith-persist)
@@ -611,10 +611,16 @@ release-resolve:
 	sh scripts/release-resolve.sh
 
 release-notes:
-	sh scripts/release-notes.sh
+	env RELEASE_DIR='$(RELEASE_DIR)' sh scripts/release-notes.sh
+
+release-existing:
+	toolbox/run -e TAG -e GH_TOKEN -e GITHUB_REPOSITORY -- sh scripts/release-existing.sh
 
 release-create:
-	toolbox/run -e TAG -e BUILD_VERSION -e GH_TOKEN -e GITHUB_REPOSITORY -- env RELEASE_DIR='$(RELEASE_DIR)' sh scripts/release-create.sh
+	toolbox/run -e TAG -e BUILD_VERSION -e GH_TOKEN -e GITHUB_REPOSITORY -- env RELEASE_DIR='$(RELEASE_DIR)' RELEASE_KIND='scripts/release-kind.sh' sh scripts/release-create.sh
+
+release-report:
+	sh scripts/release-report.sh
 
 # The advisory feed (P03). GRYPE_VERSION and GRYPE_SHA256 (the release tarball) come from advisory-feed.yml's env.
 RC1_TAG ?= v0.1.0-rc1
@@ -688,18 +694,26 @@ attest-builder: rootfs pull-image grype-db-update
 # $GITHUB_STEP_SUMMARY), not gating; then the SBOM must equal rc1's outside SBOM_DIFF_LIST.
 # CVE_REPORT_ONLY=1 (CI sets it off tag builds): on any other ISO the CVE verdict is reported, not gating, like rc1's
 # (gates-verdict.sh --cve-report-only), and attestation.sh's own exit status is not demanded. A tag build leaves it unset.
+# On a pre-release tag (GITHUB_REF_TYPE=tag and scripts/release-kind.sh prints prerelease for GITHUB_REF_NAME: -alpha, -beta,
+# -rc) test-gates behaves as with CVE_REPORT_ONLY=1: the CVE verdict is reported, not gating, and every other gate still
+# decides. A final tag keeps the CVE gate, and a tag release-kind.sh rejects fails. Decided at make time.
+comma := ,
+TAG_KIND = $(if $(filter tag,$(GITHUB_REF_TYPE)),$(shell sh scripts/release-kind.sh "$$GITHUB_REF_NAME" || echo rejected))
+CVE_RO = $(if $(or $(filter 1,$(CVE_REPORT_ONLY)),$(filter prerelease,$(TAG_KIND))),1)
 test-gates: rootfs pull-image grype-db-update
+	$(if $(filter prerelease,$(TAG_KIND)),@echo 'test-gates: pre-release tag $(GITHUB_REF_NAME): the CVE verdict is reported$(comma) not gating')
+	$(if $(filter rejected,$(TAG_KIND)),@echo 'test-gates: $(GITHUB_REF_NAME) is not a release tag release-kind.sh accepts'; exit 1)
 	rm -rf $(ATTEST_OUT)
 	mkdir -p $(ATTEST_OUT)
 	@sha256sum '$(ISO)' | cut -d' ' -f1 > output/gates-iso.sha256
 	@rc1=0; [ "$$(cat output/gates-iso.sha256)" = '$(RC1_SHA256)' ] && rc1=1; \
 	$(ATTEST_RUN) /scripts/attestation.sh $(ATTEST_ARGS); arc=$$?; \
 	echo "==> attestation.sh exited $$arc"; \
-	flag=; [ $$rc1 = 1 ] && flag=--rc1;$(if $(filter 1,$(CVE_REPORT_ONLY)), [ $$rc1 = 1 ] || flag=--cve-report-only;) \
+	flag=; [ $$rc1 = 1 ] && flag=--rc1;$(if $(CVE_RO), [ $$rc1 = 1 ] || flag=--cve-report-only;) \
 	toolbox/run --network none -e GITHUB_STEP_SUMMARY -- sh scripts/gates-verdict.sh $$flag $(ATTEST_OUT) || exit 1; \
 	[ -f $(ATTEST_OUT)/bom.cdx.json ] || { echo "test-gates: attestation.sh wrote no $(ATTEST_OUT)/bom.cdx.json"; exit 1; }; \
 	if [ $$rc1 = 1 ]; then $(fetch_rc1_sbom) || exit 1; $(sbom_diff) || exit 1; \
-	else $(if $(filter 1,$(CVE_REPORT_ONLY)),:,[ $$arc -eq 0 ] || exit 1); fi; \
+	else $(if $(CVE_RO),:,[ $$arc -eq 0 ] || exit 1); fi; \
 	echo "test-gates: PASS"
 
 # B01-AC-16: a revbump or package.use change rebuilds a cached static consumer, in the pinned builder, on the host.
