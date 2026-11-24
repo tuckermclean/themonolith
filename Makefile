@@ -50,7 +50,7 @@ build-version:
 ISO_URL ?=
 RC1_SHA256 ?= a96006596b13cc09fa951f54aadc0b816765d783e5d0e40895d7d0945edeb27a
 ISO_SHA256 ?=
-EXPECTED_KERNEL ?= 6.12.80-i486-monolith
+EXPECTED_KERNEL ?= 6.12.119-i486-monolith
 BUILT_ISO := output/themonolith-$(BUILD_VERSION).iso
 DEFAULT_ISO := $(if $(ISO_URL),output/themonolith-0.1.0-rc1.iso,$(BUILT_ISO))
 # What an ISO left at its default needs first: the fetch in the rc1 lane, else `make iso`.
