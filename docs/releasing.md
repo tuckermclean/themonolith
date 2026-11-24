@@ -261,6 +261,7 @@ with no expired waiver; G01 is done (each claim in the README is tested or remov
 |---|---|---|
 | `contents: write`, `actions: read` | `release.yml`, workflow level | Create the release; download the Build run's artifacts |
 | `packages: write` | `release.yml`'s `publish` job only | Push the distfiles archive |
+| `issues: write`, `actions: read`, `contents: read` | `release.yml`'s `report` job only | Open or comment on the issue for a tag that did not publish; read the Build run's jobs |
 | `id-token: write`, `attestations: write`, `contents: read` | `build.yml`'s `attestation` job | Sign the ISO and SBOM through Sigstore and GitHub OIDC |
 | `packages: write` | `build.yml`'s `build` job only | Push the binary package cache |
 
@@ -302,12 +303,39 @@ Once the version to release is decided (see the scheme above):
      --signer-workflow tuckermclean/themonolith/.github/workflows/build.yml
    sha256sum themonolith-0.2.0-rc1.iso   # must match SHA256SUMS and the release notes
    ```
-6. If the run fails at a boot mode, the compare or a gate, **do not re-push
-   the same tag** (git tags are meant to be immutable, and a force-push
-   re-triggers the whole pipeline from a confusing state). Nothing was
-   signed, pushed or published, so fix forward on `main`, delete the
-   local/remote tag (`git tag -d v0.2.0-rc1 && git push origin :refs/tags/v0.2.0-rc1`),
-   and re-tag once the fix is in.
+6. If the Build run fails at a boot mode, the compare or a gate, nothing was
+   signed, pushed or published. Pick the retry by the cause:
+   - **A failure that needs no fix** (a flake, a runner fault): use **Re-run
+     failed jobs** on the tag's Build run first. The re-run keeps the tag, the
+     commit and the run id; the attestation job overwrites its artifacts of
+     the earlier attempt, and the Release run that follows publishes from
+     them.
+   - **A failure that needs a change**: **do not re-push the same tag** (git
+     tags are meant to be immutable, and a force-push re-triggers the whole
+     pipeline from a confusing state). Fix forward on `main`, delete the
+     local/remote tag (`git tag -d v0.2.0-rc1 && git push origin :refs/tags/v0.2.0-rc1`),
+     and re-tag once the fix is in.
+   - **A failed Release run** (the Build run was green): re-run that Release
+     run. It starts from the Build run's artifacts again.
+
+   A tag whose Build run or Release run failed also gets an issue titled
+   `Release <tag> did not publish`, with the run URLs, the attempt and the
+   failed jobs (the `report` job of `release.yml`); a later failure of the
+   same tag comments on it.
+
+**Pushing the tag is the only step.** Never create, draft or publish the
+release for the tag by hand, in the GitHub UI or with `gh release create`:
+publishing a release there also creates the tag and starts the Build, so the
+release and the tag come apart from the pipeline. What the `publish` job does
+with a release that already exists for the tag (`make release-existing`, after
+the digest chain and before anything is pushed):
+
+- none: the release step creates it;
+- one without assets (a draft or published shell): the release step uploads
+  the files, then sets the title, notes and flags and publishes it;
+- one with assets: the job stops before the distfiles push. Delete the
+  release and keep the tag with `gh release delete <tag> --yes`, then re-run
+  the Release run.
 
 There is no rollback automation: a bad release is superseded by cutting a
 new patch version, not by deleting the old one (deleting a published

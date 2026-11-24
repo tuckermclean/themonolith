@@ -154,6 +154,12 @@ jobs:
           BOM: output/release/bom.cdx.json
         run: make release-digest-chain
 
+      # A release a person made by hand and left empty is filled by the release step; one that holds assets stops here.
+      - name: Check for an existing release
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: make release-existing
+
       - name: Push the distfiles archive
         env:
           RELEASE_INPUTS: output/release/release-inputs.json
@@ -170,3 +176,34 @@ jobs:
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
         run: make release-create
+
+  # Files an issue for a tag that did not publish: a Build run that failed or was cancelled (publish is skipped then),
+  # or a failed resolve or publish. A branch push, a pull request or a schedule run reports nothing.
+  report:
+    needs: [resolve, publish]
+    if: always() && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Report a tag that did not publish
+        env:
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+          BUILD_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          BUILD_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RESOLVE_RESULT: ${{ needs.resolve.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        run: make release-report
