@@ -1,0 +1,12 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0001
+    component: "linux"
+    justification: "no-upper-bound: CONFIG_UNSET"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
+  - cve: CVE-2099-0002
+    component: "linux"
+    justification: "no-upper-bound: drivers/foo/bar.c"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: 2027-06-01
