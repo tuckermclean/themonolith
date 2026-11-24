@@ -618,6 +618,30 @@ report d-notag v9.9.9 v9.9.9 cancelled skipped skipped "$decoy"
 { rc_is 0 && ! grep -q '^CALL issue' "$C/gh.log"; } && ok "P06-AC-3(d) a head_branch that is not a tag calls no gh issue command" \
 	|| fail "P06-AC-3(d) a head_branch that is not a tag calls no gh issue command"
 
+# ---- review findings on P06-AC-3 (added after the first RED; the lines above are frozen)
+# Finding 1: the body holds a link to docs/releasing.md, an absolute https URL (main or a sha, optional #anchor).
+report link-a v0.2.0 v0.2.0 failure skipped skipped "$decoy"
+if grep -Eq 'https://[^[:space:])>]*/docs/releasing\.md(#[A-Za-z0-9_.-]+)?([[:space:])>]|$)' "$C/issue.log" \
+	&& grep -Eq 'https://github\.com/acme/monolith-fixture/blob/[^/[:space:]]+/docs/releasing\.md' "$C/issue.log"; then
+	ok "P06-AC-3(a) the issue body holds an absolute https URL to docs/releasing.md in this repository"
+else
+	fail "P06-AC-3(a) the issue body holds an absolute https URL to docs/releasing.md in this repository"
+fi
+# Finding 2: the title match is exact; a quote in the tag cannot inject into the jq program.
+TAG='v1.0.0"+"'
+newcase rp-inject
+printf '%s %s\n' "$TAG" "$SHA" >"$C/tags"
+echo '{"jobs":[{"name":"boot-test-qemu","conclusion":"failure"}]}' >"$C/jobs.json"
+echo '[{"number":7,"title":"Release v1.0.0 did not publish"}]' >"$C/issues.json"
+runit release-report.sh HEAD_BRANCH="$TAG" HEAD_SHA="$SHA" BUILD_RUN_ID=900100 BUILD_RUN_ATTEMPT=1 BUILD_CONCLUSION=failure \
+	BUILD_RUN_URL="$BURL" RELEASE_RUN_URL="$RURL" RESOLVE_RESULT=skipped PUBLISH_RESULT=skipped \
+	GH_JOBS_JSON="$C/jobs.json" GH_ISSUES_JSON="$C/issues.json"
+{ [ "$(ncalls 'issue create')" = 1 ] && grep '^CALL issue create' "$C/gh.log" | grep -qF -- "--title Release $TAG did not publish"; } \
+	&& ok "P06-AC-3(a) a tag with quotes creates the issue with its exact title" \
+	|| fail "P06-AC-3(a) a tag with quotes creates the issue with its exact title"
+[ "$(ncalls 'issue comment')" = 0 ] && ok "P06-AC-3(b) a tag with quotes never comments on the issue of another tag" \
+	|| fail "P06-AC-3(b) a tag with quotes never comments on the issue of another tag"
+
 if [ "$fails" -ne 0 ]; then
 	echo "release-recovery.test.sh: $fails group(s) or case(s) failed"
 	exit 1
