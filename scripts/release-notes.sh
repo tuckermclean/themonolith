@@ -10,14 +10,13 @@ BUSYBOX=$(grep '^sys-apps/busybox:' configs/portage/versions.lock | cut -d: -f2)
 SHA=$(sha256sum "$ISO" | cut -d' ' -f1)
 SUMMARY=$RELEASE_DIR/attestation-summary.json
 [ -f "$SUMMARY" ] || { echo "release-notes: no $SUMMARY" >&2; exit 1; }
-# cve_check, gating findings (the CVEs listed in cve_failures), waived, total, grype DB build time, licence, unowned
+# cve_check, gating findings (cve_coverage.gating_findings), waived, total, grype DB build time, licence, unowned
 GATES=$(python3 -I -c '
 import json, sys
 try:
     s = json.load(open(sys.argv[1]))
     cov = s.get("cve_coverage") or {}
-    gating = sum(len([c for c in e.split(": ", 1)[-1].split(",") if c.strip()]) for e in s.get("cve_failures") or [])
-    vals = (("cve_check", s.get("cve_check")), ("cve_failures", gating),
+    vals = (("cve_check", s.get("cve_check")), ("cve_coverage.gating_findings", cov.get("gating_findings")),
             ("cve_coverage.waived_findings", cov.get("waived_findings")),
             ("cve_coverage.total_findings", cov.get("total_findings")),
             ("cve_db.built", (s.get("cve_db") or {}).get("built")),

@@ -373,6 +373,7 @@ CVE_CLEAN_COUNT=0
 CVE_UNSCANNED_COUNT=0
 CVE_TOTAL_FINDINGS=0
 CVE_WAIVED_FINDINGS=0
+CVE_GATING_FINDINGS=0
 if [[ -f "${OUTPUT_DIR}/cve-report-coverage.json" ]]; then
     eval "$(python3 -c "
 import json, shlex
@@ -392,6 +393,7 @@ pairs = {
     'CVE_UNSCANNED_COUNT': cov.get('unscanned', 0),
     'CVE_TOTAL_FINDINGS':  summary.get('total_findings', 0),
     'CVE_WAIVED_FINDINGS': summary.get('waived_findings', 0),
+    'CVE_GATING_FINDINGS': summary.get('gating_findings', 0),
 }
 for k, v in pairs.items():
     print(f'{k}={shlex.quote(str(v))}')
@@ -683,7 +685,8 @@ summary = {
         "clean": ${CVE_CLEAN_COUNT},
         "unscanned": ${CVE_UNSCANNED_COUNT},
         "total_findings": ${CVE_TOTAL_FINDINGS},
-        "waived_findings": ${CVE_WAIVED_FINDINGS}
+        "waived_findings": ${CVE_WAIVED_FINDINGS},
+        "gating_findings": ${CVE_GATING_FINDINGS}
     },
     "unowned_check": "${OVERALL_UNOWNED_STATUS}",
     "unowned_count": ${UNOWNED_COUNT},
