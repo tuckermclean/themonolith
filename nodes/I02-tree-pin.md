@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | I01 | B01, R02 | — | M |
+| critical | I01 | B01, M04, R02 | — | M |
 
 **Owns:** `scripts/sync-portage.sh` (rewritten, see Changes), `scripts/tests/sync-portage.test.sh`, `scripts/seed-tree.sh` (one-time archive helper), the `TREE_COMMIT` and `TREE_DIGEST` pins in `Makefile`, `docs/tree-pin.md` (the recovery evidence: candidate range, match counts, signature result).
 **Ports from linux-live-iso-factory@b9f533b:** first the test `scripts/tests/sync-portage.test.sh`; then `scripts/sync-portage.sh` (`_fetch_one` loop, `--source-only` detection at `:101-112`). The Makefile `sync-portage` target (`Makefile:380-389`) keeps its name.

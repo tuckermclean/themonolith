@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| later | O02, B03 | X01 | — | L |
+| later | O02, B03 | M04, X01 | — | L |
 
 **Owns:** `configs/portage/env/`, `configs/portage/package.env/`, `configs/portage/package.use/static`, `configs/portage/bashrc` (static-link hooks), O02's allowlist file (shrinking only), edits to `extract-packages.sh:147-157` and `build-packages.sh:384-385` (`scripts/build-packages.sh:485-496` and `scripts/extract-packages.sh:137-160` in this repository), `scripts/tests/all-static.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** nothing new. It changes the static mechanism B01 ported in `configs/portage/{make.conf,bashrc,env/static.conf,env/no-static-ldflags.conf,package.env/cross-compile,package.use/static}`.
