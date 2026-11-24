@@ -1,0 +1,7 @@
+gating_severities: [Critical, High, Unknown]
+allowlist:
+  - cve: CVE-2099-0012
+    component: "linux"
+    justification: "fixed-in-shipped: commit 0123456789gh"
+    approved_by: "Jane Roe <jane@example.invalid>"
+    expires: "2027-02-22"
