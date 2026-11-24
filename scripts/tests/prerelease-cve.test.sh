@@ -301,13 +301,14 @@ if [ -s "$W/sent.pre" ] && grep -q 'attestation-summary\.json' "$W/sent.pre" && 
 else
 	fail "P07-AC-4 pre-release notes: the known-CVE sentence (known CVE findings, attestation-summary.json, a final release must clear them)"
 fi
-# the gating count is the CVEs listed in cve_failures, not the entries (2 entries listing 3 CVEs; 5 waived; 41 total)
+# the gating count is cve_coverage.gating_findings (9), not the CVEs listed in cve_failures (2 entries listing 3 CVEs); 5 waived; 41 total
 notes "$FX/notes/multi" v0.2.0-alpha2
 section "$W/notes/release-notes.md" >"$W/sec.multi"
-if [ $NRC -eq 0 ] && grep -qw 3 "$W/sec.multi" && grep -qw 5 "$W/sec.multi" && grep -qw 41 "$W/sec.multi" && ! grep -qw 2 "$W/sec.multi"; then
-	ok "P07-AC-4 pre-release notes: gating findings are the 3 CVEs in cve_failures (2 entries), with 5 waived and 41 total"
+if [ $NRC -eq 0 ] && grep -qw 9 "$W/sec.multi" && grep -qw 5 "$W/sec.multi" && grep -qw 41 "$W/sec.multi" \
+	&& ! grep -qw 3 "$W/sec.multi" && ! grep -qw 2 "$W/sec.multi"; then
+	ok "P07-AC-4 pre-release notes: gating findings are cve_coverage.gating_findings (9, not the 3 CVEs in cve_failures), with 5 waived and 41 total"
 else
-	fail "P07-AC-4 pre-release notes: gating findings are the 3 CVEs in cve_failures (2 entries), with 5 waived and 41 total (rc=$NRC)"
+	fail "P07-AC-4 pre-release notes: gating findings are cve_coverage.gating_findings (9, not the 3 CVEs in cve_failures), with 5 waived and 41 total (rc=$NRC)"
 fi
 notes "$FX/notes/final" v0.2.0
 section "$W/notes/release-notes.md" >"$W/sec.final"
@@ -354,6 +355,60 @@ for v in nounowned:unowned_check emptycve:cve_check; do
 		fail "P07-AC-4 release-notes.sh on a summary lacking ${v##*:} exits non-zero, naming attestation-summary.json (rc=$NRC)"
 	fi
 done
+
+# a summary lacking cve_coverage.gating_findings (cve_failures still lists 3 CVEs) fails the same way, not by counting cve_failures
+notes "$FX/notes/nogating" v0.2.0-alpha2
+if [ -f "$RN" ] && [ $NRC -ne 0 ] && echo "$NOUT" | grep -q 'attestation-summary\.json'; then
+	ok "P07-AC-4 release-notes.sh on a summary lacking cve_coverage.gating_findings exits non-zero, naming attestation-summary.json"
+else
+	fail "P07-AC-4 release-notes.sh on a summary lacking cve_coverage.gating_findings exits non-zero, naming attestation-summary.json (rc=$NRC)"
+fi
+
+# attestation.sh writes cve_coverage.gating_findings into the summary, copied from cve-report-coverage.json's summary.gating_findings.
+# Run offline in a scratch copy of scripts/ whose sibling pillar scripts are stubs (check-cves.sh writes the fixture coverage file),
+# with stub syft and grype on PATH.
+AT=$W/att
+rm -rf "${AT:?}"; mkdir -p "$AT/scripts" "$AT/bin" "$AT/sysroot" "$AT/out"
+if [ -f "$ROOT/scripts/attestation.sh" ]; then cp "$ROOT/scripts/attestation.sh" "$AT/scripts/attestation.sh"; fi
+cat >"$AT/scripts/check-cves.sh" <<'STUB'
+#!/bin/bash
+# stub: writes the fixture coverage file beside --output, as the real check-cves.sh does
+while [ $# -gt 0 ]; do case $1 in --output) out=$2; shift 2 ;; *) shift ;; esac; done
+cp "$P07_COVERAGE" "$(dirname "$out")/cve-report-coverage.json"
+echo '{"vulnerabilities": []}' >"$out"
+STUB
+for f in enrich-sbom.py check-licenses.py check-unowned.py; do printf 'import sys\n' >"$AT/scripts/$f"; done
+cat >"$AT/bin/syft" <<'STUB'
+#!/bin/sh
+for a in "$@"; do case $a in
+	cyclonedx-json=*) echo '{"components": []}' >"${a#*=}" ;;
+	json=*) echo '{"artifacts": [], "files": []}' >"${a#*=}" ;;
+esac; done
+exit 0
+STUB
+printf '#!/bin/sh\nexit 0\n' >"$AT/bin/grype"
+chmod +x "$AT/bin/syft" "$AT/bin/grype" "$AT/scripts/check-cves.sh"
+ATOUT=$(cd "$AT" && env -u GITHUB_REF PATH="$AT/bin:$PATH" P07_COVERAGE="$FX/attestation/cve-report-coverage.json" \
+	bash "$AT/scripts/attestation.sh" --sysroot "$AT/sysroot" --build-tag v0.2.0-alpha2 --output-dir "$AT/out" 2>&1)
+ATRC=$?
+ATL="P07-AC-4 attestation.sh summary cve_coverage copies summary.gating_findings, total_findings and waived_findings from cve-report-coverage.json"
+if [ -f "$AT/out/attestation-summary.json" ]; then
+	python3 -I - "$AT/out/attestation-summary.json" "$ATL" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])).get("cve_coverage", {})
+bad = []
+for k, want in (("gating_findings", 7), ("total_findings", 53), ("waived_findings", 4)):
+    if c.get(k) != want:
+        bad.append("%s=%r (want %r)" % (k, c.get(k), want))
+if bad:
+    print("FAIL: %s (%s)" % (sys.argv[2], "; ".join(bad)))
+    sys.exit(1)
+print("PASS: " + sys.argv[2])
+PY
+	[ $? -eq 0 ] || fails=$((fails+1))
+else
+	fail "$ATL (no attestation-summary.json written, rc=$ATRC)"
+fi
 
 # ---------------------------------------------------------------- P07-AC-5 (guard)
 REPO=acme/monolith-fixture
