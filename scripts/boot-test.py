@@ -523,6 +523,15 @@ def build_clock_1996_cmd(args):
     return build_bios_cmd(args)
 
 
+def head_tail(output, limit=1000):
+    """A check's output for a failure detail: all of it up to `limit` characters, else the first 500, a cut line and the last 500."""
+    text = output.strip()
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    return f"{text[:half]}\n[… {len(text) - limit} characters cut …]\n{text[-half:]}"
+
+
 def epoch_close_to(target_epoch, tolerance):
     """
     Validator: the guest's `date +%s` output must be an integer within
@@ -532,10 +541,10 @@ def epoch_close_to(target_epoch, tolerance):
     """
     def _v(exit_code, output):
         if exit_code != 0:
-            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+            return False, f"exit code {exit_code}, output: {head_tail(output)}"
         m = re.search(r"(\d{9,})", output)
         if not m:
-            return False, f"no epoch integer found in output: {output.strip()[-200:]}"
+            return False, f"no epoch integer found in output: {head_tail(output)}"
         got = int(m.group(1))
         delta = abs(got - target_epoch)
         if delta > tolerance:
@@ -884,6 +893,7 @@ def failure_evidence(child, cmd, files, timeout=30):
     """
     parts = []
     for label, evidence_cmd in (
+        ("cat /proc/meminfo", "cat /proc/meminfo 2>&1"),
         ("sha256sum", "sha256sum " + " ".join(files) + " 2>&1"),
         ("dmesg | tail -n 50", "dmesg 2>&1 | tail -n 50"),
         ("second run of the check's command", cmd),
@@ -934,9 +944,9 @@ def contains(needle, ci=False):
         hay = output.lower() if ci else output
         n = needle.lower() if ci else needle
         if exit_code != 0:
-            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+            return False, f"exit code {exit_code}, output: {head_tail(output)}"
         if n not in hay:
-            return False, f"expected {needle!r} in output, got: {output.strip()[-500:]}"
+            return False, f"expected {needle!r} in output, got: {head_tail(output)}"
         return True, "ok"
     return _v
 
@@ -945,9 +955,9 @@ def regex_matches(pattern, flags=0):
     compiled = re.compile(pattern, flags)
     def _v(exit_code, output):
         if exit_code != 0:
-            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+            return False, f"exit code {exit_code}, output: {head_tail(output)}"
         if not compiled.search(output):
-            return False, f"expected /{pattern}/ to match output, got: {output.strip()[-500:]}"
+            return False, f"expected /{pattern}/ to match output, got: {head_tail(output)}"
         return True, "ok"
     return _v
 
@@ -961,7 +971,7 @@ def regex_absent(pattern, flags=0):
     compiled = re.compile(pattern, flags)
     def _v(exit_code, output):
         if exit_code != 0:
-            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+            return False, f"exit code {exit_code}, output: {head_tail(output)}"
         match = compiled.search(output)
         if match:
             return False, f"expected /{pattern}/ to NOT match output, but found: {match.group(0)!r}"
@@ -972,7 +982,7 @@ def regex_absent(pattern, flags=0):
 def exit_code_only():
     def _v(exit_code, output):
         if exit_code != 0:
-            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+            return False, f"exit code {exit_code}, output: {head_tail(output)}"
         return True, "ok"
     return _v
 
@@ -988,9 +998,9 @@ def contains_with_exit(needle, expected_exit, ci=False):
         hay = output.lower() if ci else output
         n = needle.lower() if ci else needle
         if exit_code != expected_exit:
-            return False, f"expected exit code {expected_exit}, got {exit_code}, output: {output.strip()[-500:]}"
+            return False, f"expected exit code {expected_exit}, got {exit_code}, output: {head_tail(output)}"
         if n not in hay:
-            return False, f"expected {needle!r} in output, got: {output.strip()[-500:]}"
+            return False, f"expected {needle!r} in output, got: {head_tail(output)}"
         return True, "ok"
     return _v
 
@@ -1101,6 +1111,9 @@ PERL_CGI_FILES = (
     "/usr/lib/perl5/5.42.0/deprecate.pm",
     "/usr/lib/perl5/5.42.0/i486-linux/Config.pm",
     "/usr/bin/perl",
+    "/usr/lib/perl5/5.42.0/CGI/File/Temp.pm",
+    "/usr/lib/perl5/5.42.0/parent.pm",
+    "/usr/lib/perl5/5.42.0/File/Temp.pm",
 )
 
 
@@ -1339,7 +1352,7 @@ def modprobe_clean_or_crashed():
     def _v(exit_code, output):
         crash = re.search(r"Oops|Kernel panic|BUG:", output)
         if crash:
-            return False, f"crash signature in modprobe output: {output.strip()[-500:]}"
+            return False, f"crash signature in modprobe output: {head_tail(output)}"
         return True, f"exit {exit_code}: {output.strip()[-200:] or '(no output)'}"
     return _v
 
@@ -1353,10 +1366,10 @@ def exact_value(expected):
     """
     def _v(exit_code, output):
         if exit_code != 0:
-            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+            return False, f"exit code {exit_code}, output: {head_tail(output)}"
         got = output.strip().splitlines()[-1].strip() if output.strip() else ""
         if got != expected:
-            return False, f"expected {expected!r}, got {got!r} (full output: {output.strip()[-500:]})"
+            return False, f"expected {expected!r}, got {got!r} (full output: {head_tail(output)})"
         return True, "ok"
     return _v
 
@@ -2747,7 +2760,7 @@ def _entry_check_cmdline(child, wanted):
     def _v(exit_code, output):
         m = re.search(r"[\r\n]CMDLINE=([^\r\n]*)", output)
         if exit_code != 0 or not m:
-            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+            return False, f"exit code {exit_code}, output: {head_tail(output)}"
         have = m.group(1).split()
         missing = [w for w in wanted if w not in have]
         if missing:
@@ -2870,11 +2883,11 @@ def smoke_validator(command, pattern):
         if compiled.search(command):
             return False, f"regex /{pattern}/ matches the command line itself"
         if exit_code != 0:
-            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+            return False, f"exit code {exit_code}, output: {head_tail(output)}"
         plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output).replace("\r", "")
         shown = "\n".join(l for l in plain.split("\n") if command not in l)
         if not compiled.search(shown):
-            return False, f"expected /{pattern}/ to match output, got: {output.strip()[-500:]}"
+            return False, f"expected /{pattern}/ to match output, got: {head_tail(output)}"
         return True, "ok"
     return _v
 
