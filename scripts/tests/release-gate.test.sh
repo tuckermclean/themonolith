@@ -808,7 +808,7 @@ fline() { nc_n=$(grep -n -E -e "$2" "$1" 2>/dev/null | grep -v -E '^[0-9]+:[[:sp
 lline() { grep -n -E -e "$2" "$1" 2>/dev/null | grep -v -E '^[0-9]+:[[:space:]]*#' | tail -n 1 | cut -d: -f1; }
 s3check() { d=$1; shift; if "$@" 2>/dev/null; then pass "$d"; else fail "$d"; fi; }
 
-# ---- change 3: kernel 6.12.119 (M04-AC-3; was r10) ----
+# ---- change 3: kernel 6.12.119 (M04-AC-3) ----
 K10="$ROOT/configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.119.ebuild"
 if [ -f "$K10" ]; then pass "P02-AC-6 change 3: monolith-kernel-6.12.119.ebuild exists"; else fail "P02-AC-6 change 3: monolith-kernel-6.12.119.ebuild exists"; fi
 s3check "P02-AC-6 change 3: 6.12.119 exports KBUILD_BUILD_TIMESTAMP=@\${SOURCE_DATE_EPOCH}" \
@@ -817,7 +817,7 @@ s3check "P02-AC-6 change 3: 6.12.119 exports KBUILD_BUILD_USER=monolith" grep -E
 s3check "P02-AC-6 change 3: 6.12.119 exports KBUILD_BUILD_HOST=monolith" grep -Eq '^[[:space:]]*export[[:space:]]+KBUILD_BUILD_HOST="?monolith"?([[:space:]]|$)' "$K10"
 s3check "P02-AC-6 change 3: 6.12.119 exports KBUILD_BUILD_VERSION=1" grep -Eq '^[[:space:]]*export[[:space:]]+KBUILD_BUILD_VERSION="?1"?([[:space:]]|$)' "$K10"
 s3check "P02-AC-6 change 3: 6.12.119 timestamp is an export" grep -Eq '^[[:space:]]*export[[:space:]]+KBUILD_BUILD_TIMESTAMP=' "$K10"
-if [ -f "$K10" ] && ! grep -Eq 'SOURCE_DATE_EPOCH:[-=]' "$K10"; then pass "P02-AC-6 change 3: 6.12.119 has no SOURCE_DATE_EPOCH fallback"; else fail "P02-AC-6 change 3: 6.12.119 has no SOURCE_DATE_EPOCH fallback (or no r10)"; fi
+if [ -f "$K10" ] && ! grep -Eq 'SOURCE_DATE_EPOCH:[-=]' "$K10"; then pass "P02-AC-6 change 3: 6.12.119 has no SOURCE_DATE_EPOCH fallback"; else fail "P02-AC-6 change 3: 6.12.119 has no SOURCE_DATE_EPOCH fallback (or no 6.12.119 ebuild)"; fi
 s3check "P02-AC-6 change 3: 6.12.119 still inherits savedconfig" grep -Eq '^[[:space:]]*inherit[[:space:]].*\bsavedconfig\b' "$K10"
 s3check "P02-AC-6 change 3: versions.lock pins sys-kernel/monolith-kernel:6.12.119:0" \
 	grep -Fxq 'sys-kernel/monolith-kernel:6.12.119:0' "$ROOT/configs/portage/versions.lock"

@@ -1,0 +1,1 @@
+EXPECTED_KERNEL ?= 6.12.80-i486-monolith
