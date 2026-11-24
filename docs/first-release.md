@@ -119,7 +119,7 @@ Porting can start now. F01 needs item 1, which takes a minute; the others are ne
    - OD-2: whether a prerelease may ship dynamic binaries; default yes, with a shrinking list.
    - OD-3: the first tree; default rc1's.
    - OD-4: the version; default `v0.2.0-rc1`.
-   - OD-9: CVE waivers on the August tree; default a 30-day expiry.
+   - OD-9: CVE waivers on the August tree; answered on issue #117 (owner, 2026-11-24): the tree is bumped first (M04, by M01's mechanism), and the remaining waivers share one expiry, 90 days after M04's node PR opens.
    - OD-10: the CD budget; default the whole 74-minute CD-R.
 
    OD-5 and OD-8 have defaults that need no action.

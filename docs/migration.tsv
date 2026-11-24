@@ -22,7 +22,7 @@ RELEASE-READINESS.md	100644	7bbff833b744b4b83118b2d05533892daf2aeea6	-	drop	-	-
 boot.html	100644	867f7ca6ab05ab66d5ebd04e8dc3339e317d4121	-	drop	-	-
 configs/attestation/cpe-exclusions.yaml	100644	3ab8ddc8ee5172beed45707677a90deedefa0312	S01	port	configs/attestation/cpe-exclusions.yaml	-
 configs/attestation/cpe-overrides.yaml	100644	a1e906c8309e8a0518925db6a7300369dd365a63	S01	port	configs/attestation/cpe-overrides.yaml	-
-configs/attestation/cve-policy.yaml	100644	47eeabd11254d70d09384e450308d99304e5b387	S01	port+fix	configs/attestation/cve-policy.yaml	-
+configs/attestation/cve-policy.yaml	100644	47eeabd11254d70d09384e450308d99304e5b387	S01	port+fix	configs/attestation/cve-policy.yaml	M04
 configs/attestation/license-policy.yaml	100644	80f1f64c186c625802aead6d791b26aaaa908ccc	S01	port+fix	configs/attestation/license-policy.yaml	R05
 configs/attestation/schemas/README	100644	910b6f3a0182be58d924b689249631169f800252	S01	port	configs/attestation/schemas/README	-
 configs/attestation/schemas/bom-1.6.schema.json	100644	8d19f410103d1c41e7dd16333fb7f60aa783c3fd	S01	port	configs/attestation/schemas/bom-1.6.schema.json	-
@@ -34,7 +34,7 @@ configs/attestation/spdx-license-ids.txt	100644	0b03344595d49ac750ee4172a047b4b7
 configs/attestation/unowned-allowlist.yaml	100644	9990fb9175b2ad2b70c4231ac5ecae70443df51c	S01	port	configs/attestation/unowned-allowlist.yaml	B01 G01
 configs/bootbg.png	100644	3340e68405986c64ef9cf1801fc261589e318467	B03	port	configs/bootbg.png	-
 configs/initrd-modules.txt	100644	8c909f21c9478c7b23d00c3363a9757132a4707e	B03	port	configs/initrd-modules.txt	-
-configs/kernel.config	100644	d55ac5830c2a954e8a2e8c654f59f5d2c51c65aa	B01	port	configs/kernel.config	B02:configs/portage/savedconfig/sys-kernel/monolith-kernel
+configs/kernel.config	100644	d55ac5830c2a954e8a2e8c654f59f5d2c51c65aa	B01	port	configs/kernel.config	B02:configs/portage/savedconfig/sys-kernel/monolith-kernel M04
 configs/overlay/app-misc/monolith-base/files/20-persist.sh	100644	2e146ff8cfea86325e2ec63a261cbfb671350200	R01	port	configs/overlay/app-misc/monolith-base/files/20-persist.sh	-
 configs/overlay/app-misc/monolith-base/files/30-clock-hint.sh	100644	d19750e1dbffc718dd5f0a2e8cb9b164e9e9a1e8	R01	port	configs/overlay/app-misc/monolith-base/files/30-clock-hint.sh	-
 configs/overlay/app-misc/monolith-base/files/40-advisory.sh	100644	e9ca38b60234cc9b71c943ec49afa747bdf68008	R01	port+fix	configs/overlay/app-misc/monolith-base/files/40-advisory.sh	-
@@ -70,9 +70,9 @@ configs/overlay/games-roguelike/rl144/files/i486-unknown-linux-musl.json	100644	
 configs/overlay/games-roguelike/rl144/rl144-0.1.0_p20260805.ebuild	100644	38aadeda0d526baf8fd9fae06e329b12563eb0a2	R05	port+fix	configs/overlay/games-roguelike/rl144/rl144-0.1.0_p20260805-r2.ebuild	-
 configs/overlay/metadata/layout.conf	100644	ca9fee10308c229aa7a90e37db832bb27d8701c6	R01	port	configs/overlay/metadata/layout.conf	-
 configs/overlay/profiles/repo_name	100644	bc3a87f340ce3cabb8928cb43d9f36de7fd52bf4	R01	port	configs/overlay/profiles/repo_name	-
-configs/overlay/sys-kernel/monolith-kernel/Manifest	100644	d8fb659c2b8816a83471ded08be71fae5c48eac1	B01	port	configs/overlay/sys-kernel/monolith-kernel/Manifest	B02
+configs/overlay/sys-kernel/monolith-kernel/Manifest	100644	d8fb659c2b8816a83471ded08be71fae5c48eac1	B01	port	configs/overlay/sys-kernel/monolith-kernel/Manifest	B02 M04
 configs/overlay/sys-kernel/monolith-kernel/files/linux-6.12-gcc15-std-gnu11.patch	100644	dd11a2ecd90f738e3c51e0a5e0b95e9260ad0cd0	B01	port	configs/overlay/sys-kernel/monolith-kernel/files/linux-6.12-gcc15-std-gnu11.patch	-
-configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r8.ebuild	100644	62b3289da8997fd064a02bfde0d1c75451e8c1f9	B01	port	configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r8.ebuild	B02:configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r9.ebuild
+configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r8.ebuild	100644	62b3289da8997fd064a02bfde0d1c75451e8c1f9	B01	port	configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r8.ebuild	B02:configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r9.ebuild M04:configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.119.ebuild
 configs/overlay/www-client/stele/Manifest	100644	fcf1ca08b4e7c0e08854a85f95041d0f5222a934	R05	port+fix	configs/overlay/www-client/stele/Manifest	-
 configs/overlay/www-client/stele/stele-0.1.0_p20260821.ebuild	100644	596e109e93b88d4f156855ab3ee547b4291725fa	R05	port+fix	configs/overlay/www-client/stele/stele-0.1.0_p20260821-r2.ebuild	-
 configs/overlay/x11-base/monolith-xserver/Manifest	100644	6c142d25c20649ee1cd4560978a81657c753f608	B01	port	configs/overlay/x11-base/monolith-xserver/Manifest	-

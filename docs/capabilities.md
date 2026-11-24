@@ -77,7 +77,7 @@ first, before the code it tests, with only the harness and path adjustments the 
 
 | Capability | Source | Node | Mode | Then |
 |---|---|---|---|---|
-| Kernel package, gcc15 patch, and its config | `configs/overlay/sys-kernel/monolith-kernel/` (r8), `configs/kernel.config` | B01 | port, as it is, so `world` builds | B02 (r9, savedconfig), P02 (reproducibility) |
+| Kernel package, gcc15 patch, and its config | `configs/overlay/sys-kernel/monolith-kernel/` (r8), `configs/kernel.config` | B01 | port, as it is, so `world` builds | B02 (r9, savedconfig), P02 (reproducibility), M04 (6.12.119) |
 | Kernel config workflow | `make menuconfig-kernel`, `make regen-manifest` | B02 | port+fix | |
 | Driver tiers and their config checks | `docs/kernel-tiers.md`, `scripts/verify-resolved-i2c-off.sh`, `scripts/tests/verify-*-config.sh`, `verify-resolved-i2c-off.test.sh` | B02 | port+fix (savedconfig path) | |
 | Kernel module checks on the built sysroot | `build.yml:312-420` | B02 | port+fix (moved into `scripts/verify-kernel-modules.sh`) | B03 calls it |
