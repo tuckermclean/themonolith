@@ -440,6 +440,22 @@ else:
     sys.exit(1)
 PY
 
+
+echo "== O04-AC-1: no validator's failure detail keeps only the tail of the output"
+python3 - "$BOOT_TEST" <<'PY' || fails=$((fails + $?))
+import sys, re
+lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().split("\n")
+bad = []
+for i, ln in enumerate(lines, 1):
+    if re.search(r"\breturn\s+False\s*,", ln) and re.search(r"\boutput\b", ln) \
+            and re.search(r"\boutput\b[^{}]*\[\s*-\d+\s*:\s*\]", ln):
+        bad.append((i, ln.strip()))
+for i, ln in bad:
+    print(f"FAIL: O04-AC-1 line {i} slices the output to its tail in a failure detail: {ln[:120]}")
+if bad:
+    sys.exit(len(bad))
+print("PASS: O04-AC-1 no `return False` failure detail slices the output with [-N:]")
+PY
 echo
 if [ "$fails" -ne 0 ]; then
 	echo "$fails FAILED"
