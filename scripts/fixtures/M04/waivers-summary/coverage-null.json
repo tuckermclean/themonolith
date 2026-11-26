@@ -1,0 +1,106 @@
+{
+  "scanner": {
+    "name": "grype",
+    "version": "0.106.7"
+  },
+  "db": {
+    "built": "2026-11-04T05:00:00Z",
+    "schema_version": "6",
+    "checksum": null,
+    "age_warning": null
+  },
+  "policy": {
+    "path": "configs/attestation/cve-policy.yaml",
+    "sha256": null
+  },
+  "coverage": {
+    "total_components": 71,
+    "scanned": 71,
+    "unscanned": 4,
+    "matched": 13,
+    "clean": 58
+  },
+  "findings": [
+    {
+      "cve": "CVE-2025-0203",
+      "severity": "High",
+      "component": "zlib",
+      "version": "1.3.1",
+      "cpe": null,
+      "fix_state": "unknown",
+      "fix_versions": [],
+      "gating": false,
+      "waived": true,
+      "waiver_justification": "ok",
+      "waiver_approved_by": "Jane Doe <jane@example.org>",
+      "waiver_expires": "2027-02-24",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-0203"
+    },
+    {
+      "cve": "CVE-2025-0201",
+      "severity": "High",
+      "component": "curl",
+      "version": "8.5.0",
+      "cpe": null,
+      "fix_state": "unknown",
+      "fix_versions": [],
+      "gating": false,
+      "waived": true,
+      "waiver_justification": "fixed-in-shipped: abc",
+      "waiver_approved_by": null,
+      "waiver_expires": "2027-02-24",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-0201"
+    },
+    {
+      "cve": "CVE-2025-0202",
+      "severity": "High",
+      "component": "busybox",
+      "version": "1.36.1",
+      "cpe": null,
+      "fix_state": "unknown",
+      "fix_versions": [],
+      "gating": false,
+      "waived": true,
+      "waiver_justification": null,
+      "waiver_approved_by": "Bob Roe <bob@example.org>",
+      "waiver_expires": "2027-03-01",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-0202"
+    },
+    {
+      "cve": "CVE-2025-0204",
+      "severity": "High",
+      "component": "musl",
+      "version": "1.2.5",
+      "cpe": null,
+      "fix_state": "unknown",
+      "fix_versions": [],
+      "gating": false,
+      "waived": true,
+      "waiver_justification": "say \"hi\" \\ back café ☃",
+      "waiver_approved_by": "Zoë <z@example.org>",
+      "waiver_expires": "2027-04-01",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-0204"
+    },
+    {
+      "cve": "CVE-2025-0205",
+      "severity": "High",
+      "component": "gcc",
+      "version": "13.2.0",
+      "cpe": null,
+      "fix_state": "unknown",
+      "fix_versions": [],
+      "gating": false,
+      "waived": false,
+      "waiver_justification": null,
+      "waiver_approved_by": null,
+      "waiver_expires": null,
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-0205"
+    }
+  ],
+  "summary": {
+    "total_findings": 5,
+    "gating_findings": 1,
+    "waived_findings": 4
+  },
+  "verdict": "fail"
+}
