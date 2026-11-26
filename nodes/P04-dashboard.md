@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| later | P01, P03 | P05 | — | L |
+| later | P01, P03 | M04, P05 | — | L |
 
 **Owns:** `scripts/dashboard.py` (the page generator), `scripts/dashboard.css` (the one stylesheet), `scripts/tests/dashboard.test.sh`, `scripts/tests/dashboard-workflow.test.sh`, `scripts/fixtures/P04/`, the `Makefile` targets `dashboard` and `dashboard-check`, the `workflow_run` trigger, the scan job's `if:` and the two dashboard steps of `.github/workflows/advisory-feed.yml` (P03 owns the rest of the file), the `attestation-summary.json` entries of the release asset list (change 1: the `Makefile` `release-assets` target, `scripts/release-sums.sh`, `scripts/release-create.sh`, the reports upload step of `.github/workflows/build.yml` and the asset list in `docs/releasing.md`; P01 owns the rest of them), `docs/evidence/dashboard-stele.md` and its screenshots in `docs/evidence/dashboard-stele/`, the dashboard rows of `docs/capabilities.md` (change 5).
 **Resolves:** #101
