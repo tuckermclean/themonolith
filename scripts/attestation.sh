@@ -655,6 +655,7 @@ export MONO_CVE_DB_CHECKSUM="${CVE_DB_CHECKSUM}"
 export MONO_CVE_DB_AGE_WARNING="${CVE_DB_AGE_WARNING}"
 export MONO_CVE_POLICY_SHA256="${CVE_POLICY_SHA256}"
 export MONO_BUILDER_CVE_DB_BUILT="${BUILDER_CVE_DB_BUILT}"
+export MONO_CVE_WAIVERS="${CVE_WAIVERS}"
 
 python3 - <<PYEOF
 import json
@@ -695,7 +696,7 @@ summary = {
         "waived_findings": ${CVE_WAIVED_FINDINGS},
         "gating_findings": ${CVE_GATING_FINDINGS}
     },
-    "cve_waivers": ${CVE_WAIVERS},
+    "cve_waivers": json.loads(os.environ["MONO_CVE_WAIVERS"]),
     "unowned_check": "${OVERALL_UNOWNED_STATUS}",
     "unowned_count": ${UNOWNED_COUNT},
     "overall": "${OVERALL_STATUS}",
