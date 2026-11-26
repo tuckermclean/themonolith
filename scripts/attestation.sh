@@ -374,6 +374,7 @@ CVE_UNSCANNED_COUNT=0
 CVE_TOTAL_FINDINGS=0
 CVE_WAIVED_FINDINGS=0
 CVE_GATING_FINDINGS=0
+CVE_WAIVERS='[]'
 if [[ -f "${OUTPUT_DIR}/cve-report-coverage.json" ]]; then
     eval "$(python3 -c "
 import json, shlex
@@ -394,6 +395,12 @@ pairs = {
     'CVE_TOTAL_FINDINGS':  summary.get('total_findings', 0),
     'CVE_WAIVED_FINDINGS': summary.get('waived_findings', 0),
     'CVE_GATING_FINDINGS': summary.get('gating_findings', 0),
+    'CVE_WAIVERS':         json.dumps(sorted(
+        ({'cve': f['cve'], 'component': f['component'], 'version': f['version'],
+          'justification': f.get('waiver_justification'), 'approved_by': f.get('waiver_approved_by'),
+          'expires': f.get('waiver_expires')}
+         for f in c.get('findings', []) if f.get('waived')),
+        key=lambda w: (w['cve'], w['component'], w['version']))),
 }
 for k, v in pairs.items():
     print(f'{k}={shlex.quote(str(v))}')
@@ -688,6 +695,7 @@ summary = {
         "waived_findings": ${CVE_WAIVED_FINDINGS},
         "gating_findings": ${CVE_GATING_FINDINGS}
     },
+    "cve_waivers": ${CVE_WAIVERS},
     "unowned_check": "${OVERALL_UNOWNED_STATUS}",
     "unowned_count": ${UNOWNED_COUNT},
     "overall": "${OVERALL_STATUS}",

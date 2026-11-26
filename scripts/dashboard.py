@@ -161,6 +161,12 @@ def release_page(rel, site, data):
         for k in sorted(cv):
             h.append(row(("th", escape(k.replace("_", " ").replace("clean", "without findings"))), td(escape(str(cv[k])))))
         h.append("</table>\n")
+        if s.get("cve_waivers"):
+            h.append("<h2>Waivers</h2>\n<table>\n")
+            h.append(row(*[("th", x) for x in ("CVE", "Component", "Version", "Justification", "Approved by", "Expires")]))
+            for w in s["cve_waivers"]:
+                h.append(row(*[td(escape(str(w.get(k, "")))) for k in ("cve", "component", "version", "justification", "approved_by", "expires")]))
+            h.append("</table>\n")
         if s.get("cve_failures"):
             h.append("<h3>Gating findings</h3>\n<ul>\n%s</ul>\n" % "".join("<li>%s</li>\n" % escape(str(x)) for x in s["cve_failures"]))
         if s.get("license_failures"):
