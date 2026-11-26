@@ -1,0 +1,23 @@
+[
+  {
+    "tagName": "v0.9.1",
+    "name": "v0.9.1",
+    "publishedAt": "2026-11-01T09:00:00Z",
+    "isPrerelease": false,
+    "isDraft": false
+  },
+  {
+    "tagName": "v0.9.2",
+    "name": "v0.9.2",
+    "publishedAt": "2026-11-02T09:00:00Z",
+    "isPrerelease": false,
+    "isDraft": false
+  },
+  {
+    "tagName": "v0.9.3",
+    "name": "v0.9.3",
+    "publishedAt": "2026-11-03T09:00:00Z",
+    "isPrerelease": false,
+    "isDraft": false
+  }
+]

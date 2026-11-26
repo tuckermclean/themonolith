@@ -1,0 +1,32 @@
+{
+  "tagName": "v0.9.2",
+  "name": "v0.9.2",
+  "url": "https://github.com/acme/monolith-fixture/releases/tag/v0.9.2",
+  "body": "",
+  "publishedAt": "2026-11-02T09:00:00Z",
+  "isPrerelease": false,
+  "isDraft": false,
+  "assets": [
+    {
+      "name": "themonolith-0.9.2.iso",
+      "size": 1,
+      "contentType": "application/octet-stream",
+      "state": "uploaded",
+      "url": "https://github.com/acme/monolith-fixture/releases/download/v0.9.2/themonolith-0.9.2.iso"
+    },
+    {
+      "name": "SHA256SUMS",
+      "size": 1,
+      "contentType": "application/octet-stream",
+      "state": "uploaded",
+      "url": "https://github.com/acme/monolith-fixture/releases/download/v0.9.2/SHA256SUMS"
+    },
+    {
+      "name": "attestation-summary.json",
+      "size": 1,
+      "contentType": "application/octet-stream",
+      "state": "uploaded",
+      "url": "https://github.com/acme/monolith-fixture/releases/download/v0.9.2/attestation-summary.json"
+    }
+  ]
+}

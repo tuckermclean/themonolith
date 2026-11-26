@@ -1,0 +1,61 @@
+{
+  "scanner": {
+    "name": "grype",
+    "version": "0.106.7"
+  },
+  "db": {
+    "built": "2026-11-04T05:00:00Z",
+    "schema_version": "6",
+    "checksum": null,
+    "age_warning": null
+  },
+  "policy": {
+    "path": "configs/attestation/cve-policy.yaml",
+    "sha256": null
+  },
+  "coverage": {
+    "total_components": 71,
+    "scanned": 71,
+    "unscanned": 4,
+    "matched": 13,
+    "clean": 58
+  },
+  "findings": [
+    {
+      "cve": "CVE-2025-0001",
+      "severity": "High",
+      "component": "zlib",
+      "version": "1.3",
+      "cpe": null,
+      "fix_state": "unknown",
+      "fix_versions": [],
+      "gating": true,
+      "waived": false,
+      "waiver_justification": null,
+      "waiver_approved_by": null,
+      "waiver_expires": null,
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-0001"
+    },
+    {
+      "cve": "CVE-2025-0004",
+      "severity": "Low",
+      "component": "expat",
+      "version": "2.6",
+      "cpe": null,
+      "fix_state": "unknown",
+      "fix_versions": [],
+      "gating": false,
+      "waived": false,
+      "waiver_justification": null,
+      "waiver_approved_by": null,
+      "waiver_expires": null,
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-0004"
+    }
+  ],
+  "summary": {
+    "total_findings": 2,
+    "gating_findings": 1,
+    "waived_findings": 0
+  },
+  "verdict": "fail"
+}
