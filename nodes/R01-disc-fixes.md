@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | F01 | B01, B03, P05 | — | M |
+| critical | F01 | B01, B03, B05, P05 | — | M |
 
 **Owns:** `configs/overlay/app-misc/monolith-base/` (r6 becomes r7), its nine ported tests, its paths in `test-lint`'s `bash -n` and shellcheck lists, `scripts/tests/advisory-check.test.sh`.
 **Ports from linux-live-iso-factory@b9f533b:** first its tests, `scripts/tests/monolith.test.sh`, `monolith-net.test.sh`, `monolith-router.test.sh`, `monolith-persist.test.sh`, `monolith-persist-profile.test.sh`, `monolith-persist-bashrc.test.sh`, `monolith-time.test.sh`, `monolith-time-check.test.sh`, `monolith-cnf.test.sh`; then the whole `configs/overlay/app-misc/monolith-base/` package (`monolith-base-0.1.0-r6.ebuild` and its 25 `files/`: the `monolith` help system and its topics, `monolith-net`, `monolith-router`, `monolith-persist`, `monolith-time`, `monolith-time-check`, `monolith-advisory-check`, `monolith-console`, the `profile.d` and `bashrc.d` scripts, `which`, `startx`, `guestbook.cgi`). The overlay's `metadata/layout.conf` and `profiles/repo_name` come with it, so the package sits in a valid repository.

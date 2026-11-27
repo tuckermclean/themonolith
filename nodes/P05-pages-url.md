@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| later | R01, P03, P04, B01, B03 | none | — | S |
+| later | R01, P03, P04, B01, B03 | B05 | — | S |
 
 **Owns:** the default base URL in `configs/overlay/app-misc/monolith-base/files/monolith-advisory-check` and the package's revbump to `monolith-base-0.1.0-r8.ebuild` (R01 owns the rest of the package), the `HOME_URL` line of `scripts/build-rootfs.sh`, `DEFAULT_BASE_URL` in `scripts/nightly-cve-monitor.py`, `ADVISORY_BASE_URL` in `Makefile`, the `app-misc/monolith-base` line of `configs/portage/versions.lock`, the changed lines of `scripts/tests/advisory-check.test.sh` and `scripts/tests/advisory-feed.test.sh` (change 6), the OD-1 line of `docs/first-release.md`, the `P05` entries in `docs/migration.tsv` and the `monolith-base` row of `docs/capabilities.md`, the `monolith-base` lines of `docs/rc1-diff-reasons.tsv`, `scripts/tests/pages-url.test.sh`.
 **Resolves:** #108

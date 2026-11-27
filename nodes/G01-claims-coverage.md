@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | O01, B03 | P01, X01 | — | L |
+| critical | O01, B03 | B04, P01, X01 | — | L |
 
 **Owns:** four new modes in `scripts/boot-test.py` (`persist-init`, `entry`, `serial-net`, `smoke`) and their jobs in `.github/workflows/boot-test.yml`, `scripts/smoke-checks.txt`, `docs/evidence/hyperv-<date>.md` (if OD-7 says evidence), README edits, `scripts/tests/readme-claims.test.sh`, `scripts/tests/smoke-coverage.test.sh`; the persistence fixes of change 4: the `sys-fs/e2fsprogs` line of `configs/portage/package.use/static`, a new file under `configs/portage/package.env/` and `configs/portage/env/` if the static link needs one, and the persist-partition scan of `rootfs/init`; the wiring that runs the new modes: their `Makefile` targets and variables (`BOOT_MODES`, `ENTRY_*`), the `boot-test` job's `modes:` list in `.github/workflows/build.yml`, and the `modes:` input of both jobs in `.github/workflows/boot-test-rc1.yml` (change 4); the smoke fixes of change 4: the binutils exclusions of the sysroot export in `scripts/build-packages.sh` and of the same export in `scripts/extract-packages.sh`, the binutils entries of `configs/attestation/unowned-allowlist.yaml`, and the `users` group in the `/etc/group` that `scripts/build-rootfs.sh` writes.
 **Ports from linux-live-iso-factory@b9f533b:** the predecessor `README.md`'s promises, each with the test that proves it; a promise with no test is not ported. It extends `scripts/boot-test.py` using the ported `run_check`, `wait_for_shell`, `select_isolinux_label` and GRUB navigation (`:732-782`), and the ported `build_persist_cmd` for the disk handling.
