@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Milestone | Size |
 |---|---|---|---|---|
-| critical | B01 | B03, M04 | — | M |
+| critical | B01 | B03, B04, M04 | — | M |
 
 **Owns:** `configs/portage/savedconfig/sys-kernel/monolith-kernel`, `configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-6.12.80-r9.ebuild` (replaces r8), `Makefile` targets `menuconfig-kernel` and `regen-manifest`, the kernel export block of `build-packages.sh`, `scripts/verify-kernel-modules.sh`, `scripts/tests/kernel-ebuild.test.sh`, the four ported tests.
 **Ports from linux-live-iso-factory@b9f533b:** first the tests `scripts/tests/verify-legacy-fbdev-config.sh`, `verify-netfilter-config.sh`, `verify-nic-zoo-config.sh` and `verify-resolved-i2c-off.test.sh`; then `scripts/verify-resolved-i2c-off.sh`, the module checks in `build.yml:312-420` (into a script, change 8), `docs/kernel-tiers.md`, the `Makefile` targets `menuconfig-kernel` and `regen-manifest`. It changes the kernel package and `configs/kernel.config`, which B01 ported as they are so that `world` builds.
